@@ -1,0 +1,215 @@
+@import url("https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,700&family=JetBrains+Mono:wght@500&display=swap");
+@import "tailwindcss" source(none);
+@import "phoenix-colocated/beamcode/colocated.css";
+@source "../css";
+@source "../js";
+@source "../../lib/beamcode_web";
+/* Required for Tailwind to automatically pick up changes in colocated CSS files in dev */
+@source "../../_build/dev/phoenix-colocated/beamcode/*/";
+
+/* A Tailwind plugin that makes "hero-#{ICON}" classes available.
+   The heroicons installation itself is managed by your mix.exs */
+@plugin "../vendor/heroicons";
+
+/* Peon design tokens (from "ChatOS Web v4"). Dark only. */
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-brand: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-tagline: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-canvas: #121115;
+  --color-panel: #1a191e;
+  --color-raised: #232228;
+  --color-hov: #26252b;
+  --color-code: #0d0c10;
+  --color-line: #2a2930;
+  --color-line2: #34333a;
+  --color-line3: #3a3940;
+  --color-fg: #ecebef;
+  --color-soft: #cfcdd6;
+  --color-muted: #8e8c96;
+  --color-faint: #5f5d66;
+  --color-run: #5b8def;
+  --color-runbg: #1d2a44;
+  --color-wait: #e0a84a;
+  --color-waitbg: #33281a;
+  --color-waitline: #5a4422;
+  --color-add: #4fb37a;
+  --color-addbg: #14261b;
+  --color-del: #e06a5a;
+  --color-delbg: #2c1715;
+  --color-key: oklch(0.82 0.11 85);
+  --color-keyfg: #17150f;
+}
+
+/* Add variants based on LiveView classes */
+@custom-variant phx-click-loading (.phx-click-loading&, .phx-click-loading &);
+@custom-variant phx-submit-loading (.phx-submit-loading&, .phx-submit-loading &);
+@custom-variant phx-change-loading (.phx-change-loading&, .phx-change-loading &);
+
+/* Make LiveView wrapper divs transparent for layout */
+[data-phx-session], [data-phx-teleported-src] { display: contents }
+
+html, body {
+  background: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color-scheme: dark;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: #3b4f7a; }
+
+* { scrollbar-width: thin; scrollbar-color: #34333a transparent; }
+
+/* Form primitives used by core_components (<.input>, <.button>, flash). */
+.fieldset { display: flex; flex-direction: column; gap: 4px; margin-bottom: 14px; }
+.fieldset .label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--color-muted); }
+
+.input, .select, .textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--color-panel);
+  color: var(--color-fg);
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px var(--color-line);
+  padding: 9px 12px;
+  font-size: 14px;
+  outline: none;
+  transition: box-shadow .15s ease, background .15s ease;
+}
+.input, .select { height: 40px; }
+.textarea { min-height: 96px; line-height: 1.55; resize: vertical; }
+.input::placeholder, .textarea::placeholder { color: var(--color-faint); }
+.input:focus, .select:focus, .textarea:focus { box-shadow: inset 0 0 0 1px #4a4952, 0 0 0 3px rgba(91,141,239,.15); }
+.input-error, .select-error, .textarea-error { box-shadow: inset 0 0 0 1px var(--color-del); }
+.checkbox { width: 16px; height: 16px; accent-color: var(--color-fg); }
+.text-error { color: var(--color-del); }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; padding: 0 14px; border-radius: 8px;
+  font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer;
+  background: var(--color-raised); color: var(--color-fg);
+  box-shadow: inset 0 0 0 1px var(--color-line2);
+  transition: background .15s ease, transform .1s ease, opacity .15s ease;
+}
+.btn:hover { background: #2c2b32; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled, .btn[disabled] { opacity: .5; cursor: default; }
+.btn-primary { background: var(--color-fg); color: var(--color-canvas); box-shadow: none; }
+.btn-primary:hover { background: #ffffff; }
+.btn-soft { background: var(--color-raised); color: var(--color-fg); box-shadow: inset 0 0 0 1px var(--color-line2); }
+.btn-danger { color: var(--color-del); }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+
+.toast { position: fixed; top: 16px; right: 16px; display: flex; flex-direction: column; gap: 8px; }
+.alert {
+  display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: 12px;
+  background: var(--color-raised); box-shadow: inset 0 0 0 1px var(--color-line2), 0 18px 40px -20px rgba(0,0,0,.6);
+  font-size: 13.5px; animation: pop-in .18s ease-out;
+}
+.alert-info { color: var(--color-fg); }
+.alert-error { color: #f3c1ba; background: var(--color-delbg); box-shadow: inset 0 0 0 1px #5a2a24; }
+
+@keyframes pop-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.pulse { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+/* Rendered markdown in messages. */
+.md { font-size: 13.5px; line-height: 1.65; text-wrap: pretty; overflow-wrap: anywhere; }
+.md p { margin: 0 0 .6em; }
+.md p:last-child { margin-bottom: 0; }
+.md h1, .md h2, .md h3 { font-weight: 600; margin: .9em 0 .4em; line-height: 1.3; }
+.md h1 { font-size: 16px; } .md h2 { font-size: 15px; } .md h3 { font-size: 14px; }
+.md ul, .md ol { margin: 0 0 .6em; padding-left: 1.3em; }
+.md ul { list-style: disc; } .md ol { list-style: decimal; }
+.md li { margin: .15em 0; }
+.md code { font-family: var(--font-mono); font-size: 12.5px; background: var(--color-raised); padding: 1px 5px; border-radius: 5px; }
+.md pre { background: var(--color-code); box-shadow: inset 0 0 0 1px var(--color-line); border-radius: 10px; padding: 12px 14px; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 .7em; }
+.md pre code { background: none; padding: 0; font-size: 12.5px; line-height: 1.6; color: var(--color-soft); }
+.md a { color: #8fb1f5; text-decoration: underline; text-underline-offset: 2px; }
+.md strong { font-weight: 600; }
+.md blockquote { border-left: 2px solid var(--color-line3); padding-left: 10px; color: var(--color-muted); }
+
+/* A run's result reads like a document. */
+.md.result { font-size: 14px; color: var(--color-soft); }
+.md.result h1, .md.result h2 { font-size: 18px; color: var(--color-fg); }
+.md.result h3 { font-size: 15px; color: var(--color-fg); }
+
+/* Blinking caret after a result that's still being written. */
+.md.streaming > :last-child::after {
+  content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 3px;
+  vertical-align: -2px; background: var(--color-run); animation: pulse-dot 1s steps(2) infinite;
+}
+
+/* Keyboard shortcuts. keybinds.js sets state on <html> (outside LiveView's
+   patching): data-kb="prefix|repeat|g", data-kb-which, data-kb-help,
+   data-kb-focus, data-mac. Per-element cursors go in a <style id="kb-dyn">. */
+kbd { font-family: var(--font-mono); font-size: inherit; }
+.kb-mac, html[data-mac] .kb-pc { display: none; }
+html[data-mac] .kb-mac { display: inline; }
+
+.kb-key {
+  display: inline-flex; align-items: center; justify-content: center; gap: 2px;
+  font-family: var(--font-mono); font-size: 11px; line-height: 16px;
+  padding: 1px 6px; border-radius: 4px;
+  background: var(--color-raised); color: var(--color-soft);
+  box-shadow: inset 0 0 0 1px var(--color-line2);
+}
+
+/* Sidebar: numbers replace the initials while the prefix is armed, and the
+   `g` keys show next to pages. */
+.kb-num, .kb-gkey { display: none; }
+.kb-num {
+  width: 22px; height: 22px; flex: none; align-items: center; justify-content: center;
+  border-radius: 6px; font-size: 11px; font-weight: 600;
+  background: var(--color-key); color: var(--color-keyfg);
+  animation: pop-in .1s ease-out;
+}
+.kb-gkey {
+  font-family: var(--font-mono); font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 4px;
+  background: var(--color-key); color: var(--color-keyfg);
+  animation: pop-in .1s ease-out;
+}
+html[data-kb="prefix"] .kb-num { display: flex; }
+html[data-kb="prefix"] .kb-letter { display: none; }
+html[data-kb="g"] .kb-gkey, html[data-kb="prefix"] #nav-inbox .kb-gkey { display: inline-block; }
+
+/* Status line mode badge and focus label. */
+.kb-mode { background: var(--color-raised); color: var(--color-muted); transition: background .12s, color .12s; }
+html[data-kb] .kb-mode { background: var(--color-key); color: var(--color-keyfg); }
+[data-kb-mode]:not([data-kb-mode="idle"]), html[data-kb] [data-kb-mode="idle"] { display: none; }
+html[data-kb="prefix"] [data-kb-mode="prefix"],
+html[data-kb="repeat"] [data-kb-mode="repeat"],
+html[data-kb="g"] [data-kb-mode="g"] { display: revert; }
+html[data-kb="prefix"] #kb-which [data-kb-mode="prefix"],
+html[data-kb="g"] #kb-which [data-kb-mode="g"] { display: grid; }
+#status-line [data-kb-focus] { display: none; }
+html:not([data-kb-focus]) #status-line [data-kb-focus="main"],
+html[data-kb-focus="sidebar"] #status-line [data-kb-focus="sidebar"],
+html[data-kb-focus="tabs"] #status-line [data-kb-focus="tabs"],
+html[data-kb-focus="main"] #status-line [data-kb-focus="main"] { display: inline; }
+
+#kb-which, #kb-help { display: none; }
+html[data-kb-which][data-kb="prefix"] #kb-which,
+html[data-kb-which][data-kb="g"] #kb-which { display: block; }
+html[data-kb-help] #kb-help { display: flex; }
+
+/* Toast and keycast, created by keybinds.js on <body>. */
+#kb-toast {
+  position: fixed; top: 60px; left: 50%; translate: -50% 0; z-index: 60;
+  padding: 8px 14px; border-radius: 8px; font-size: 13px;
+  background: var(--color-raised); color: var(--color-fg);
+  box-shadow: inset 0 0 0 1px var(--color-line2), 0 12px 30px -12px rgba(0,0,0,.6);
+  animation: pop-in .12s ease-out;
+}
+#kb-keycast { position: fixed; right: 14px; bottom: 34px; z-index: 60; display: flex; gap: 6px; pointer-events: none; }
+#kb-keycast span {
+  font-family: var(--font-mono); font-size: 13px; padding: 4px 9px; border-radius: 6px;
+  background: var(--color-raised); color: var(--color-fg); box-shadow: inset 0 0 0 1px var(--color-line2);
+  animation: pop-in .1s ease-out;
+}
