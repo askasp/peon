@@ -13,6 +13,9 @@ defmodule Beamcode.Projects.Project do
     field :always_worktree, :boolean, default: false
     field :oc_project_id, :string
     field :github_repo, :string
+    # No pushes to main/master/default_branch (see Beamcode.BranchGuard).
+    field :protect_default_branch, :boolean, default: false
+    field :default_branch, :string
     belongs_to :owner, Beamcode.Accounts.User
     timestamps(type: :utc_datetime)
   end
@@ -36,8 +39,14 @@ defmodule Beamcode.Projects.Project do
 
   def settings_changeset(project, attrs) do
     project
-    |> cast(attrs, [:scope, :always_worktree])
+    |> cast(attrs, [:scope, :always_worktree, :protect_default_branch])
     |> validate_inclusion(:scope, @scopes)
+  end
+
+  def default_branch_changeset(project, branch) do
+    project
+    |> change(default_branch: branch)
+    |> validate_format(:default_branch, ~r{^[A-Za-z0-9._/-]+$})
   end
 
   def github_changeset(project, attrs) do

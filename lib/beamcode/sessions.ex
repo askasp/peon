@@ -1,6 +1,6 @@
 defmodule Beamcode.Sessions do
   @moduledoc "Starting OpenCode sessions for a project and sending prompts to them."
-  alias Beamcode.{Opencode, Projects}
+  alias Beamcode.{BranchGuard, Opencode, Projects}
   alias Beamcode.Projects.Project
 
   @doc """
@@ -16,6 +16,7 @@ defmodule Beamcode.Sessions do
         |> put_opt(:title, opts[:title])
         |> put_opt(:agent, opts[:agent])
         |> put_opt(:model, opts[:model])
+        |> put_rules(BranchGuard.session_rules(project))
 
       with {:ok, session} <- Opencode.create_session(body) do
         Projects.record_session(session["id"], project, user,
@@ -27,6 +28,9 @@ defmodule Beamcode.Sessions do
       end
     end
   end
+
+  defp put_rules(map, []), do: map
+  defp put_rules(map, rules), do: Map.put(map, :permissions, rules)
 
   defp put_opt(map, _key, nil), do: map
   defp put_opt(map, _key, ""), do: map

@@ -1,7 +1,18 @@
 defmodule BeamcodeWeb.ProjectLive do
   @moduledoc "A project: its sessions, skills (and AGENTS.md instructions), schedules and settings."
   use BeamcodeWeb, :live_view
-  alias Beamcode.{Connectors, GitTokens, Opencode, Projects, Routines, Schedules, Vault}
+
+  alias Beamcode.{
+    BranchGuard,
+    Connectors,
+    GitTokens,
+    Opencode,
+    Projects,
+    Routines,
+    Schedules,
+    Vault
+  }
+
   alias Beamcode.Opencode.Events
   alias Beamcode.Schedules.Cron
   alias BeamcodeWeb.Shell
@@ -81,7 +92,11 @@ defmodule BeamcodeWeb.ProjectLive do
     |> assign(
       :settings_form,
       to_form(
-        %{"scope" => project.scope, "always_worktree" => to_string(project.always_worktree)},
+        %{
+          "scope" => project.scope,
+          "always_worktree" => to_string(project.always_worktree),
+          "protect_default_branch" => to_string(project.protect_default_branch)
+        },
         as: :settings
       )
     )
@@ -539,12 +554,13 @@ defmodule BeamcodeWeb.ProjectLive do
 
     if user.admin or project.owner_id == user.id do
       case Projects.update_settings(project, params) do
-        {:ok, project} ->
+        {:ok, updated} ->
+          {updated, socket} = sync_branch_guard(socket, project, updated)
+
           {:noreply,
            socket
-           |> assign(project: project)
-           |> Shell.set_current(project)
-           |> put_flash(:info, "Saved.")
+           |> assign(project: updated)
+           |> Shell.set_current(updated)
            |> load_tab(:settings)}
 
         {:error, _} ->
@@ -656,6 +672,32 @@ defmodule BeamcodeWeb.ProjectLive do
       value = if input.multi, do: List.wrap(value) |> Enum.reject(&(&1 == "")), else: value
       {input.name, value}
     end)
+  end
+
+  # Toggling "Protect default branch" installs or removes the git hook and
+  # updates the rules on the project's sessions. On failure the toggle reverts.
+  defp sync_branch_guard(socket, before, updated)
+       when before.protect_default_branch == updated.protect_default_branch,
+       do: {updated, put_flash(socket, :info, "Saved.")}
+
+  defp sync_branch_guard(socket, _before, updated) do
+    case BranchGuard.sync(updated) do
+      {:ok, project} ->
+        msg =
+          if project.protect_default_branch,
+            do: "Pushes to #{Enum.join(BranchGuard.branches(project), ", ")} are now blocked.",
+            else: "Default branch protection is off."
+
+        {project, put_flash(socket, :info, msg)}
+
+      {:error, reason} ->
+        {:ok, project} =
+          Projects.update_settings(updated, %{
+            protect_default_branch: !updated.protect_default_branch
+          })
+
+        {project, put_flash(socket, :error, "Could not change branch protection: #{reason}")}
+    end
   end
 
   # Called by BeamcodeWeb.Shell for shortcuts.
@@ -949,7 +991,13 @@ defmodule BeamcodeWeb.ProjectLive do
       }[p.kind]
 
     scope = if p.scope == "private", do: " · only you", else: ""
-    "#{kind} · #{p.directory}#{scope}"
+
+    guard =
+      if p.protect_default_branch,
+        do: "#{Enum.join(BranchGuard.branches(p), "/")} protected · ",
+        else: ""
+
+    "#{kind} · #{guard}#{p.directory}#{scope}"
   end
 
   attr :to, :string, required: true
@@ -1401,6 +1449,20 @@ defmodule BeamcodeWeb.ProjectLive do
           type="checkbox"
           label="Always start sessions in a new git worktree"
         />
+        <div :if={@project.kind == "code"} id="protect-branch-field">
+          <.input
+            field={@settings_form[:protect_default_branch]}
+            type="checkbox"
+            label="Protect default branch"
+          />
+          <p class="text-[12.5px] text-faint -mt-2 mb-3.5 pl-6 text-pretty">
+            Agents can't push to
+            <span class="font-mono text-soft">
+              {Enum.join(Beamcode.BranchGuard.branches(@project), ", ")}
+            </span>
+            or merge pull requests. For repos where the host can't protect branches (e.g. GitHub's free tier). Adds a git pre-push hook and deny rules to every session.
+          </p>
+        </div>
         <div>
           <button type="submit" class="btn btn-primary" id="settings-save">Save</button>
         </div>

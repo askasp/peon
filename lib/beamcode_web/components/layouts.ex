@@ -30,6 +30,7 @@ defmodule BeamcodeWeb.Layouts do
         tabs: Map.get(shell, :shell_tabs, []),
         inbox: Map.get(shell, :shell_inbox, 0),
         palette: Map.get(shell, :palette),
+        composer: Map.get(shell, :composer),
         keybinds: Map.get(shell, :keybinds, Beamcode.Keybinds.defaults()),
         prefs: Map.get(shell, :kb_prefs, Beamcode.Keybinds.pref_defaults()),
         current_session_id: Map.get(shell, :current_session_id),
@@ -61,9 +62,10 @@ defmodule BeamcodeWeb.Layouts do
           class="h-[30px] flex-none flex items-center gap-2 pl-2.5 pr-1.5 rounded-lg bg-panel shadow-[inset_0_0_0_1px_var(--color-line)] text-muted text-[12.5px] hover:text-fg hover:bg-raised transition"
         >
           <.icon name="hero-magnifying-glass-micro" class="size-3.5" />
-          <span class="max-sm:hidden">Search or run a command</span>
+          <span class="max-xl:hidden">Search or run a command</span>
           <.kbd k="mod+k" class="kb-key" />
         </button>
+        <.global_composer :if={@composer} composer={@composer} projects={@projects} />
         <nav id="session-tabs" class="flex items-center gap-2.5 min-w-0 overflow-x-auto">
           <%= for {tab, i} <- Enum.with_index(@tabs) do %>
             <span :if={i > 0} class="w-px h-3.5 bg-line flex-none"></span>
@@ -183,6 +185,175 @@ defmodule BeamcodeWeb.Layouts do
       <.palette :if={@palette} palette={@palette} />
       <.flash_group flash={@flash} />
     </div>
+    """
+  end
+
+  attr :composer, :map, required: true
+  attr :projects, :list, required: true
+
+  # One line, typed or spoken, that starts something from anywhere (the "Voice
+  # Composer" design). The preview shows how the line was read while the bar
+  # has focus. Voice in/out is assets/js/voice.js.
+  defp global_composer(assigns) do
+    assigns = assign(assigns, :parsed, assigns.composer.parsed)
+
+    ~H"""
+    <div id="global-composer" class="relative flex-1 min-w-[200px] max-w-[580px] group/gc">
+      <form
+        id="global-composer-form"
+        phx-change="composer_change"
+        phx-submit="composer_submit"
+        class="voice-field h-[34px] flex items-center gap-1.5 pl-3 pr-1 rounded-lg bg-panel shadow-[inset_0_0_0_1px_var(--color-line)] focus-within:shadow-[inset_0_0_0_1px_#4a4952] transition-shadow"
+      >
+        <.voice_wave for="global-composer-input" />
+        <input
+          id="global-composer-input"
+          name="text"
+          value={@composer.text}
+          autocomplete="off"
+          spellcheck="false"
+          phx-debounce="80"
+          placeholder="Start anything: “new session in …, use /skill, then …”"
+          class="flex-1 min-w-0 bg-transparent outline-none text-[13px] placeholder:text-faint"
+        />
+        <.voice_buttons for="global-composer-input" id="global" />
+      </form>
+
+      <div
+        :if={@parsed}
+        id="global-composer-preview"
+        class="hidden group-focus-within/gc:flex absolute left-0 right-0 top-full mt-2 z-40 flex-col gap-3 px-4 pt-3.5 pb-3 rounded-xl bg-panel shadow-[inset_0_0_0_1px_var(--color-line2),0_18px_44px_rgba(0,0,0,.5)]"
+        style="animation: pop-in .12s ease-out"
+      >
+        <div class="grid grid-cols-[72px_minmax(0,1fr)] gap-x-3.5 gap-y-2 items-baseline text-[13px]">
+          <span class="text-faint">Action</span>
+          <span id="gc-action" class="font-medium text-fg">
+            {Beamcode.Composer.action_label(@parsed.action)}
+          </span>
+
+          <span class="text-faint">{if @parsed.action == :run, do: "Routine", else: "Project"}</span>
+          <span class="flex flex-wrap items-center gap-1.5">
+            <span
+              id="gc-project"
+              class={[
+                "px-2 rounded-[5px]",
+                if(@parsed.project, do: "bg-raised text-fg", else: "text-muted")
+              ]}
+            >
+              {if @parsed.project, do: @parsed.project.name, else: "Pick a project"}
+            </span>
+            <button
+              :for={p <- Beamcode.Composer.suggestions(@parsed, @projects)}
+              :if={@parsed.project == nil or @parsed.action == :chat}
+              type="button"
+              id={"gc-pick-#{p.id}"}
+              phx-click="composer_pick"
+              phx-value-id={p.id}
+              class="px-2 rounded-[5px] border border-dashed border-line3 text-muted hover:text-fg hover:border-muted transition"
+            >
+              @{p.name}
+            </button>
+          </span>
+
+          <span class="text-faint">Skill</span>
+          <span>
+            <span
+              id="gc-skill"
+              class={[
+                "px-2 rounded-[5px]",
+                if(@parsed.skill, do: "bg-raised text-fg", else: "text-faint")
+              ]}
+            >
+              {@parsed.skill || "None · type /name"}
+            </span>
+          </span>
+
+          <span class="text-faint">Task</span>
+          <span id="gc-task" class="text-soft text-pretty">
+            {if @parsed.task == "", do: "—", else: @parsed.task}
+          </span>
+        </div>
+        <div class="flex items-center justify-between gap-3 pt-2.5 border-t border-line text-[12px] text-muted">
+          <span>
+            <span class="voice-listening-only">Still listening. Pause to finish.</span>
+            <span class="voice-idle-only">
+              <span class="voice-off">Reply shows in the session.</span>
+              <span class="voice-on">You’ll hear a short reply.</span>
+            </span>
+          </span>
+          <button
+            type="submit"
+            form="global-composer-form"
+            id="gc-submit"
+            disabled={@composer.busy}
+            class="flex-none flex items-center gap-2 h-7 px-3 rounded-md bg-fg text-canvas font-medium hover:bg-white disabled:opacity-60 transition"
+          >
+            {if @composer.busy, do: "Starting…", else: Beamcode.Composer.button_label(@parsed.action)}
+            <span class="font-mono text-[11px] opacity-60">↵</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  @doc "Animated bars plus “Listening”, shown while the mic for `for` is on."
+  attr :for, :string, required: true
+
+  def voice_wave(assigns) do
+    ~H"""
+    <span data-voice-wave={@for} class="voice-wave flex-none items-center gap-2 text-key text-[12px]">
+      <span class="flex items-center gap-[2px] h-3.5">
+        <span :for={i <- 0..4} class="voice-bar" style={"animation-delay: #{i * 80}ms"}></span>
+      </span>
+      <span>Listening</span>
+    </span>
+    """
+  end
+
+  @doc "The spoken-reply toggle and the mic button for the text field `for`."
+  attr :for, :string, required: true
+  attr :id, :string, required: true
+
+  def voice_buttons(assigns) do
+    ~H"""
+    <button
+      type="button"
+      id={@id <> "-voice-reply"}
+      data-voice-reply-toggle
+      title="Spoken replies: on or off"
+      class="voice-reply flex-none h-[26px] flex items-center gap-1.5 px-2 rounded-md text-[12px] text-muted hover:text-fg transition"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M2 6h3l4-3v10L5 10H2z" fill="currentColor" />
+        <path
+          d="M11.5 5.5a3.5 3.5 0 0 1 0 5"
+          stroke="currentColor"
+          stroke-width="1.5"
+          fill="none"
+          stroke-linecap="round"
+        />
+      </svg>
+      <span class="voice-off">Text</span><span class="voice-on">Voice</span>
+    </button>
+    <button
+      type="button"
+      id={@id <> "-mic"}
+      data-voice-mic={@for}
+      title="Talk (alt+v)"
+      class="voice-mic flex-none w-[26px] h-[26px] flex items-center justify-center rounded-md bg-raised text-soft hover:text-fg transition"
+    >
+      <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+        <rect x="5.5" y="1.5" width="5" height="8.5" rx="2.5" fill="currentColor" />
+        <path
+          d="M3 8a5 5 0 0 0 10 0M8 13v2"
+          stroke="currentColor"
+          stroke-width="1.5"
+          fill="none"
+          stroke-linecap="round"
+        />
+      </svg>
+    </button>
     """
   end
 

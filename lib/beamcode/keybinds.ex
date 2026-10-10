@@ -207,6 +207,8 @@ defmodule Beamcode.Keybinds do
           {"Anywhere, no prefix",
            [
              {["mod+k"], "Command palette"},
+             {["alt+k"], "Composer: start anything"},
+             {["alt+v"], "Talk (voice input)"},
              {["mod+\\"], "Toggle sidebar"},
              {["/"], "Search"},
              {["j", "k"], "Move"},
@@ -230,7 +232,13 @@ defmodule Beamcode.Keybinds do
              {["mod+]"], "Forward"}
            ]},
           {"Go to (g …)", Enum.map(globals, &{["g", &1.key], &1.name})},
-          {"Act", [{["alt+n"], "New session"}, {["mod+enter"], "Run / send"}]},
+          {"Act",
+           [
+             {["alt+n"], "New session"},
+             {["mod+enter"], "Run / send"},
+             {["alt+k"], "Composer: start anything"},
+             {["alt+v"], "Talk (voice input)"}
+           ]},
           {"View",
            [
              {["alt+["], "Previous tab"},

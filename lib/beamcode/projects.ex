@@ -49,6 +49,10 @@ defmodule Beamcode.Projects do
     project |> Ecto.Changeset.change(oc_project_id: id) |> Repo.update!()
   end
 
+  def set_default_branch(project, branch) do
+    project |> Project.default_branch_changeset(branch) |> Repo.update()
+  end
+
   def update_settings(project, attrs) do
     project
     |> Project.settings_changeset(attrs)

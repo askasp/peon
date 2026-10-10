@@ -46,7 +46,8 @@ defmodule BeamcodeWeb.SessionLive do
           refetch_ref: nil,
           diff: [],
           diff_file: nil,
-          sending: false
+          sending: false,
+          speak_next: nil
         )
         |> assign(
           agents: [],
@@ -299,8 +300,17 @@ defmodule BeamcodeWeb.SessionLive do
      |> Shell.set_current(socket.assigns.project, socket.assigns.session["id"])}
   end
 
-  def handle_info({:oc_event, "permission." <> _, _data}, socket) do
+  def handle_info({:oc_event, "permission." <> kind, data}, socket) do
     id = socket.assigns.session["id"]
+
+    socket =
+      if kind == "asked",
+        do:
+          push_event(socket, "voice:speak", %{
+            text: "Needs your OK: #{Beamcode.Inbox.permission_title(data)}."
+          }),
+        else: socket
+
     {:noreply, assign(socket, perms: Events.pending_for(id), status: Events.status(id))}
   end
 
@@ -316,6 +326,13 @@ defmodule BeamcodeWeb.SessionLive do
         "session.agent.selected" ->
           assign(socket, session: Map.put(socket.assigns.session, "agent", data["agent"]))
 
+        # Say the reply once the refetch has its final text.
+        "session.execution.succeeded" ->
+          assign(socket, speak_next: :reply)
+
+        "session.execution.failed" ->
+          assign(socket, speak_next: :failed)
+
         _ ->
           socket
       end
@@ -326,7 +343,7 @@ defmodule BeamcodeWeb.SessionLive do
   end
 
   def handle_info(:refetch, socket) do
-    socket = socket |> assign(refetch_ref: nil) |> load_messages() |> load_diff()
+    socket = socket |> assign(refetch_ref: nil) |> load_messages() |> load_diff() |> speak()
 
     socket =
       if socket.assigns.run,
@@ -350,6 +367,34 @@ defmodule BeamcodeWeb.SessionLive do
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # A short spoken version of the turn that just ended, for voice replies
+  # (assets/js/voice.js says it only while they are on).
+  defp speak(%{assigns: %{speak_next: nil}} = socket), do: socket
+
+  defp speak(%{assigns: %{speak_next: :failed}} = socket) do
+    socket
+    |> assign(speak_next: nil)
+    |> push_event("voice:speak", %{text: "That failed. Details are on screen."})
+  end
+
+  defp speak(socket) do
+    text =
+      socket.assigns.raw
+      |> Enum.reverse()
+      |> Enum.find(&(&1["type"] == "assistant"))
+      |> case do
+        nil ->
+          ""
+
+        m ->
+          for(%{"type" => "text", "text" => t} <- m["content"] || [], do: t) |> Enum.join("\n\n")
+      end
+      |> Beamcode.Speech.speakable()
+
+    socket = assign(socket, speak_next: nil)
+    if text == "", do: socket, else: push_event(socket, "voice:speak", %{text: text})
+  end
 
   @impl true
   def handle_async(:options, {:ok, {agents, models, slash}}, socket) do
@@ -785,7 +830,10 @@ defmodule BeamcodeWeb.SessionLive do
                 class="absolute bottom-full mb-2 left-0 right-0 z-20"
               >
               </div>
-              <div class="flex flex-col gap-2.5 px-3.5 py-3 rounded-[14px] bg-panel shadow-[inset_0_0_0_1px_var(--color-line)] focus-within:shadow-[inset_0_0_0_1px_#4a4952] transition">
+              <div
+                id="composer-box"
+                class="flex flex-col gap-2.5 px-3.5 py-3 rounded-[14px] bg-panel shadow-[inset_0_0_0_1px_var(--color-line)] focus-within:shadow-[inset_0_0_0_1px_#4a4952] transition"
+              >
                 <div id="composer-attachments" phx-update="ignore" class="hidden flex flex-wrap gap-2">
                 </div>
                 <span id="composer-hint" hidden>{composer_hint(@run, @status, @project)}</span>
@@ -836,11 +884,15 @@ defmodule BeamcodeWeb.SessionLive do
                     }
                   />
                   <span :if={@sending} class="text-[11.5px] text-faint ml-1">sending…</span>
+                  <span class="ml-auto flex items-center gap-1.5">
+                    <Layouts.voice_wave for="composer" />
+                    <Layouts.voice_buttons for="composer" id="session" />
+                  </span>
                   <button
                     type="button"
                     id="send-button"
                     data-send
-                    class="ml-auto font-mono text-[11px] px-2 py-1 rounded-md bg-raised text-fg hover:bg-hov transition"
+                    class="font-mono text-[11px] px-2 py-1 rounded-md bg-raised text-fg hover:bg-hov transition"
                   >
                     ↵
                   </button>

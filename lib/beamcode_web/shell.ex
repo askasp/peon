@@ -2,7 +2,7 @@ defmodule BeamcodeWeb.Shell do
   @moduledoc """
   `on_mount` hook for every signed-in LiveView. Keeps the app chrome up to date:
   sidebar projects, session tabs (running/waiting), Inbox count, the command
-  palette and global keyboard shortcuts.
+  palette, the global composer and global keyboard shortcuts.
 
   Views set the current project/session with `set_current/3`. Views may define
   `handle_keybind/2` to receive view-specific shortcuts.
@@ -10,7 +10,7 @@ defmodule BeamcodeWeb.Shell do
   import Phoenix.Component
   import Phoenix.LiveView
   use BeamcodeWeb, :verified_routes
-  alias Beamcode.{Inbox, Keybinds, Projects, Schedules, Sessions}
+  alias Beamcode.{Composer, Inbox, Keybinds, Projects, Schedules, Sessions}
   alias Beamcode.Opencode.Events
 
   @global_actions ~w(session_new)
@@ -25,10 +25,12 @@ defmodule BeamcodeWeb.Shell do
     socket =
       socket
       |> assign(current_project: nil, current_session_id: nil, palette: nil)
+      |> assign(:composer, %{text: "", parsed: nil, busy: false})
       |> assign_keybinds(socket.assigns.current_scope.user)
       |> refresh()
       |> attach_hook(:shell_info, :handle_info, &handle_info/2)
       |> attach_hook(:shell_event, :handle_event, &handle_event/3)
+      |> attach_hook(:shell_async, :handle_async, &handle_async/3)
 
     {:cont, socket}
   end
@@ -136,6 +138,28 @@ defmodule BeamcodeWeb.Shell do
     end
   end
 
+  ## Global composer
+
+  defp handle_event("composer_change", %{"text" => text}, socket),
+    do: {:halt, put_composer(socket, text)}
+
+  defp handle_event("composer_submit", %{"text" => text}, socket),
+    do: {:halt, socket |> put_composer(text) |> start_composer()}
+
+  # A project picked from the preview when the line named none.
+  defp handle_event("composer_pick", %{"id" => id}, socket) do
+    %{composer: composer, shell_projects: projects} = socket.assigns
+
+    case {composer.parsed, Enum.find(projects, &(to_string(&1.id) == id))} do
+      {%{} = parsed, %{} = project} ->
+        parsed = %{parsed | project: project, action: :session}
+        {:halt, socket |> assign(:composer, %{composer | parsed: parsed}) |> start_composer()}
+
+      _ ->
+        {:halt, socket}
+    end
+  end
+
   defp handle_event("keybind", %{"action" => action}, socket) when action in @global_actions do
     project = socket.assigns.current_project
 
@@ -157,6 +181,56 @@ defmodule BeamcodeWeb.Shell do
   end
 
   defp handle_event(_event, _params, socket), do: {:cont, socket}
+
+  defp put_composer(socket, text) do
+    parsed = Composer.parse(text, socket.assigns.shell_projects)
+    assign(socket, :composer, %{socket.assigns.composer | text: text, parsed: parsed})
+  end
+
+  defp start_composer(%{assigns: %{composer: %{busy: true}}} = socket), do: socket
+  defp start_composer(%{assigns: %{composer: %{parsed: nil}}} = socket), do: socket
+
+  defp start_composer(%{assigns: %{composer: %{parsed: %{project: nil}}}} = socket),
+    do: put_flash(socket, :error, "Say which project, e.g. “in chatos-web”.")
+
+  defp start_composer(socket) do
+    %{composer: composer, current_scope: %{user: user}} = socket.assigns
+    parsed = composer.parsed
+
+    socket
+    |> assign(:composer, %{composer | busy: true})
+    |> start_async(:composer_start, fn -> {parsed, Composer.start(parsed, user)} end)
+  end
+
+  defp handle_async(:composer_start, result, socket) do
+    socket = assign(socket, :composer, %{socket.assigns.composer | busy: false})
+
+    socket =
+      case result do
+        {:ok, {parsed, {:ok, session_id}}} ->
+          socket
+          |> assign(:composer, %{text: "", parsed: nil, busy: false})
+          |> push_event("voice:speak", %{text: started_line(parsed)})
+          |> push_navigate(to: ~p"/s/#{session_id}")
+
+        {:ok, {_parsed, {:error, reason}}} ->
+          put_flash(socket, :error, "Could not start: #{format_error(reason)}")
+
+        {:exit, reason} ->
+          put_flash(socket, :error, "Could not start: #{inspect(reason)}")
+      end
+
+    {:halt, socket}
+  end
+
+  defp handle_async(_name, _result, socket), do: {:cont, socket}
+
+  defp started_line(%{action: :run, project: p}), do: "Running #{spoken(p.name)}."
+
+  defp started_line(%{project: p, skill: skill}),
+    do: "Started in #{spoken(p.name)}#{if skill, do: " with #{spoken(skill)}"}."
+
+  defp spoken(name), do: String.replace(name, ~r/[-_]+/, " ")
 
   @doc "Projects in sidebar order (projects, then routines); numbered 1–9 for shortcuts."
   def sidebar_order(projects) do
