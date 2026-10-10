@@ -6,12 +6,14 @@ defmodule BeamcodeWeb.UserAuth do
   alias Beamcode.Accounts
 
   def log_in(conn, user) do
+    return_to = get_session(conn, :user_return_to) || ~p"/app"
+
     conn
     |> configure_session(renew: true)
     |> clear_session()
     |> put_session(:user_id, user.id)
     |> put_session(:live_socket_id, "users:#{user.id}")
-    |> redirect(to: ~p"/")
+    |> redirect(to: return_to)
   end
 
   def log_out(conn) do
@@ -32,32 +34,17 @@ defmodule BeamcodeWeb.UserAuth do
     if conn.assigns.current_scope do
       conn
     else
+      # Back to the page asked for after logging in (e.g. /app).
+      conn =
+        if conn.method == "GET",
+          do: put_session(conn, :user_return_to, current_path(conn)),
+          else: conn
+
       conn |> redirect(to: ~p"/login") |> halt()
     end
   end
 
   def redirect_if_user(conn, _opts) do
-    if conn.assigns.current_scope, do: conn |> redirect(to: ~p"/") |> halt(), else: conn
-  end
-
-  def on_mount(:ensure_authenticated, _params, session, socket) do
-    user = (id = session["user_id"]) && Accounts.get_user(id)
-
-    if user do
-      {:cont, Phoenix.Component.assign(socket, :current_scope, %{user: user})}
-    else
-      {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/login")}
-    end
-  end
-
-  def on_mount(:require_admin, _params, _session, socket) do
-    if socket.assigns.current_scope.user.admin do
-      {:cont, socket}
-    else
-      {:halt,
-       socket
-       |> Phoenix.LiveView.put_flash(:error, "Admins only.")
-       |> Phoenix.LiveView.redirect(to: ~p"/")}
-    end
+    if conn.assigns.current_scope, do: conn |> redirect(to: ~p"/app") |> halt(), else: conn
   end
 end

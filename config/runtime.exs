@@ -35,6 +35,10 @@ if config_env() != :test do
   # chatos/ inside the server's working folder.
   config :beamcode, :chatos_root, System.get_env("CHATOS_ROOT")
 
+  # Model that reads global composer lines ("provider/model"). Default: a fast
+  # model from the OpenCode server's list (haiku, flash, mini…).
+  config :beamcode, :composer_model, System.get_env("COMPOSER_MODEL")
+
   # How the OpenCode server reaches this app's MCP endpoint.
   config :beamcode, :gateway_url, System.get_env("GATEWAY_URL")
   config :beamcode, :vault_key, System.get_env("VAULT_KEY")

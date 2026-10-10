@@ -8,27 +8,45 @@ defmodule Beamcode.Composer do
   `parse/2` reads the line into an action, a target project or routine, an
   optional skill and the task; `start/3` does it. Names match loosely, so speech
   ("amino monorepo", "stripe") finds `amino-monorepo` and `stripe-reconcile`.
+
+  It is plain rules, no model: the preview has to follow along word by word
+  while you talk. Status questions ("what's the status of the latest session in
+  amino-monorepo?", "anything waiting?") are answered by Peon itself from live
+  session data (`Beamcode.Composer.Status`), not by an agent.
   """
   alias Beamcode.{Routines, Sessions}
   alias Beamcode.Projects.Project
 
-  @type action :: :session | :run | :ask | :chat
+  @type action :: :session | :run | :ask | :chat | :status
   @type parsed :: %{
           action: action,
           project: Project.t() | nil,
+          status: :latest | :overview | nil,
+          sure: boolean,
           skill: String.t() | nil,
           task: String.t(),
           text: String.t()
         }
 
   @run_verbs ~r/\b(run|trigger|kick off|start)\b/i
-  @question ~r/(\?\s*$)|(^(what|why|how|when|who|where|which|is|are|does|did|can|could|should)\b)/i
+  @question ~r/(\?\s*$)|(^(what|what's|whats|why|how|how's|when|who|where|which|is|are|does|did|can|could|should|has|have|any)\b)/i
+  # "new session", "start a session", "create a new session": only these mean a new one.
+  @create_session ~r/\b(new|start|create|open|make|spin up)\b(\s+[\w-]+){0,2}\s+session\b/i
+  @status_words ~r/\b(status|progress|going on|happening|running|waiting|working on|sessions?|runs?)\b/i
+  @status_lead ~r/^(status|show|list|check|give me|tell me|anything|any)\b/i
+  @latest ~r/\b(latest|last|newest|most recent|current)\b/i
+  @plural ~r/\b(all|every|sessions|runs)\b/i
 
   @doc """
   Reads a composer line. `projects` are the ones the user can see. Returns nil
-  for an empty line.
+  for an empty line. `sure` is true only for plain, unambiguous lines ("run
+  stripe-reconcile", "new session in X, …", "anything waiting?"); everything
+  else goes to the model on Enter.
 
-    * `:run` – a routine is named with run/trigger/start and no "session"
+    * `:status` – a question about sessions or progress; Peon answers it.
+      `status: :latest` for "the latest/last session", else `:overview`.
+      The project (or routine) is optional
+    * `:run` – a routine is named with run/trigger/start and no "new session"
     * `:session` – a project is named (anything but a question about it)
     * `:ask` – a question about a named project; it also runs as a session
     * `:chat` – no project named; goes to the first chat project, if any
@@ -47,12 +65,18 @@ defmodule Beamcode.Composer do
       routine = find_name(t, routines)
       skill = find_skill(t)
 
-      explicit_session = Regex.match?(~r/\bsession\b/i, t) or Regex.match?(~r/@[\w-]+/, t)
+      create? = Regex.match?(@create_session, t)
+      explicit_session = create? or Regex.match?(~r/@[\w-]+/, t)
       run? = routine != nil and Regex.match?(@run_verbs, t) and not explicit_session
       question? = Regex.match?(@question, t)
 
+      status? =
+        not create? and Regex.match?(@status_words, t) and
+          (question? or Regex.match?(@status_lead, t))
+
       action =
         cond do
+          status? -> :status
           run? -> :run
           project && (explicit_session or not question?) -> :session
           project -> :ask
@@ -83,29 +107,66 @@ defmodule Beamcode.Composer do
 
       target =
         case action do
+          :status -> earliest(project, routine)
           :run -> routine.project
           :chat -> Enum.find(places, &(&1.kind == "chat"))
           _ -> project.project
         end
 
-      %{action: action, project: target, skill: skill && skill.name, task: s, text: t}
+      status =
+        cond do
+          action != :status -> nil
+          Regex.match?(@latest, t) and not Regex.match?(@plural, t) -> :latest
+          true -> :overview
+        end
+
+      skill = if action == :status, do: nil, else: skill && skill.name
+      task = if action == :status, do: t, else: s
+
+      sure =
+        case action do
+          :status -> Regex.match?(~r/\b(sessions?|runs?|waiting|running)\b/i, t)
+          :run -> leftover_words(s) <= 1
+          :session -> explicit_session and s != ""
+          _ -> false
+        end
+
+      %{
+        action: action,
+        project: target,
+        status: status,
+        skill: skill,
+        task: task,
+        text: t,
+        sure: sure
+      }
     end
   end
 
-  @doc "Projects to offer when nothing was named."
-  def suggestions(%{action: :chat}, projects),
-    do: projects |> Enum.filter(&(&1.kind in ~w(code chat))) |> Enum.take(4)
+  # Words left in a run line besides filler ("run routine x now" → 0).
+  defp leftover_words(s) do
+    s
+    |> String.downcase()
+    |> String.split(~r/[^\p{L}\p{N}-]+/u, trim: true)
+    |> Enum.reject(&(&1 in ~w(run the routine now please it again kick off trigger start)))
+    |> length()
+  end
 
-  def suggestions(_, _), do: []
+  defp earliest(nil, nil), do: nil
+  defp earliest(a, nil), do: a.project
+  defp earliest(nil, b), do: b.project
+  defp earliest(a, b), do: if(a.idx <= b.idx, do: a.project, else: b.project)
 
   @doc "What the preview calls the action."
   def action_label(:session), do: "New session"
   def action_label(:run), do: "Run routine"
   def action_label(:ask), do: "Ask about project"
   def action_label(:chat), do: "Chat"
+  def action_label(:status), do: "Status (Peon answers)"
 
   @doc "The submit button's label."
   def button_label(:run), do: "Run"
+  def button_label(:status), do: "Answer"
   def button_label(:session), do: "Start session"
   def button_label(_), do: "Ask"
 

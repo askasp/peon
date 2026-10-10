@@ -155,6 +155,28 @@ defmodule Beamcode.Workspace do
     end
   end
 
+  @doc "Git repos OpenCode already knows that aren't Peon projects yet (for cloning in place)."
+  def known_repos do
+    taken = MapSet.new(Projects.list_projects(), & &1.directory)
+    root = root()
+
+    case Opencode.projects() do
+      {:ok, list} when is_list(list) ->
+        for p <- list,
+            p["vcs"] == "git",
+            dir = p["canonical"],
+            is_binary(dir),
+            not MapSet.member?(taken, dir),
+            root == nil or not String.starts_with?(dir, root <> "/"),
+            not String.contains?(dir, "/worktree/"),
+            do: dir
+
+      _ ->
+        []
+    end
+    |> Enum.sort()
+  end
+
   @doc "Folders in routines/ that aren't Peon projects yet (e.g. made by a setup session)."
   def unregistered_routines do
     with root when is_binary(root) <- root(),

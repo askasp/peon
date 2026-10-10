@@ -1,7 +1,7 @@
 defmodule Beamcode.OpencodeStub do
   @moduledoc """
   Points the OpenCode client (and the GitHub check) at a `Req.Test` stub for one
-  test. Shared mode, so LiveViews and their async tasks hit it too: use it only
+  test. Shared mode, so channel tasks hit it too: use it only
   in `async: false` tests.
   """
   import ExUnit.Callbacks

@@ -1,7 +1,9 @@
 # Peon (beamcode)
 
-A Phoenix LiveView front end and small gateway for an OpenCode v2 server
-(`opencode serve`), built from the "ChatOS Web v4" design.
+A Phoenix gateway for an OpenCode v2 server (`opencode serve`), with one app
+for phone and web: the Expo / React Native app in `mobile/` (the "Peon iOS
+Green" design). Phoenix serves its web build at `/app` and talks to it over one
+websocket (see `mobile/README.md`).
 
 One primitive: **a project is a folder** on the OpenCode server. Code repos,
 routines (one job each) and chats are all projects. Instructions, skills,

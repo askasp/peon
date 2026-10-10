@@ -51,16 +51,61 @@ defmodule Beamcode.ComposerTest do
              {:ask, "chatos-web", nil, "what changed in chatos-web this week?"}
   end
 
-  test "no project named: the chat project, and suggestions" do
-    parsed = Composer.parse("how do I write a haiku?", @projects)
+  test "no project named: the chat project" do
     assert {:chat, "general", nil, "how do I write a haiku?"} = read("how do I write a haiku?")
+  end
 
-    assert Enum.map(Composer.suggestions(parsed, @projects), & &1.name) ==
-             ~w(amino-monorepo chatos-web general)
+  describe "sure: plain lines run on Enter, the rest go to the model" do
+    defp sure?(text), do: Composer.parse(text, @projects).sure
+
+    test "sure" do
+      assert sure?("run stripe-reconcile")
+      assert sure?("run routine stripe reconcile now")
+      assert sure?("new session in amino monorepo, fix checkout")
+      assert sure?("@chatos-web fix the login button")
+      assert sure?("anything waiting?")
+      assert sure?("what is the status of the latest session in amino-monorepo")
+    end
+
+    test "not sure" do
+      refute sure?("Createa new routine which speaks to front and reads emailsfor last 5days")
+      refute sure?("run the stripe one for this week, only Support")
+      refute sure?("how is stripe reconcile doing")
+      refute sure?("fiks checkout-testen i amino")
+      refute sure?("what changed in chatos-web this week?")
+    end
   end
 
   test "names only match whole words; system projects are not targets" do
     assert {:chat, "general", nil, _} = read("tidy the webpack setup")
+  end
+
+  describe "status questions (Peon answers, no new session)" do
+    defp status(text) do
+      p = Composer.parse(text, @projects)
+      {p.action, p.status, p.project && p.project.name}
+    end
+
+    test "the word session alone does not start one" do
+      assert status("What is the status on the latest session in amino-monorepo") ==
+               {:status, :latest, "amino-monorepo"}
+    end
+
+    test "without a project it covers all of them" do
+      assert status("what is the status of the latest sessions") == {:status, :overview, nil}
+      assert status("what is the status of all sessions") == {:status, :overview, nil}
+      assert status("anything waiting?") == {:status, :overview, nil}
+    end
+
+    test "routines too" do
+      assert status("is the latest run of stripe reconcile done?") ==
+               {:status, :latest, "stripe-reconcile"}
+    end
+
+    test "new/start a session still starts one" do
+      assert read("start a new session in amino monorepo and check the status page") ==
+               {:session, "amino-monorepo", nil, "check the status page"}
+    end
   end
 
   test "prompt/1 puts the skill first" do

@@ -44,6 +44,25 @@ defmodule Beamcode.Speech do
     end
   end
 
+  @doc """
+  The line to say for the last assistant reply in `messages` (OpenCode
+  messages, oldest first). \"\" when there is none.
+  """
+  def reply_line(messages) do
+    messages
+    |> Enum.reverse()
+    |> Enum.find(&(&1["type"] == "assistant"))
+    |> case do
+      nil ->
+        ""
+
+      m ->
+        for(%{"type" => "text", "text" => t} <- m["content"] || [], do: t)
+        |> Enum.join("\n\n")
+        |> speakable()
+    end
+  end
+
   # One markdown line to plain words; empty lines stay as paragraph breaks.
   defp clean_line(line) do
     line

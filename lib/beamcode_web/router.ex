@@ -38,31 +38,16 @@ defmodule BeamcodeWeb.Router do
 
     delete "/logout", SessionController, :delete
 
-    live_session :app,
-      on_mount: [{BeamcodeWeb.UserAuth, :ensure_authenticated}, BeamcodeWeb.Shell] do
-      live "/", HomeLive
-      live "/new", NewProjectLive
-      live "/p/:id", ProjectLive, :sessions
-      live "/p/:id/chats", ProjectLive, :chats
-      live "/p/:id/skills", ProjectLive, :skills
-      live "/p/:id/schedules", ProjectLive, :schedules
-      live "/p/:id/settings", ProjectLive, :settings
-      live "/s/:id", SessionLive
-      live "/inbox", InboxLive
-      live "/schedules", SchedulesLive
-      live "/settings", SettingsLive
-    end
+    # The Expo app's web build; it routes in the browser, so every path is the same page.
+    get "/", AppController, :home
+    get "/app", AppController, :index
+    get "/app/*path", AppController, :index
 
-    live_session :admin,
-      on_mount: [
-        {BeamcodeWeb.UserAuth, :ensure_authenticated},
-        {BeamcodeWeb.UserAuth, :require_admin},
-        BeamcodeWeb.Shell
-      ] do
-      live "/connectors", ConnectorsLive
-      live "/models", ModelsLive
-      live "/users", UsersLive
-    end
+    # Addresses from the old LiveView pages (bookmarks, shared links) open the same place in the app.
+    get "/s/:id", AppController, :moved
+    get "/p/:id", AppController, :moved
+    get "/p/:id/:tab", AppController, :moved
+    get "/:page", AppController, :moved
   end
 
   # Enable LiveDashboard in development

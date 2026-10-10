@@ -14,7 +14,7 @@ defmodule Beamcode.Routines do
   The Run button, schedules and "Run again" all go through here, so they
   behave the same. Without a routine.json the routine runs its skill.
   """
-  alias Beamcode.{Opencode, Schedules}
+  alias Beamcode.{Connectors, Opencode, Schedules, Sessions, Vault}
 
   @file_name "routine.json"
 
@@ -104,5 +104,52 @@ defmodule Beamcode.Routines do
       inputs: values,
       seen: true
     )
+  end
+
+  @doc "The skill a routine runs: the last part of its name (`front-digest` → `digest`)."
+  def skill_name(name), do: name |> String.split("-") |> List.last()
+
+  @doc """
+  Starts the session in a new routine that drafts its AGENTS.md, skill and
+  routine.json from `description` (the user's words). `granted` are connector
+  names it may use. Returns `{:ok, session_id, not_ready}` where `not_ready`
+  are granted connectors still missing their secret.
+  """
+  def draft(project, user, description, granted) do
+    skill = skill_name(project.name)
+    connectors = Enum.filter(Connectors.list(), &(&1.error == nil and &1.name in granted))
+    secrets = Vault.names()
+
+    tools =
+      for c <- connectors,
+          t <- c.tools,
+          t.permission != "deny",
+          do: Connectors.tool_name(c, t)
+
+    not_ready = for c <- connectors, not Connectors.ready?(c, secrets), do: c.name
+
+    connector_hint =
+      cond do
+        tools == [] -> "It has no connectors yet."
+        true -> "It may use these MCP tools from the gateway server: #{Enum.join(tools, ", ")}."
+      end
+
+    prompt = """
+    This is a new routine called #{project.name}. Its one job, in the user's words:
+
+    #{description}
+
+    Draft it:
+    1. Rewrite AGENTS.md as short, concrete instructions for this job: what to read, what to output, limits.
+    2. Create one skill at .opencode/skill/#{skill}/SKILL.md (frontmatter with name and description) that does the job end to end, so it can be run as /#{skill}. Its last message must be the result itself, in markdown.
+    3. If the job has choices worth asking for on each run (a time range, which inboxes…), add them as inputs in routine.json and use them in "run", like "/#{skill} since {since}". Otherwise leave routine.json as it is.
+
+    #{connector_hint} Keep both files short. Don't run the job now; end by telling me to try /#{skill}.
+    """
+
+    with {:ok, session} <- Sessions.start(project, user, title: "Set up #{project.name}"),
+         {:ok, _} <- Sessions.send_text(session["id"], prompt, project.directory) do
+      {:ok, session["id"], not_ready}
+    end
   end
 end

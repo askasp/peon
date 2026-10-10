@@ -29,6 +29,74 @@ defmodule Beamcode.Sessions do
     end
   end
 
+  @doc """
+  The project's top-level, unarchived sessions `user` may see, each with its
+  record under `"record"`. On a routine, schedule runs are left out: they have
+  their own list.
+  """
+  def list_visible(%Project{} = project, user) do
+    params =
+      if project.oc_project_id,
+        do: [project: project.oc_project_id, limit: 150],
+        else: [directory: project.directory, limit: 150]
+
+    with {:ok, sessions} <- Opencode.list_sessions(params) do
+      sessions = Enum.reject(sessions, &(&1["parentID"] || get_in(&1, ["time", "archived"])))
+      records = Projects.session_records(Enum.map(sessions, & &1["id"]))
+
+      {:ok,
+       sessions
+       |> Enum.filter(&Projects.session_visible?(records[&1["id"]], user))
+       |> Enum.reject(&(project.kind == "routine" and run_record?(records[&1["id"]])))
+       |> Enum.map(&Map.put(&1, "record", records[&1["id"]]))}
+    end
+  end
+
+  defp run_record?(record), do: record != nil and record.schedule_key != nil
+
+  @doc """
+  The OpenCode session `id` with its project and record, when `user` may see it:
+  `{:ok, session, project, record}` or `:error`.
+  """
+  def fetch_visible(id, user) do
+    with {:ok, session} <- Opencode.get_session(id),
+         %Project{} = project <-
+           Projects.project_for_session(session, Projects.list_visible(user)),
+         record = Projects.session_record(id),
+         true <- Projects.session_visible?(record, user) do
+      {:ok, session, project, record}
+    else
+      _ -> :error
+    end
+  end
+
+  @doc "The folder a session works in."
+  def session_dir(session, %Project{} = project),
+    do: get_in(session, ["location", "directory"]) || project.directory
+
+  @doc """
+  Sessions that are running or waiting right now, in `projects` and visible to
+  `user`: `%{id, title, project, status}`.
+  """
+  def running(user, projects) do
+    ids = Opencode.Events.running_ids()
+    records = Projects.session_records(ids)
+
+    for id <- ids,
+        info = Opencode.Events.session_info(id),
+        info != nil,
+        project = Projects.project_for_session(info, projects),
+        project != nil,
+        Projects.session_visible?(records[id], user) do
+      %{
+        id: id,
+        title: info["title"] || "New session",
+        project: project,
+        status: Opencode.Events.status(id)
+      }
+    end
+  end
+
   defp put_rules(map, []), do: map
   defp put_rules(map, rules), do: Map.put(map, :permissions, rules)
 

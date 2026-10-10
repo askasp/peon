@@ -16,6 +16,9 @@ defmodule BeamcodeWeb.Endpoint do
     websocket: [connect_info: [session: @session_options], max_frame_size: 20_000_000],
     longpoll: [connect_info: [session: @session_options]]
 
+  # The phone app's one websocket (BeamcodeWeb.UserSocket); logs in with a token, not the cookie.
+  socket "/socket", BeamcodeWeb.UserSocket, websocket: true, longpoll: false
+
   # Serve at "/" the static files from "priv/static" directory.
   #
   # When code reloading is disabled (e.g., in production),

@@ -34,7 +34,7 @@ defmodule BeamcodeWeb.SessionHTML do
               autocomplete="username"
               autocapitalize="none"
               required
-              phx-mounted={JS.focus()}
+              autofocus
             />
             <.input
               field={@form[:password]}

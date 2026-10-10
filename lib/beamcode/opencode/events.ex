@@ -19,6 +19,16 @@ defmodule Beamcode.Opencode.Events do
                session.execution.succeeded session.execution.failed session.execution.interrupted
                permission.asked permission.replied)
 
+  @message_changes ~w(session.inbox.delivered session.tool.called session.tool.success
+                      session.tool.failed session.tool.error session.text.ended
+                      session.reasoning.ended session.step.ended session.step.failed
+                      session.agent.selected session.model.selected session.compaction.completed
+                      session.shell.ended session.skill.completed)
+
+  @doc "Whether a session event means its stored messages changed, so they are worth fetching again."
+  def messages_changed?(type),
+    do: type in @message_changes or String.starts_with?(type, "session.execution.")
+
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
   def subscribe_session(id), do: Phoenix.PubSub.subscribe(Beamcode.PubSub, "oc:session:" <> id)

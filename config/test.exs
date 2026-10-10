@@ -46,3 +46,6 @@ config :beamcode, start_workers: false
 # Point at a closed port so tests never reach a real OpenCode server.
 config :beamcode, :opencode, url: "http://127.0.0.1:9", password: nil
 config :beamcode, :chatos_root, "/tmp/chatos-test"
+
+# The phone app's login waits after a wrong password; not in tests.
+config :beamcode, :app_login_delay, 0

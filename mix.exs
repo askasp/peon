@@ -86,7 +86,13 @@ defmodule Beamcode.MixProject do
       "assets.deploy": [
         "tailwind beamcode --minify",
         "esbuild beamcode --minify",
+        "assets.app",
         "phx.digest"
+      ],
+      # The Expo app's web build (mobile/), served by Phoenix at /app.
+      "assets.app": [
+        "cmd --cd mobile npm ci",
+        "cmd --cd mobile npx expo export --platform web --output-dir ../priv/static/app --clear"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
     ]
