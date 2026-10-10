@@ -78,7 +78,8 @@ function Section({ title, onAdd }: { title: string; onAdd?: () => void }) {
   );
 }
 
-const host = typeof window !== "undefined" ? window.location.hostname : "connected";
+// React Native has a `window` but no `location`, so check for it.
+const host = (typeof window !== "undefined" && window.location?.hostname) || "connected";
 
 // Projects and routines, then the app's places, like the web app's sidebar.
 export function Sidebar() {
