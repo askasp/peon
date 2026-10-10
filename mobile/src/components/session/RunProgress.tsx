@@ -75,8 +75,8 @@ export function RunProgress({ items, status }: { items: Message[]; status: Statu
         ))}
         {status === "waiting" ? (
           <View style={st.step}>
-            <Text style={[st.dot, { color: color.cream }]}>○</Text>
-            <Text style={[st.label, { color: color.cream }]}>Waiting for your permission below</Text>
+            <Text style={[st.dot, { color: color.needs }]}>○</Text>
+            <Text style={[st.label, { color: color.needs }]}>Waiting for your permission below</Text>
           </View>
         ) : null}
       </View>

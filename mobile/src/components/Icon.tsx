@@ -142,23 +142,25 @@ export function Icon({ name, size = 24, color = "currentColor", strokeWidth }: P
   }
 }
 
-/** The two-dot mark: cream and orc green. */
-export function Mark({ size = 34 }: { size?: number }) {
+/** Peon's face (3e): a green tile with two eyes and two small tusks. */
+function Face({ size, rx }: { size: number; rx: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 40 40">
-      <Circle cx={12} cy={20} r={7} fill="#f2efe8" />
-      <Circle cx={29} cy={20} r={7} fill="#8bbd50" />
+    <Svg width={size} height={size} viewBox="0 0 64 64">
+      <Rect width={64} height={64} rx={rx} fill="#8bbd50" />
+      <Circle cx={23} cy={27} r={5} fill="#121a0c" />
+      <Circle cx={41} cy={27} r={5} fill="#121a0c" />
+      <Path d="M22 52 L25 42 L28 52 Z" fill="#f4f1e8" />
+      <Path d="M36 52 L39 42 L42 52 Z" fill="#f4f1e8" />
     </Svg>
   );
 }
 
-/** The app icon: two dark dots on a green tile (or circle). */
+/** The mark next to the wordmark. */
+export function Mark({ size = 34 }: { size?: number }) {
+  return <Face size={size} rx={15} />;
+}
+
+/** The app icon (or a circle). */
 export function AppIcon({ size = 88, round = false }: { size?: number; round?: boolean }) {
-  return (
-    <Svg width={size} height={size} viewBox="0 0 64 64">
-      <Rect width={64} height={64} rx={round ? 32 : 15} fill="#8bbd50" />
-      <Circle cx={22} cy={32} r={9} fill="#121a0c" />
-      <Circle cx={43} cy={32} r={9} fill="#121a0c" />
-    </Svg>
-  );
+  return <Face size={size} rx={round ? 32 : 15} />;
 }

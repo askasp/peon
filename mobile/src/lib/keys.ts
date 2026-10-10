@@ -173,7 +173,7 @@ function sessionAction(keys: Keys, e: KeyboardEvent, leader: boolean, typing: bo
 
 // ── Places ────────────────────────────────────────────────────────────────
 
-const isMac =
+export const isMac =
   Platform.OS === "web" && typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 const mod = (e: KeyboardEvent) => (isMac ? e.metaKey : e.ctrlKey);
 const plain = (e: KeyboardEvent) => !e.ctrlKey && !e.metaKey && !e.altKey;
@@ -315,7 +315,7 @@ function focusSearch() {
           (x) => x.offsetParent !== null,
         );
   if (el) el.focus();
-  else openPalette("all");
+  else if (!emit("composer:commands")) openPalette("all");
 }
 
 function openIdx(i: number) {
@@ -577,9 +577,10 @@ function onKey(e: KeyboardEvent) {
     stop();
     return arm(keys);
   }
+  // mod+K: the top bar with ">" for commands; shift+mod+K: the top bar empty, for a task.
   if (mod(e) && e.code === "KeyK") {
     stop();
-    return openPalette("all");
+    return void (emit(e.shiftKey ? "composer:focus" : "composer:commands") || openPalette("all"));
   }
   if (mod(e) && e.code === "Backslash") {
     stop();

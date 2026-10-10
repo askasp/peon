@@ -17,6 +17,7 @@ import { ask, refreshInbox, usePeon } from "@/lib/peon";
 import { PermResources } from "@/components/PermResources";
 import { ago, duration } from "@/lib/time";
 import { color } from "@/lib/theme";
+import { useWide } from "@/lib/useWide";
 import type { InboxItem } from "@/lib/types";
 
 // 1a · Inbox: everything waiting on you, answerable without opening anything.
@@ -89,7 +90,7 @@ export default function Inbox() {
             <SectionLabel style={{ marginTop: 6 }}>Running</SectionLabel>
             {running.map((r) => (
               <Tap kb="row" key={r.id} style={st.running} onPress={() => router.push(`/session/${r.id}`)}>
-                <Dot tint={r.status === "waiting" ? color.cream : color.accent} />
+                <Dot tint={r.status === "waiting" ? color.needs : color.accent} />
                 <Text style={st.runningTitle} numberOfLines={1}>
                   {r.title}
                 </Text>
@@ -100,6 +101,17 @@ export default function Inbox() {
         ) : null}
       </ScrollView>
     </Screen>
+  );
+}
+
+/** On desktop, a card's kind as a small glyph tile at its head. */
+function KindTile({ glyph, tint, bg }: { glyph: string; tint: string; bg: string }) {
+  const wide = useWide();
+  if (!wide) return null;
+  return (
+    <View style={[st.kindTile, { backgroundColor: bg }]}>
+      <Text style={[st.kindGlyph, { color: tint }]}>{glyph}</Text>
+    </View>
   );
 }
 
@@ -125,9 +137,10 @@ function InboxCard({ item }: { item: InboxItem }) {
 
     return (
       <Tap kb="row" style={st.cardWrap} onPress={() => router.push(`/session/${item.session.id}`)}>
-        <Card>
+        <Card needs>
           <View style={st.cardHead}>
-            <Text style={[st.kind, { color: color.accentText }]}>Permission</Text>
+            <KindTile glyph="!" tint={color.needs} bg={color.needsWash} />
+            <Text style={[st.kind, { color: color.needs }]}>Permission</Text>
             <Text style={st.meta} numberOfLines={1}>
               {item.project.name} · {item.session.title} · {item.mine ? "your session" : "team"}
             </Text>
@@ -172,6 +185,7 @@ function InboxCard({ item }: { item: InboxItem }) {
     >
       <Card>
         <View style={st.cardHead}>
+          <KindTile glyph={failed ? "✕" : "✓"} tint={failed ? color.red : color.teal} bg={color.divider} />
           <Text style={[st.kind, { color: failed ? color.red : color.teal }]}>
             {failed ? "Run failed" : "Run finished"}
           </Text>
@@ -217,9 +231,11 @@ const st = StyleSheet.create({
   avatarText: { color: color.text, fontSize: 14, fontWeight: "600" },
   summary: { fontSize: 14, color: color.muted, marginTop: -8 },
   cardWrap: {},
-  cardHead: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
+  cardHead: { flexDirection: "row", alignItems: "center", gap: 10 },
+  kindTile: { width: 26, height: 26, borderRadius: 7, alignItems: "center", justifyContent: "center" },
+  kindGlyph: { fontSize: 13, fontWeight: "700" },
   kind: { fontSize: 12, fontWeight: "600" },
-  meta: { fontSize: 12, color: color.muted, flexShrink: 1 },
+  meta: { fontSize: 12, color: color.muted, flexShrink: 1, marginLeft: "auto" },
   cardText: { fontSize: 15, lineHeight: 21, color: color.text },
   actions: { flexDirection: "row", gap: 8 },
   running: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6, paddingHorizontal: 2 },

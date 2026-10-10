@@ -284,8 +284,8 @@ export default function SessionScreen() {
             {subtitle}
           </Text>
         </View>
-        {s.status === "waiting" ? <Badge label="Needs you" /> : null}
-        {s.status === "running" ? <Badge label="Running" tint="muted" /> : null}
+        {s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
+        {s.status === "running" ? <Badge label="Running" /> : null}
         <Tap testID="session-menu" hitSlop={12} onPress={() => setMenu(true)} style={st.menuButton}>
           <Text style={st.menuDots}>⋯</Text>
         </Tap>
@@ -412,7 +412,7 @@ function PermCard({
     }
   };
   return (
-    <Card accent>
+    <Card needs>
       <Text style={{ fontSize: 15, color: color.text }}>Needs your OK: {title}</Text>
       <PermResources resources={resources} />
       <ErrorLine message={error} />

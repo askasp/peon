@@ -97,6 +97,7 @@ export function RunsTab({ ctx }: { ctx: ProjectCtx }) {
         ) : null}
       </View>
       <ErrorLine message={error ?? loadError} />
+      {runs && runs.length > 1 ? <History runs={runs} /> : null}
 
       {current ? (
         <Tap onPress={() => current.session_id && router.push(`/session/${current.session_id}`)}>
@@ -224,7 +225,43 @@ function InputsSheet({
   );
 }
 
+/** The last 20 runs as bars, oldest first: teal done (taller took longer), red failed, green running. */
+function History({ runs }: { runs: Run[] }) {
+  const last = runs.slice(0, 20).reverse();
+  const ms = (r: Run) => (r.finished ? Date.parse(r.finished) - Date.parse(r.started) : 0);
+  const longest = Math.max(1, ...last.map(ms));
+  const failed = last.filter((r) => r.status === "failed").length;
+  const done = last.filter((r) => r.status === "done").length;
+  return (
+    <View style={st.history}>
+      <Text style={st.historyText}>Last {last.length} runs</Text>
+      <View style={st.bars}>
+        {last.map((r) => (
+          <View
+            key={r.id}
+            style={[
+              st.bar,
+              r.status === "failed"
+                ? { height: 10, backgroundColor: color.red }
+                : r.status === "done"
+                  ? { height: 12 + Math.round((10 * ms(r)) / longest), backgroundColor: color.teal }
+                  : { height: 22, backgroundColor: color.accent },
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={st.historyText}>
+        {done} succeeded{failed ? ` · ${failed} failed` : ""}
+      </Text>
+    </View>
+  );
+}
+
 const st = StyleSheet.create({
+  history: { flexDirection: "row", alignItems: "center", gap: 16 },
+  historyText: { fontSize: 12, color: color.muted },
+  bars: { flexDirection: "row", alignItems: "flex-end", gap: 3, height: 22 },
+  bar: { width: 8, borderRadius: 2 },
   body: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40, gap: 14 },
   cardHead: { flexDirection: "row", justifyContent: "space-between" },
   cardTitle: { fontSize: 14, fontWeight: "600", color: color.text },

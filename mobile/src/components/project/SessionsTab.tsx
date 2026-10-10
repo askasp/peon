@@ -2,11 +2,12 @@ import { useState } from "react";
 import { FlatList, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Badge, Empty, ErrorLine, kbProps, Loading, Tap, Toggle } from "../ui";
+import { Badge, Dot, Empty, ErrorLine, kbProps, Loading, Tap, Toggle } from "../ui";
 import { ask } from "@/lib/peon";
 import { useLoad } from "@/lib/useLoad";
 import { ago } from "@/lib/time";
 import { color } from "@/lib/theme";
+import { useWide } from "@/lib/useWide";
 import type { SessionSummary } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
@@ -27,6 +28,7 @@ type Row = { kind: "day"; key: string; label: string } | { kind: "session"; key:
 /** Sessions (or chats), newest first by day, with search and "+ New session". */
 export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
   const insets = useSafeAreaInsets();
+  const wide = useWide();
   const [query, setQuery] = useState("");
   const [worktree, setWorktree] = useState(ctx.project.always_worktree);
   const [starting, setStarting] = useState(false);
@@ -103,27 +105,43 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
               kb="row"
               testID={`session-${item.s.id}`}
               onPress={() => router.push(`/session/${item.s.id}`)}
-              style={st.row}
+              style={[st.row, wide && st.rowWide]}
             >
-              <View style={st.rowTop}>
-                <Text style={st.rowTitle} numberOfLines={2}>
-                  {item.s.title}
+              {wide ? (
+                <View style={st.dotCol}>
+                  <Dot
+                    size={8}
+                    tint={
+                      item.s.status === "waiting"
+                        ? color.needs
+                        : item.s.status === "running"
+                          ? color.accent
+                          : color.ghost
+                    }
+                  />
+                </View>
+              ) : null}
+              <View style={{ flex: 1, gap: 4 }}>
+                <View style={st.rowTop}>
+                  <Text style={st.rowTitle} numberOfLines={2}>
+                    {item.s.title}
+                  </Text>
+                  {item.s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
+                  {item.s.status === "running" ? <Badge label="Running" /> : null}
+                </View>
+                <Text style={st.rowMeta}>
+                  {[
+                    item.s.branch,
+                    ago(item.s.updated, true),
+                    item.s.started_by,
+                    item.s.scope === "private" ? "only you" : null,
+                    item.s.scheduled ? "scheduled" : null,
+                    item.s.worktree ? `worktree ${item.s.worktree}` : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </Text>
-                {item.s.status === "waiting" ? <Badge label="Needs you" /> : null}
-                {item.s.status === "running" ? <Badge label="Running" tint="muted" /> : null}
               </View>
-              <Text style={st.rowMeta}>
-                {[
-                  item.s.branch,
-                  ago(item.s.updated, true),
-                  item.s.started_by,
-                  item.s.scope === "private" ? "only you" : null,
-                  item.s.scheduled ? "scheduled" : null,
-                  item.s.worktree ? `worktree ${item.s.worktree}` : null,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </Text>
             </Tap>
           )
         }
@@ -162,6 +180,8 @@ const st = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: color.hairline,
   },
+  rowWide: { flexDirection: "row", gap: 14 },
+  dotCol: { paddingTop: 7 },
   rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
   rowTitle: { flex: 1, fontSize: 15.5, color: color.text },
   rowMeta: { fontSize: 13, color: color.muted },

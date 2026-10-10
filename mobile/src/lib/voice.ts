@@ -172,6 +172,11 @@ export function useDictation(onFinal?: (text: string) => void, onSilence?: () =>
   /** Starts listening; false when it can't (no microphone permission). */
   async function start(): Promise<boolean> {
     setError(null);
+    // Firefox (and some other browsers) ship no Web Speech recognition at all.
+    if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
+      setError("This browser has no speech recognition. Use Chrome, Edge or Safari for voice.");
+      return false;
+    }
     const perm = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!perm.granted) {
       setError("Peon needs the microphone and speech recognition. Allow them in Settings.");

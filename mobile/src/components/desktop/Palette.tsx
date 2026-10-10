@@ -3,13 +3,19 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import { router } from "expo-router";
 import { currentPayload, getCurrent } from "@/lib/current";
 import { notePaletteOpen, setHelp, sidebarItems, toast, toggleZoom } from "@/lib/keys";
-import { closePalette, usePalette } from "@/lib/palette";
+import { closePalette, usePalette, type PaletteMode } from "@/lib/palette";
 import { ask, signOut, usePeon } from "@/lib/peon";
 import { setVoiceSettings, useVoiceSettings } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 import type { ComposeResult } from "@/lib/types";
 
-type Item = { key: string; group: string; label: string; detail?: string; run: () => void | Promise<void> };
+export type Item = {
+  key: string;
+  group: string;
+  label: string;
+  detail?: string;
+  run: () => void | Promise<void>;
+};
 
 const go = (href: string) => router.navigate(href as any);
 
@@ -39,23 +45,13 @@ async function compose(text: string) {
   }
 }
 
-// mod+K: jump anywhere, or do something. Typing filters; Enter runs the first match.
-export function Palette() {
-  const mode = usePalette();
+/** What the palette (and the top bar's "> commands") lists for `mode`. */
+export function usePaletteItems(mode: PaletteMode | null): Item[] {
   const projects = usePeon((s) => s.projects);
   const running = usePeon((s) => s.running);
   const user = usePeon((s) => s.user);
   const voice = useVoiceSettings();
-  const [query, setQuery] = useState("");
-  const [index, setIndex] = useState(0);
-  const input = useRef<TextInput>(null);
-
-  useEffect(() => {
-    notePaletteOpen(mode != null);
-    if (mode) setTimeout(() => input.current?.focus(), 30);
-  }, [mode]);
-
-  const items: Item[] = useMemo(() => {
+  return useMemo(() => {
     if (!mode) return [];
     const places = sidebarItems(projects).map(({ project, href }, i) => ({
       key: `place-${project.id}`,
@@ -150,6 +146,21 @@ export function Palette() {
     ];
     return [...places, ...sessions, ...pages, ...commands];
   }, [mode, projects, running, user, voice.reply]);
+}
+
+// ^B w / ^B c (and mod+K where there is no top bar): a modal list to jump or start in.
+// Typing filters; Enter runs the first match.
+export function Palette() {
+  const mode = usePalette();
+  const items = usePaletteItems(mode);
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const input = useRef<TextInput>(null);
+
+  useEffect(() => {
+    notePaletteOpen(mode != null);
+    if (mode) setTimeout(() => input.current?.focus(), 30);
+  }, [mode]);
 
   const q = query.trim().toLowerCase();
   const shown = q

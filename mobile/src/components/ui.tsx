@@ -129,12 +129,15 @@ export function Card({
   children,
   style,
   accent,
+  needs,
 }: {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
   accent?: boolean;
+  /** Waiting on you: amber. */
+  needs?: boolean;
 }) {
-  return <View style={[s.card, accent && s.cardAccent, style]}>{children}</View>;
+  return <View style={[s.card, accent && s.cardAccent, needs && s.cardNeeds, style]}>{children}</View>;
 }
 
 export function Group({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
@@ -229,13 +232,53 @@ export function Segmented<T extends string>({
   );
 }
 
+/** Tabs as text with an underline (desktop page headers). */
+export function UnderlineTabs<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <View style={s.utabs}>
+      {options.map((o) => {
+        const on = o.value === value;
+        return (
+          <Pressable
+            key={o.value}
+            {...kbProps("tab", on)}
+            onPress={() => onChange(o.value)}
+            style={(st: any) => [
+              s.utab,
+              on && s.utabOn,
+              st.hovered && !on && { borderBottomColor: color.ghost },
+            ]}
+          >
+            <Text style={[s.utabText, on && { color: color.textStrong }]}>{o.label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export function Dot({ size = 8, tint = color.accent }: { size?: number; tint?: string }) {
   return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: tint }} />;
 }
 
-export function Badge({ label, tint = "accent" }: { label: string; tint?: "accent" | "muted" | "red" }) {
+export function Badge({
+  label,
+  tint = "accent",
+}: {
+  label: string;
+  tint?: "accent" | "muted" | "red" | "needs";
+}) {
   const look = {
     accent: { bg: color.accentWash, fg: color.accentText },
+    needs: { bg: color.needsWash, fg: color.needs },
     muted: { bg: color.raised, fg: color.textDim },
     red: { bg: "#2a1716", fg: color.red },
   }[tint];
@@ -324,6 +367,17 @@ export const s = StyleSheet.create({
     gap: 10,
   },
   cardAccent: { backgroundColor: color.accentCard, borderColor: color.accentBorder },
+  utabs: { flexDirection: "row", gap: 24 },
+  utab: {
+    paddingTop: 4,
+    paddingBottom: 10,
+    paddingHorizontal: 1,
+    borderBottomWidth: 2,
+    borderBottomColor: "transparent",
+  },
+  utabOn: { borderBottomColor: color.textStrong },
+  utabText: { fontSize: 14, color: color.muted },
+  cardNeeds: { backgroundColor: color.needsCard, borderColor: color.needsBorder },
   group: { borderRadius: 14, backgroundColor: color.card, overflow: "hidden" },
   section: { fontSize: 13, color: color.muted, marginTop: 4 },
   button: {

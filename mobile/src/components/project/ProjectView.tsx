@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Platform, ScrollView, StyleSheet, Text, View } from "react-native";
-import { BackHeader, ErrorLine, Loading, Screen, Segmented } from "../ui";
+import { BackHeader, ErrorLine, Loading, Screen, Segmented, UnderlineTabs } from "../ui";
+import { Letter } from "../desktop/Sidebar";
 import { RunsTab } from "./RunsTab";
 import { SchedulesTab } from "./SchedulesTab";
 import { SessionsTab } from "./SessionsTab";
@@ -82,31 +83,56 @@ export function ProjectView({ id, back, initialTab }: { id: string; back: string
         .join(" · ")
     : "";
 
+  const routineLine = ch.reply?.routine ? (
+    <>
+      <Text style={st.run} numberOfLines={1} selectable>
+        {ch.reply.routine.run}
+      </Text>
+      <ErrorLine message={ch.reply.routine.error} />
+    </>
+  ) : null;
+
   return (
     <Screen full={wide && tab === "skills"}>
-      {!wide ? <BackHeader label={back} /> : <View style={{ height: 12 }} />}
-      <View style={st.head}>
-        <Text style={st.title} numberOfLines={1}>
-          {p?.name ?? "Project"}
-        </Text>
-        <Text style={st.sub}>{sub}</Text>
-        {ch.reply?.routine ? (
-          <>
-            <Text style={st.run} numberOfLines={1} selectable>
-              {ch.reply.routine.run}
+      {wide ? (
+        // Desktop: crumb, tile and name, then tabs on the header's bottom line.
+        <View style={st.wideHead}>
+          <Text style={st.crumb}>{back}</Text>
+          <View style={st.titleRow}>
+            {p ? <Letter name={p.name} system={p.kind === "system"} size={34} /> : null}
+            <Text style={st.wideTitle} numberOfLines={1}>
+              {p?.name ?? "Project"}
             </Text>
-            <ErrorLine message={ch.reply.routine.error} />
-          </>
-        ) : null}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          </View>
+          <Text style={st.wideSub}>{sub}</Text>
+          {routineLine}
           <View
-            style={{ minWidth: wide ? 520 : tabs.length * 92, flex: 1 }}
+            style={{ marginTop: 6 }}
             {...(Platform.OS === "web" ? ({ dataSet: { kbTabs: "project" } } as object) : {})}
           >
-            <Segmented options={tabs} value={tab} onChange={setTab} />
+            <UnderlineTabs options={tabs} value={tab} onChange={setTab} />
           </View>
-        </ScrollView>
-      </View>
+        </View>
+      ) : (
+        <>
+          <BackHeader label={back} />
+          <View style={st.head}>
+            <Text style={st.title} numberOfLines={1}>
+              {p?.name ?? "Project"}
+            </Text>
+            <Text style={st.sub}>{sub}</Text>
+            {routineLine}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View
+                style={{ minWidth: tabs.length * 92, flex: 1 }}
+                {...(Platform.OS === "web" ? ({ dataSet: { kbTabs: "project" } } as object) : {})}
+              >
+                <Segmented options={tabs} value={tab} onChange={setTab} />
+              </View>
+            </ScrollView>
+          </View>
+        </>
+      )}
       {ch.error ? (
         <View style={{ padding: 18 }}>
           <ErrorLine message={ch.error} />
@@ -132,5 +158,17 @@ const st = StyleSheet.create({
   head: { paddingHorizontal: 18, paddingTop: 4, gap: 12, paddingBottom: 10 },
   title: { fontSize: 28, fontWeight: "700", letterSpacing: -0.5, color: color.text },
   sub: { fontSize: 14, color: color.muted, marginTop: -8 },
+  wideHead: {
+    paddingHorizontal: 32,
+    paddingTop: 18,
+    gap: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: color.hairline,
+    marginBottom: 8,
+  },
+  crumb: { fontSize: 12, color: color.muted },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 12, minWidth: 0 },
+  wideTitle: { flexShrink: 1, fontFamily: font.brand, fontSize: 28, letterSpacing: -0.8, color: color.text },
+  wideSub: { fontSize: 13, color: color.muted },
   run: { fontSize: 12, fontFamily: font.mono, color: color.muted, marginTop: -6 },
 });

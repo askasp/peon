@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { router, usePathname } from "expo-router";
-import { Icon } from "../Icon";
-import { Button, Dot, ErrorLine } from "../ui";
+import { router } from "expo-router";
+import { Icon, Mark } from "../Icon";
+import { Button, ErrorLine } from "../ui";
 import { ComposerOutput } from "../ComposerOutput";
-import { openPalette } from "@/lib/palette";
+import { usePaletteItems, type Item } from "./Palette";
 import { useCommand } from "@/lib/commands";
+import { isMac } from "@/lib/keys";
 import { usePeon } from "@/lib/peon";
 import { useComposer } from "@/lib/useComposer";
 import { setVoiceSettings, useDictation, useVoiceSettings } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 
-// The global composer, inline: type (or talk), see how it reads, Enter to go.
-function InlineComposer() {
+// One bar for everything: type (or talk) a task and Enter starts it; start with
+// ">" for commands; empty, it lists what's running. Below it, how Peon reads the line.
+function CommandBar() {
   const [text, setText] = useState("");
   const [focused, setFocused] = useState(false);
+  const [index, setIndex] = useState(0);
   const input = useRef<TextInput>(null);
   const voice = useVoiceSettings();
   // Talking adds to the line; Enter (or the button) starts it.
@@ -24,87 +27,192 @@ function InlineComposer() {
     input.current?.focus();
   });
   const line = dictation.listening ? join(text, dictation.transcript) : text;
+  const command = line.startsWith(">");
+  const task = !command && line.trim() !== "";
+
   const opener = useRef<(id: string) => void>(() => {});
   const open = (id: string) => opener.current(id);
-  const c = useComposer(line, open);
-  useCommand("composer:focus", () => input.current?.focus());
+  // Only a task goes to the composer; "> …" is filtered here.
+  const c = useComposer(task ? line : "", open);
+
+  const all = usePaletteItems("all");
+  const places = usePaletteItems("switch");
+  const filter = line.slice(1).trim().toLowerCase();
+  const prefix = line.trim().toLowerCase();
+  const [title, list]: [string, Item[]] = command
+    ? [
+        "Commands",
+        all.filter(
+          (i) => !filter || `${i.group} ${i.label} ${i.detail ?? ""}`.toLowerCase().includes(filter),
+        ),
+      ]
+    : task
+      ? [
+          "Or jump to",
+          prefix.length >= 2
+            ? places.filter((i) => i.label.toLowerCase().startsWith(prefix)).slice(0, 3)
+            : [],
+        ]
+      : [
+          "Recent",
+          [...all.filter((i) => i.group === "Running").slice(0, 4), ...all.filter((i) => i.key === "inbox")],
+        ];
+  // A task is picked first (index -1); arrows move into the list below it.
+  const first = task ? -1 : 0;
+  const at = Math.min(Math.max(index, first), list.length - 1);
+
+  function clear() {
+    setText("");
+    setIndex(0);
+    c.reset();
+    input.current?.blur();
+  }
+
+  useCommand("composer:focus", () => {
+    setText("");
+    input.current?.focus();
+  });
+  useCommand("composer:commands", () => {
+    setText(">");
+    setIndex(0);
+    input.current?.focus();
+  });
   useCommand("composer:talk", () => (dictation.listening ? dictation.stop() : dictation.start()));
   useEffect(() => {
     opener.current = (id) => {
-      setText("");
-      c.reset();
-      input.current?.blur();
+      clear();
       router.navigate(`/session/${id}`);
     };
   });
 
-  const showPanel =
-    (focused && line.trim() !== "") || c.busy || c.answer || c.note || c.error || c.plan || dictation.error;
+  function pick(item: Item | undefined) {
+    if (!item) return;
+    clear();
+    item.run();
+  }
+
+  const result = c.busy || c.answer || c.note || c.error || c.plan;
+  const open_ = focused || (task && result) || !!dictation.error;
+  const voiceLabel = voice.reply ? "Voice reply" : "Text reply";
 
   return (
-    <View style={st.composerWrap}>
-      <View style={[st.composer, (focused || dictation.listening) && { borderColor: color.accent }]}>
+    <View style={st.barWrap}>
+      <View style={[st.bar, (focused || dictation.listening) && { borderColor: color.accent }]}>
+        <Text style={[st.mode, command ? st.modeCommand : st.modeTask]}>{command ? ">" : "Task"}</Text>
         <TextInput
           ref={input}
           testID="top-composer"
           value={line}
           onChangeText={(v) => {
             setText(v);
+            setIndex(0);
             c.edited();
           }}
           onFocus={() => setFocused(true)}
           onBlur={() => setTimeout(() => setFocused(false), 150)}
           onKeyPress={(e: any) => {
-            if (e.nativeEvent.key === "Escape") {
-              setText("");
-              c.reset();
-              input.current?.blur();
+            const k = e.nativeEvent.key;
+            if (k === "Escape") {
+              e.preventDefault?.();
+              clear();
+            } else if (k === "ArrowDown" || k === "ArrowUp") {
+              e.preventDefault?.();
+              setIndex(Math.min(list.length - 1, Math.max(first, at + (k === "ArrowDown" ? 1 : -1))));
+            } else if (k === "Enter") {
+              e.preventDefault?.();
+              if (task && at === -1) c.submit(line);
+              else pick(list[at]);
             }
           }}
-          onSubmitEditing={() => c.submit(line)}
-          placeholder="Start anything: “new session in … use /skill, then …”"
+          placeholder="Start a task, or type > for commands"
           placeholderTextColor={color.faint}
-          style={st.composerInput}
+          style={st.input}
         />
+        <Text style={st.kbd}>{isMac ? "⌘K" : "Ctrl+K"}</Text>
         <Pressable
+          testID="top-voice-reply"
           onPress={() => setVoiceSettings({ reply: !voice.reply })}
-          style={(s: any) => [st.chip, s.hovered && { backgroundColor: color.raised }]}
+          style={(s: any) => [
+            st.chip,
+            voice.reply && { backgroundColor: color.accentWash },
+            s.hovered && !voice.reply && { backgroundColor: color.raised },
+          ]}
         >
-          <Icon name="speaker" size={12} color={voice.reply ? color.accentText : color.muted} />
+          <Icon name="speaker" size={13} color={voice.reply ? color.accentText : color.muted} />
           <Text style={[st.chipText, { color: voice.reply ? color.accentText : color.muted }]}>
-            {voice.reply ? "Voice" : "Text"}
+            {voiceLabel}
           </Text>
         </Pressable>
         <Pressable
           testID="top-mic"
+          accessibilityLabel="Talk"
           onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
           style={(s: any) => [
             st.mic,
-            dictation.listening && { backgroundColor: color.accent },
-            s.hovered && !dictation.listening && { backgroundColor: color.raised },
+            dictation.listening && { backgroundColor: color.cream },
+            s.hovered && { opacity: 0.85 },
           ]}
         >
-          <Icon name="mic" size={14} color={dictation.listening ? color.accentInk : color.text} />
+          <Icon name={dictation.listening ? "stop" : "mic"} size={14} color={color.accentInk} />
         </Pressable>
       </View>
-      {showPanel ? (
-        <View style={st.panel}>
-          {c.busy && !c.rows.length ? <ActivityIndicator color={color.muted} /> : null}
-          <ComposerOutput
-            plan={c.plan}
-            rows={c.rows}
-            answer={c.answer}
-            note={c.note}
-            unsure={c.unsure}
-            busy={c.busy}
-            open={open}
-          />
-          <ErrorLine message={c.error ?? dictation.error} />
-          {line.trim() ? (
-            <View style={{ flexDirection: "row", justifyContent: "flex-end", gap: 8 }}>
-              <Text style={st.hint}>Enter</Text>
-              <Button label={c.button} height={34} busy={c.busy} onPress={() => c.submit(line)} />
+
+      {open_ ? (
+        // Clicks inside the panel shouldn't blur the bar first.
+        <View style={st.panel} {...({ onMouseDown: (e: any) => e.preventDefault() } as object)}>
+          {task || dictation.error ? (
+            <View style={[st.task, list.length > 0 && st.taskDivider]}>
+              {c.busy && !c.rows.length ? <ActivityIndicator color={color.muted} /> : null}
+              <ComposerOutput
+                plan={c.plan}
+                rows={c.rows}
+                answer={c.answer}
+                note={c.note}
+                unsure={c.unsure}
+                busy={c.busy}
+                open={open}
+              />
+              <ErrorLine message={c.error ?? dictation.error} />
+              {task ? (
+                <View style={st.taskFoot}>
+                  <Text style={st.hint}>
+                    @ project · / skill · {voice.reply ? "voice reply on" : "text reply"}
+                  </Text>
+                  <Button
+                    label={`${c.button}  ↵`}
+                    height={30}
+                    busy={c.busy}
+                    onPress={() => c.submit(line)}
+                    testID="top-start"
+                  />
+                </View>
+              ) : null}
             </View>
+          ) : null}
+          {list.length ? (
+            <ScrollView style={{ maxHeight: 380 }} contentContainerStyle={{ padding: 6 }}>
+              <Text style={st.listTitle}>{title}</Text>
+              {list.map((item, i) => (
+                <Pressable
+                  key={item.key}
+                  onPress={() => pick(item)}
+                  onHoverIn={() => setIndex(i)}
+                  style={[st.row, i === at && st.rowOn]}
+                >
+                  <Text style={st.kind} numberOfLines={1}>
+                    {item.group}
+                  </Text>
+                  <Text style={st.label} numberOfLines={1}>
+                    {item.label}
+                  </Text>
+                  <Text style={st.detail} numberOfLines={1}>
+                    {item.detail ?? "↵"}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : command ? (
+            <Text style={[st.hint, { padding: 16 }]}>No command matches.</Text>
           ) : null}
         </View>
       ) : null}
@@ -112,159 +220,147 @@ function InlineComposer() {
   );
 }
 
+// Brand, the one bar in the middle, you on the right.
 export function TopBar() {
-  const path = usePathname();
-  const live = usePeon((s) => s.running);
-  const viewing = usePeon((s) => s.viewing);
-  // The session on screen stays a tab while it's idle, like the web.
-  const running =
-    viewing && !live.some((r) => r.id === viewing.id)
-      ? [...live, { ...viewing, status: "idle" as const, project: null }]
-      : live;
-  const inbox = usePeon((s) => s.inbox.length);
   const user = usePeon((s) => s.user);
 
   return (
-    <View style={st.bar}>
-      <Pressable
-        testID="open-palette"
-        onPress={() => openPalette()}
-        style={(s: any) => [st.search, s.hovered && { borderColor: color.outline }]}
-      >
-        <Text style={st.searchText}>Search or run a command</Text>
-        <Text style={st.kbd}>Ctrl+K</Text>
-      </Pressable>
-      <InlineComposer />
-      <ScrollView
-        horizontal
-        style={{ flex: 1 }}
-        contentContainerStyle={st.tabs}
-        showsHorizontalScrollIndicator={false}
-      >
-        {running.map((r) => {
-          const active = path === `/session/${r.id}`;
-          return (
-            <Pressable
-              key={r.id}
-              onPress={() => router.navigate(`/session/${r.id}`)}
-              style={(s: any) => [
-                st.tab,
-                active && st.tabActive,
-                s.hovered && !active && { backgroundColor: color.card },
-              ]}
-            >
-              {r.status === "idle" ? null : (
-                <Dot size={6} tint={r.status === "waiting" ? color.cream : color.accent} />
-              )}
-              <Text style={st.tabText} numberOfLines={1}>
-                {r.title}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-      <Pressable
-        onPress={() => router.navigate("/")}
-        style={(s: any) => [st.right, s.hovered && { opacity: 0.75 }]}
-      >
-        <Text style={st.rightText}>Inbox{inbox ? ` · ${inbox}` : ""}</Text>
-      </Pressable>
-      <Pressable
-        onPress={() => router.navigate("/settings")}
-        style={(s: any) => [st.right, s.hovered && { opacity: 0.75 }]}
-      >
-        <Text style={st.rightText}>{user?.username}</Text>
-      </Pressable>
+    <View style={st.top}>
+      <View style={st.side}>
+        <Mark size={28} />
+        <Text style={st.word}>peon</Text>
+      </View>
+      <View style={st.center}>
+        <CommandBar />
+      </View>
+      <View style={[st.side, { justifyContent: "flex-end" }]}>
+        <Pressable
+          testID="top-avatar"
+          accessibilityLabel="Settings"
+          onPress={() => router.navigate("/settings")}
+          style={(s: any) => [st.avatar, s.hovered && { backgroundColor: color.pill }]}
+        >
+          <Text style={st.avatarText}>{(user?.username ?? "?").slice(0, 1).toUpperCase()}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const st = StyleSheet.create({
-  bar: {
-    height: 48,
+  top: {
+    height: 56,
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 10,
+    gap: 16,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
     borderBottomColor: color.hairline,
     backgroundColor: color.bar,
     zIndex: 10,
   },
-  search: {
-    width: 230,
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: color.border,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 10,
-  },
-  searchText: { fontSize: 13, color: color.muted },
-  kbd: {
-    fontSize: 11,
-    fontFamily: font.mono,
-    color: color.textDim,
-    borderWidth: 1,
-    borderColor: color.outline,
-    borderRadius: 4,
-    paddingHorizontal: 5,
-  },
-  composerWrap: { width: 520, position: "relative" },
-  composer: {
-    height: 32,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: color.border,
-    backgroundColor: color.bg,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingLeft: 10,
-    paddingRight: 4,
-  },
-  composerInput: { flex: 1, height: 30, fontSize: 13, color: color.text, outlineStyle: "none" } as any,
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 6,
-    height: 24,
-    borderRadius: 6,
-  },
-  chipText: { fontSize: 12 },
-  mic: { width: 26, height: 24, borderRadius: 6, alignItems: "center", justifyContent: "center" },
-  panel: {
-    position: "absolute",
-    top: 38,
-    left: 0,
-    right: 0,
-    padding: 14,
-    gap: 12,
-    borderRadius: 12,
+  side: { width: 208, flexDirection: "row", alignItems: "center", gap: 8, paddingLeft: 4 },
+  word: { fontFamily: font.brand, fontSize: 22, letterSpacing: -0.9, color: color.text },
+  center: { flex: 1, minWidth: 0, alignItems: "center" },
+  barWrap: { width: "100%", maxWidth: 720, position: "relative" },
+  bar: {
+    height: 38,
+    borderRadius: 10,
     borderWidth: 1,
     borderColor: color.border,
     backgroundColor: color.card,
-    shadowColor: "#000",
-    shadowOpacity: 0.5,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
-  },
-  hint: { alignSelf: "center", fontSize: 12, color: color.faint },
-  tabs: { alignItems: "center", gap: 6, paddingHorizontal: 4 },
-  tab: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    height: 28,
-    paddingHorizontal: 10,
-    borderRadius: 7,
-    maxWidth: 220,
+    gap: 10,
+    paddingLeft: 12,
+    paddingRight: 5,
   },
-  tabActive: { backgroundColor: color.raised },
-  tabText: { fontSize: 12, color: color.textSoft },
-  right: { paddingHorizontal: 6 },
-  rightText: { fontSize: 13, color: color.textDim },
+  mode: {
+    fontFamily: font.mono,
+    fontSize: 12,
+    fontWeight: "600",
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: "hidden",
+  },
+  modeTask: { backgroundColor: color.accentWash, color: color.accentText },
+  modeCommand: { backgroundColor: color.raised, color: color.text },
+  input: { flex: 1, minWidth: 0, height: 36, fontSize: 14, color: color.text, outlineStyle: "none" } as any,
+  kbd: {
+    fontSize: 11,
+    fontFamily: font.mono,
+    color: color.muted,
+    borderWidth: 1,
+    borderColor: color.outline,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  chip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 8,
+    height: 26,
+    borderRadius: 6,
+  },
+  chipText: { fontSize: 12 },
+  mic: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: color.accent,
+  },
+  panel: {
+    position: "absolute",
+    top: 46,
+    left: 0,
+    right: 0,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#2c2c34",
+    backgroundColor: color.card,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOpacity: 0.55,
+    shadowRadius: 25,
+    shadowOffset: { width: 0, height: 20 },
+  },
+  task: { paddingHorizontal: 16, paddingVertical: 14, gap: 12 },
+  taskDivider: { borderBottomWidth: 1, borderBottomColor: color.divider },
+  taskFoot: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  hint: { fontSize: 12, color: color.muted },
+  listTitle: {
+    fontSize: 11,
+    letterSpacing: 0.7,
+    textTransform: "uppercase",
+    color: "#62626b",
+    paddingHorizontal: 10,
+    paddingTop: 6,
+    paddingBottom: 4,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 7,
+  },
+  rowOn: { backgroundColor: color.raised },
+  kind: { width: 70, fontSize: 11, color: color.faint },
+  label: { flex: 1, minWidth: 0, fontSize: 14, color: color.text },
+  detail: { fontSize: 11, fontFamily: font.mono, color: color.muted, maxWidth: 160 },
+  avatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: color.raised,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: { fontSize: 13, fontWeight: "600", color: color.text },
 });

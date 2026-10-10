@@ -13,8 +13,12 @@
       "bundleIdentifier": "no.stadler.peon",
       "infoPlist": {
         "UIBackgroundModes": [
+          "audio",
           "audio"
-        ]
+        ],
+        "NSSpeechRecognitionUsageDescription": "Peon turns what you say into text for your sessions.",
+        "NSMicrophoneUsageDescription": "Peon listens while you talk to it.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
@@ -25,7 +29,10 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -58,6 +65,12 @@
     "experiments": {
       "typedRoutes": true,
       "baseUrl": "/app"
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "93f24cab-d783-4954-9eda-583ac5fca992"
+      }
     }
   }
 }

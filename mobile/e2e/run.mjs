@@ -59,7 +59,7 @@ async function login(page) {
   await page.press('input[name="user[password]"]', "Enter");
   await page.waitForURL(/\/app/, { timeout: 20000 });
   await waitFor(
-    async () => (await page.locator('[data-testid="tab-mic"], [data-testid="open-palette"]').count()) > 0,
+    async () => (await page.locator('[data-testid="tab-mic"], [data-testid="top-composer"]').count()) > 0,
     "app didn't load",
   );
 }

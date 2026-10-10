@@ -1,10 +1,10 @@
 import { ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, usePathname } from "expo-router";
-import { Icon, Mark } from "../Icon";
+import { Icon } from "../Icon";
 import { Dot, kbProps } from "../ui";
 import { signOut, usePeon } from "@/lib/peon";
-import { color, font } from "@/lib/theme";
+import { color, tileColors } from "@/lib/theme";
 import type { Project } from "@/lib/types";
 
 /** A sidebar row: highlights when hovered or current. */
@@ -39,10 +39,24 @@ export function NavRow({
   );
 }
 
-function Letter({ name }: { name: string }) {
+/** A project's letter on its own tint. */
+export function Letter({
+  name,
+  system = false,
+  size = 22,
+}: {
+  name: string;
+  system?: boolean;
+  size?: number;
+}) {
+  const tint = tileColors(name, system);
   return (
-    <View style={st.letter}>
-      <Text style={st.letterText}>{name.slice(0, 1).toUpperCase()}</Text>
+    <View
+      style={[st.letter, { width: size, height: size, borderRadius: size * 0.27, backgroundColor: tint.bg }]}
+    >
+      <Text style={[st.letterText, { color: tint.fg, fontSize: size * 0.48 }]}>
+        {name.slice(0, 1).toUpperCase()}
+      </Text>
     </View>
   );
 }
@@ -64,6 +78,8 @@ function Section({ title, onAdd }: { title: string; onAdd?: () => void }) {
   );
 }
 
+const host = typeof window !== "undefined" ? window.location.hostname : "connected";
+
 // Projects and routines, then the app's places, like the web app's sidebar.
 export function Sidebar() {
   const path = usePathname();
@@ -82,7 +98,7 @@ export function Sidebar() {
   const meta = (p: Project, label: string) => (
     <View style={st.metaRow}>
       {busy.has(p.id) ? (
-        <Dot size={7} tint={busy.get(p.id) === "waiting" ? color.cream : color.accent} />
+        <Dot size={7} tint={busy.get(p.id) === "waiting" ? color.needs : color.accent} />
       ) : null}
       {p.scope === "private" ? <Icon name="lock" size={11} color={color.faint} /> : null}
       <Text style={st.meta} numberOfLines={1}>
@@ -101,19 +117,14 @@ export function Sidebar() {
       label={p.name}
       href={href}
       active={path === href || path.startsWith(`${href}/`)}
-      left={<Letter name={p.name} />}
+      left={<Letter name={p.name} system={p.kind === "system"} />}
       right={right}
     />
   );
 
   return (
     <View style={st.side}>
-      <View style={st.brand}>
-        <Mark size={26} />
-        <Text style={st.word}>peon</Text>
-        <Text style={st.tag}>work work.</Text>
-      </View>
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 16 }}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 10, paddingBottom: 16 }}>
         <Section title="Projects" onAdd={user ? () => router.navigate("/new" as any) : undefined} />
         {places.map((p) => projectRow(p, `/project/${p.id}`, meta(p, p.schedule ?? p.kind)))}
         <Section
@@ -149,9 +160,12 @@ export function Sidebar() {
         <NavRow label="Settings" href="/settings" active={path === "/settings"} />
       </ScrollView>
       <View style={st.foot}>
-        <Text style={[st.footText, { color: connected ? color.muted : color.red }]}>
-          {connected ? "connected" : "reconnecting…"}
-        </Text>
+        <View style={st.host}>
+          <Dot size={6} tint={connected ? color.teal : color.red} />
+          <Text style={[st.footText, { color: connected ? color.muted : color.red }]} numberOfLines={1}>
+            {connected ? host : "reconnecting…"}
+          </Text>
+        </View>
         <Pressable onPress={signOut} style={(s: any) => [s.hovered && { opacity: 0.7 }]}>
           <Text style={st.footText}>Log out</Text>
         </Pressable>
@@ -161,10 +175,7 @@ export function Sidebar() {
 }
 
 const st = StyleSheet.create({
-  side: { width: 248, borderRightWidth: 1, borderRightColor: color.hairline, backgroundColor: color.bar },
-  brand: { flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 18, paddingVertical: 16 },
-  word: { fontFamily: font.brand, fontSize: 22, letterSpacing: -0.8, color: color.text },
-  tag: { fontSize: 11, color: color.accentText, fontFamily: font.mono, marginTop: 4 },
+  side: { width: 240, borderRightWidth: 1, borderRightColor: color.hairline, backgroundColor: color.bar },
   sectionRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -188,22 +199,15 @@ const st = StyleSheet.create({
   rowHover: { backgroundColor: color.card },
   rowActive: { backgroundColor: color.raised },
   rowLabel: { flex: 1, fontSize: 14, color: color.textSoft },
-  letter: {
-    width: 20,
-    height: 20,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: color.outline,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  letterText: { fontSize: 11, fontWeight: "600", color: color.text },
+  letter: { alignItems: "center", justifyContent: "center" },
+  letterText: { fontWeight: "700" },
   meta: { fontSize: 11, color: color.faint, maxWidth: 96 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   count: {
     fontSize: 11,
-    color: color.accentInk,
-    backgroundColor: color.accent,
+    fontWeight: "700",
+    color: "#1e140b",
+    backgroundColor: color.needs,
     borderRadius: 8,
     paddingHorizontal: 6,
     overflow: "hidden",
@@ -217,4 +221,5 @@ const st = StyleSheet.create({
     borderTopColor: color.hairline,
   },
   footText: { fontSize: 12, color: color.muted },
+  host: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1 },
 });
