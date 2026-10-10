@@ -255,7 +255,11 @@ export function SessionComposer(p: Props) {
               } else if (is("input_submit", "return")) {
                 e.preventDefault?.();
                 send(draft);
-              } else if (is("input_clear", "ctrl+c") && !window.getSelection()?.toString()) {
+              } else if (
+                is("input_clear", "ctrl+c") &&
+                // Native has no window.getSelection.
+                !(Platform.OS === "web" && window.getSelection()?.toString())
+              ) {
                 e.preventDefault?.();
                 setDraft("");
               } else if (is("agent_cycle", "tab") || is("agent_cycle_reverse", "shift+tab")) {
