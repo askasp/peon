@@ -24,6 +24,9 @@ import { Letter } from "@/components/desktop/Sidebar";
 import { PermResources } from "@/components/PermResources";
 import { FormCard } from "@/components/session/FormCard";
 import { SessionComposer } from "@/components/session/SessionComposer";
+import { QueueStrip, TasksCard, type QueueCard } from "@/components/session/QueueBits";
+import { useQueue } from "@/components/project/QueueTab";
+import { queueIntent } from "@/lib/queue";
 import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap, UnderlineTabs } from "@/components/ui";
 import { CopyResult, RunProgress } from "@/components/session/RunProgress";
 import { useKeyboardHeight } from "@/lib/useKeyboard";
@@ -126,6 +129,44 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   // A chat in its own worktree: its files come from there, not the Folder's main.
   const tree = s.session?.worktree ? id : "main";
   const folderCall = useMemo(() => treeCall(folder.call, tree), [folder.call, tree]);
+
+  // A Code chat in its own worktree runs that worktree's tasks (tk), one at a
+  // time: the queue shows above the reply box, and "queue …" adds to it.
+  const queued = s.project?.kind === "code" && !!s.session?.worktree && !inFolder;
+  const [qBump, setQBump] = useState(0);
+  const q = useQueue(queued ? folder.call : null, `${s.status}:${qBump}`, id);
+  const mine = q.queue?.trees.find((t) => t.ref === id) ?? null;
+  const running = mine?.tickets.find((t) => t.status === "in_progress") ?? null;
+  const [cards, setCards] = useState<QueueCard[]>([]);
+  const [qPanel, setQPanel] = useState(false);
+  const canEditFolder: boolean = own.reply?.can_edit ?? false;
+  const [cardsFor, setCardsFor] = useState(id);
+  if (cardsFor !== id) {
+    setCardsFor(id);
+    setCards([]);
+    setQPanel(false);
+  }
+  async function queueTurn(text: string, intent: NonNullable<ReturnType<typeof queueIntent>>) {
+    follow.current = true;
+    const key = `q${Date.now()}`;
+    if ("list" in intent) {
+      const live = (mine?.tickets ?? []).filter((t) => t.status !== "closed").map((t) => t.id);
+      setCards((c) => [...c, { key, text, mode: "list", ids: live }]);
+      setQBump((n) => n + 1);
+      return;
+    }
+    const r = await q.act<{ ids: string[] }>("queue_add", {
+      ref: id,
+      titles: intent.titles,
+      chain: intent.chain,
+    });
+    if (!r) throw new Error(q.error ?? "Could not queue that.");
+    setCards((c) => [...c, { key, text, mode: "add", ids: r.ids }]);
+  }
+  async function undoCard(card: QueueCard) {
+    for (const tid of card.ids) await q.act("queue_delete", { ref: id, id: tid });
+    setCards((c) => c.map((x) => (x.key === card.key ? { ...x, undone: true } : x)));
+  }
   const openInFiles = () =>
     s.project &&
     router.push({
@@ -241,6 +282,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
 
   const subtitle = [
     s.project?.name,
+    running ? `tk ${running.id}` : null,
     s.session?.worktree,
     s.session?.started_by,
     s.session?.scope === "private" ? "only you" : null,
@@ -369,6 +411,15 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
       }
       ListFooterComponent={
         <View style={{ gap: 12 }}>
+          {cards.map((card) => (
+            <TasksCard
+              key={card.key}
+              card={card}
+              tree={mine}
+              onOpen={() => setQPanel(true)}
+              onUndo={() => undoCard(card)}
+            />
+          ))}
           {changed ? (
             <Tap
               onPress={openDiff}
@@ -467,6 +518,20 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
           {s.run?.status === "running" ? (
             <Text style={st.note}>Anything you send now is queued until the run is done.</Text>
           ) : null}
+          {queued && mine && s.project ? (
+            <View style={[st.queueStrip, !wide && { paddingHorizontal: 12 }]}>
+              <QueueStrip
+                tree={mine}
+                act={q.act}
+                folder={s.project.id}
+                canEdit={canEditFolder}
+                idle={s.status === "idle"}
+                panel={qPanel}
+                onPanel={() => setQPanel(!qPanel)}
+                onAll={() => goFolder("queue")}
+              />
+            </View>
+          ) : null}
           <SessionComposer
             queued={s.run?.status === "running"}
             busy={busy}
@@ -477,6 +542,9 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
             bottomPad={keyboard > 0 ? 10 : Math.max(insets.bottom, 10) + 4}
             send={(text, files) => {
               follow.current = true;
+              // "queue …" in a worktree chat adds tasks instead of asking the agent now.
+              const intent = queued && !files.length ? queueIntent(text) : null;
+              if (intent) return queueTurn(text, intent);
               return s.send(text, files);
             }}
             findFiles={(query) => call("find_files", { query })}
@@ -620,7 +688,9 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
             <View style={st.subRow}>
               <Letter name={folderName ?? ""} system={s.project.kind === "home"} size={13} />
               <Text style={st.headerSub} numberOfLines={1}>
-                {[folderName, s.session?.worktree].filter(Boolean).join(" · ")}
+                {[folderName, running ? `tk ${running.id}` : null, s.session?.worktree]
+                  .filter(Boolean)
+                  .join(" · ")}
               </Text>
             </View>
           ) : null}
@@ -640,6 +710,9 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
               ...(s.project.kind === "routine" || s.project.schedule
                 ? [{ value: "runs", label: "Runs" }]
                 : []),
+              s.project.kind === "code"
+                ? { value: "queue", label: "Queue" }
+                : { value: "tasks", label: "Tasks" },
               { value: "settings", label: "Settings" },
             ]}
             value="chats"
@@ -892,6 +965,7 @@ const st = StyleSheet.create({
   },
   chatColumn: { flexGrow: 0, flexShrink: 0, flexBasis: 540, width: 540 },
   conversation: { flex: 1, minWidth: 0 },
+  queueStrip: { paddingHorizontal: 14 },
   // A session's own screen fills the content area; keep it as narrow as the
   // Folder's chat list (SessionsTab) instead of stretching across a wide window.
   conversationWide: { flex: 1, width: "100%", maxWidth: 868, alignSelf: "center", minWidth: 0 },

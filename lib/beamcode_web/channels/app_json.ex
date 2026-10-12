@@ -18,6 +18,7 @@ defmodule BeamcodeWeb.AppJSON do
       kind: p.kind,
       scope: p.scope,
       always_worktree: p.always_worktree,
+      queue_auto: p.queue_auto,
       default_branch: p.default_branch,
       schedule: Beamcode.Schedules.summary(p.id)
     }

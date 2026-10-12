@@ -10,6 +10,8 @@ export type Project = {
   kind: "code" | "chat" | "document" | "design" | "dataset" | "home" | "routine" | "system";
   scope: "team" | "private";
   always_worktree: boolean;
+  /** Code Folders: a worktree starts its next ready task when one finishes. */
+  queue_auto?: boolean;
   default_branch: string | null;
   schedule: string | null;
   sessions?: number | null;
@@ -213,4 +215,16 @@ export type Ticket = {
   created?: string | null;
   body: string;
   notes: TicketNote[];
+  /** In a queue (`queue` request): open deps that hold it back, and whether it was paused. */
+  blocked_by?: string[];
+  paused?: boolean;
 };
+
+/** One tree's tasks in a Code Folder's queue: main, or a chat's worktree (`ref` is the chat id). */
+export type QueueTree = {
+  ref: string;
+  worktree: string;
+  chat: { id: string; title: string; status: "running" | "waiting" | "idle" } | null;
+  tickets: Ticket[];
+};
+export type Queue = { auto: boolean; trees: QueueTree[] };
