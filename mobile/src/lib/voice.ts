@@ -8,7 +8,14 @@ import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-spe
 
 /** `voice`: a system voice's identifier, or null for the best one installed. */
 // `reply`: read replies aloud. `dictation`: show the mic in the text fields.
-type VoiceSettings = { reply: boolean; dictation: boolean; rate: number; voice: string | null };
+// `replyChosen`: the person flipped "Read replies aloud" themselves.
+type VoiceSettings = {
+  reply: boolean;
+  replyChosen?: boolean;
+  dictation: boolean;
+  rate: number;
+  voice: string | null;
+};
 
 // Chat comes first: replies aren't read aloud unless asked for.
 let settings: VoiceSettings = { reply: false, dictation: true, rate: 1.0, voice: null };
@@ -21,6 +28,9 @@ export async function loadVoiceSettings() {
       const saved = JSON.parse(raw);
       // Settings from before voices could be picked kept the old 1.1× default: too fast.
       if (!("voice" in saved) && saved.rate === 1.1) saved.rate = 1.0;
+      // Reading aloud used to be on by default, and that was saved too: off
+      // unless it was turned on in Settings.
+      if (!saved.replyChosen) saved.reply = false;
       settings = { ...settings, ...saved };
     }
   } catch {}
@@ -28,7 +38,7 @@ export async function loadVoiceSettings() {
 }
 
 export function setVoiceSettings(patch: Partial<VoiceSettings>) {
-  settings = { ...settings, ...patch };
+  settings = { ...settings, ...patch, ...("reply" in patch ? { replyChosen: true } : {}) };
   if (patch.reply === false) Speech.stop();
   storage.setItem("voice", JSON.stringify(settings)).catch(() => {});
   listeners.forEach((l) => l());

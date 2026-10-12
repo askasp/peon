@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Image, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { FlatList, Image, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Frame } from "./Frame";
 import { ErrorLine, Loading, Tap } from "./ui";
 import { useLoad } from "@/lib/useLoad";
@@ -11,9 +11,10 @@ import { color, font } from "@/lib/theme";
 export type Opened = { path: string; type: string; size: number; url: string; text: string | null };
 export type Call = <T = any>(event: string, payload?: object, timeout?: number) => Promise<T>;
 
-/** Markdown as a document: headings, paragraphs, bullets and code blocks. */
-export function Doc({ text }: { text: string }) {
-  const blocks: { k: "h1" | "h2" | "p" | "li" | "code"; t: string }[] = [];
+type DocBlock = { k: "h1" | "h2" | "p" | "li" | "code"; t: string };
+
+function parseDoc(text: string): DocBlock[] {
+  const blocks: DocBlock[] = [];
   let code: string[] | null = null;
   for (const line of text.split("\n")) {
     if (line.startsWith("```")) {
@@ -26,38 +27,49 @@ export function Doc({ text }: { text: string }) {
     else if (/^\s*[-*] /.test(line)) blocks.push({ k: "li", t: line.replace(/^\s*[-*] /, "") });
     else blocks.push({ k: "p", t: line });
   }
-  const strip = (t: string) =>
-    t
-      .replace(/\*\*([^*]+)\*\*/g, "$1")
-      .replace(/`([^`]+)`/g, "$1")
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  return blocks;
+}
+
+const strip = (t: string) =>
+  t
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+
+function DocItem({ b }: { b: DocBlock }) {
+  if (b.k === "h1") return <Text style={st.h1}>{strip(b.t)}</Text>;
+  if (b.k === "h2") return <Text style={st.h2}>{strip(b.t)}</Text>;
+  if (b.k === "li")
+    return (
+      <View style={st.li}>
+        <Text style={st.bullet}>•</Text>
+        <Text style={[st.p, { flex: 1 }]}>{strip(b.t)}</Text>
+      </View>
+    );
+  if (b.k === "code")
+    return (
+      <ScrollView horizontal style={st.codeBlock}>
+        <Text style={st.codeText}>{b.t}</Text>
+      </ScrollView>
+    );
+  return <Text style={st.p}>{strip(b.t)}</Text>;
+}
+
+/**
+ * Markdown as a document: headings, paragraphs, bullets and code blocks.
+ * A list that only draws what's on screen, so a long document opens at once.
+ */
+export function Doc({ text }: { text: string }) {
+  const blocks = useMemo(() => parseDoc(text), [text]);
   return (
-    <ScrollView contentContainerStyle={st.doc}>
-      {blocks.map((b, i) =>
-        b.k === "h1" ? (
-          <Text key={i} style={st.h1}>
-            {strip(b.t)}
-          </Text>
-        ) : b.k === "h2" ? (
-          <Text key={i} style={st.h2}>
-            {strip(b.t)}
-          </Text>
-        ) : b.k === "li" ? (
-          <View key={i} style={st.li}>
-            <Text style={st.bullet}>•</Text>
-            <Text style={[st.p, { flex: 1 }]}>{strip(b.t)}</Text>
-          </View>
-        ) : b.k === "code" ? (
-          <ScrollView key={i} horizontal style={st.codeBlock}>
-            <Text style={st.codeText}>{b.t}</Text>
-          </ScrollView>
-        ) : (
-          <Text key={i} style={st.p}>
-            {strip(b.t)}
-          </Text>
-        ),
-      )}
-    </ScrollView>
+    <FlatList
+      data={blocks}
+      keyExtractor={(_, i) => String(i)}
+      renderItem={({ item }) => <DocItem b={item} />}
+      contentContainerStyle={st.doc}
+      initialNumToRender={40}
+      windowSize={11}
+    />
   );
 }
 
@@ -359,15 +371,31 @@ export function Img({ url, file }: { url: string; file: Opened }) {
   );
 }
 
+// Lines per Text: a few big Texts draw much faster than a row per line.
+const CODE_CHUNK = 400;
+
 export function Code({ text }: { text: string }) {
+  const chunks = useMemo(() => {
+    const lines = text.split("\n");
+    const out: { first: number; numbers: string; body: string }[] = [];
+    for (let i = 0; i < lines.length; i += CODE_CHUNK) {
+      const part = lines.slice(i, i + CODE_CHUNK);
+      out.push({
+        first: i,
+        numbers: part.map((_, j) => i + j + 1).join("\n"),
+        body: part.join("\n"),
+      });
+    }
+    return out;
+  }, [text]);
   return (
     <ScrollView>
       <ScrollView horizontal contentContainerStyle={st.code}>
         <View>
-          {text.split("\n").map((l, i) => (
-            <View key={i} style={st.codeLine}>
-              <Text style={st.codeN}>{i + 1}</Text>
-              <Text style={st.codeText}>{l || " "}</Text>
+          {chunks.map((c) => (
+            <View key={c.first} style={st.codeLine}>
+              <Text style={st.codeN}>{c.numbers}</Text>
+              <Text style={st.codeText}>{c.body}</Text>
             </View>
           ))}
         </View>
@@ -487,7 +515,7 @@ const st = StyleSheet.create({
   code: { paddingVertical: 12, paddingBottom: 30 },
   codeLine: { flexDirection: "row", gap: 12, paddingHorizontal: 14 },
   codeN: {
-    width: 28,
+    minWidth: 28,
     textAlign: "right",
     fontSize: 12,
     lineHeight: 20,
