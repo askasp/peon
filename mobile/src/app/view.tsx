@@ -2,18 +2,7 @@ import { useMemo, useState } from "react";
 import { Linking, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  AppView,
-  Canvas,
-  Code,
-  DevicePicker,
-  Doc,
-  Img,
-  size,
-  Table,
-  type Device,
-  type Opened,
-} from "@/components/views";
+import { AppView, Canvas, Code, Doc, Img, size, Table, type Opened } from "@/components/views";
 import { DiffView } from "@/components/session/DiffView";
 import { treeCall } from "@/components/project/FilesTab";
 import { ErrorLine, Loading, Tap } from "@/components/ui";
@@ -24,8 +13,6 @@ import { singleChat, viewFor, viewInfo, type ViewKind } from "@/lib/folders";
 import { attachToChat } from "@/lib/attach";
 import { getViewDiff } from "@/lib/viewStore";
 import { color, font } from "@/lib/theme";
-
-const deviceName: Record<Device, string> = { desktop: "Desktop", phone: "Phone", both: "Both" };
 
 // A file (or a chat's diff) full screen: the phone's View. `from=files` adds
 // "Chat about this file"; `tree` is a chat id to read that chat's worktree.
@@ -54,7 +41,6 @@ export default function ViewScreen() {
   const [saving, setSaving] = useState(false);
   const [version, setVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [device, setDevice] = useState<Device>("phone");
 
   const slash = path.lastIndexOf("/");
   const name = diff ? diff : path.slice(slash + 1);
@@ -107,15 +93,7 @@ export default function ViewScreen() {
       />
     );
   else if (kind === "doc" && file.text != null) body = <Doc text={file.text} />;
-  else if (kind === "canvas")
-    body = (
-      <View style={{ flex: 1 }}>
-        <View style={st.segWrap}>
-          <DevicePicker value={device} onChange={setDevice} options={["phone", "desktop"]} />
-        </View>
-        <Canvas url={serverUrl(file.url)} version={version} mode={device} />
-      </View>
-    );
+  else if (kind === "canvas") body = <Canvas url={serverUrl(file.url)} version={version} />;
   else if (kind === "app") body = <AppView url={serverUrl(file.url)} />;
   else if (kind === "table") body = <Table call={call} path={path} text={file.text} />;
   else if (kind === "image") body = <Img url={serverUrl(file.url)} file={file} />;
@@ -163,7 +141,7 @@ export default function ViewScreen() {
             onPress={() => {
               // A single-chat Folder: back to its chat, the file in the composer.
               if (folder && singleChat(folder.kind)) {
-                attachToChat(project, { path, view: kind === "canvas" ? deviceName[device] : null });
+                attachToChat(project, { path, view: null });
                 router.back();
               } else
                 router.replace({
@@ -223,7 +201,6 @@ const st = StyleSheet.create({
     fontFamily: font.mono,
     outlineStyle: "none",
   } as any,
-  segWrap: { paddingHorizontal: 16, paddingTop: 8 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 14 },
   faint: { fontSize: 13, color: color.muted },
   ask: { paddingHorizontal: 16, paddingTop: 10, borderTopWidth: 1, borderTopColor: "#222228" },

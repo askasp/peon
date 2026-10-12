@@ -3,18 +3,7 @@ import { Linking, ScrollView, StyleSheet, Text, TextInput, View } from "react-na
 import { Button, Dot, Empty, ErrorLine, Loading, Tap } from "../ui";
 import { PickSheet } from "../Sheet";
 import { Icon } from "../Icon";
-import {
-  AppView,
-  Canvas,
-  Code,
-  DevicePicker,
-  Doc,
-  Img,
-  size,
-  Table,
-  type Device,
-  type Opened,
-} from "../views";
+import { AppView, Canvas, Code, Doc, Img, size, Table, type Opened } from "../views";
 import { router } from "expo-router";
 import { serverUrl } from "@/lib/peon";
 import { viewFor, viewInfo } from "@/lib/folders";
@@ -372,9 +361,9 @@ export function FileView({
   readOnly?: boolean;
   onOpenInFiles?: () => void;
   onClose?: () => void;
-  /** "Chat about this", with the device the canvas shows ("Phone"), if one. */
+  /** "Chat about this". */
   onAsk?: (view: string | null) => void;
-  /** Told the device the canvas shows ("Phone"), or null, whenever it changes. */
+  /** Told how the file is shown ("Phone"), or null, when it changes. */
   onView?: (view: string | null) => void;
   /** The path is a picker for the Folder's other files (`count` of them). */
   onPick?: () => void;
@@ -385,16 +374,14 @@ export function FileView({
   const [editing, setEditing] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [device, setDevice] = useState<Device>("both");
   const kind = viewFor(path);
-  const view = kind === "canvas" && device !== "both" ? deviceName[device] : null;
   const told = useRef(onView);
   useEffect(() => {
     told.current = onView;
   });
   useEffect(() => {
-    told.current?.(view);
-  }, [view]);
+    told.current?.(null);
+  }, []);
   const slash = path.lastIndexOf("/");
   const url = f ? serverUrl(f.url) : null;
 
@@ -432,7 +419,7 @@ export function FileView({
       />
     );
   else if (kind === "doc" && f.text != null) body = <Doc text={f.text} />;
-  else if (kind === "canvas") body = <Canvas url={url} version={version + saved} mode={device} />;
+  else if (kind === "canvas") body = <Canvas url={url} version={version + saved} mode="both" />;
   else if (kind === "app") body = <AppView url={url} />;
   else if (kind === "table") body = <Table call={call} path={path} text={f.text} />;
   else if (kind === "image") body = <Img url={url} file={f} />;
@@ -473,9 +460,6 @@ export function FileView({
           </Text>
         ) : null}
         <View style={{ flex: 1 }} />
-        {kind === "canvas" && editing == null ? (
-          <DevicePicker value={device} onChange={setDevice} options={["desktop", "phone", "both"]} small />
-        ) : null}
         {kind === "doc" && f?.text != null && editing == null && !readOnly ? (
           <Tap onPress={() => setEditing(f.text)} style={st.headButton}>
             <Text style={st.headButtonText}>Edit</Text>
@@ -492,7 +476,7 @@ export function FileView({
           </>
         ) : null}
         {onAsk ? (
-          <Tap onPress={() => onAsk(view)} style={st.ask} testID="chat-about-this">
+          <Tap onPress={() => onAsk(null)} style={st.ask} testID="chat-about-this">
             <Text style={st.askText}>Chat about this</Text>
           </Tap>
         ) : null}
@@ -512,8 +496,6 @@ export function FileView({
     </View>
   );
 }
-
-const deviceName: Record<Device, string> = { desktop: "Desktop", phone: "Phone", both: "Both" };
 
 const st = StyleSheet.create({
   pathPicker: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: color.field },

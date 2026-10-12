@@ -318,7 +318,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
         if (fromEnd <= 40) follow.current = true;
         else if (up) follow.current = false;
       }}
-      scrollEventThrottle={100}
+      scrollEventThrottle={16}
       onContentSizeChange={toEnd}
       // The keyboard or a taller composer shrinks the list: keep the end in view.
       onLayout={toEnd}
@@ -835,7 +835,7 @@ const st = StyleSheet.create({
   subRow: { flexDirection: "row", alignItems: "center", gap: 5, maxWidth: "100%" },
   menuButton: { paddingHorizontal: 4 },
   menuDots: { fontSize: 22, color: color.text, marginTop: -6 },
-  transcript: { padding: 16, gap: 14 },
+  transcript: { padding: 16, paddingBottom: 44, gap: 14 },
   runMeta: { fontSize: 12.5, color: color.muted },
   runHead: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
   runTitle: { fontSize: 14, fontWeight: "600", color: color.text },

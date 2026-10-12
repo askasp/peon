@@ -79,46 +79,70 @@ export type Device = "phone" | "desktop" | "both";
 
 const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
 
+const SIZES = { phone: { w: 390, h: 844 }, desktop: { w: 1280, h: 800 } } as const;
+
 /**
- * A design at phone or desktop size (or both), on a dotted canvas. It opens
- * fitted; − / + (or ctrl/⌘ + scroll on the web) zoom it, and it pans by scrolling.
+ * A design on a pannable canvas: the phone and the desktop layout side by side,
+ * with no device chrome, so the design fills the pane. It opens fitted to the
+ * pane's height; scrolling moves between the phone and the desktop, − / + (or
+ * ctrl/⌘ + scroll and trackpad pinch on the web) zoom it, anchored on the point
+ * under the pointer so zooming doesn't jump.
  */
-export function Canvas({ url, version, mode }: { url: string; version: number; mode: Device }) {
+export function Canvas({ url, version, mode = "both" }: { url: string; version: number; mode?: Device }) {
   const [box, setBox] = useState({ w: 0, h: 0 });
   // null: fit the canvas.
   const [zoom, setZoom] = useState<number | null>(null);
-  const phone = { w: 390, h: 844 };
-  const desk = { w: 1280, h: 800 };
-  // Both: the desktop takes what's left beside a phone at the same height.
-  const fit = (s: { w: number; h: number }, w: number, pad: number) =>
-    Math.min(1, (w - 40 - pad) / s.w, (box.h - 40 - pad) / s.h);
-  const phoneFit = fit(phone, mode === "both" ? box.w * 0.32 : box.w, 12);
-  const deskFit = fit(desk, mode === "both" ? box.w - phone.w * phoneFit - 40 : box.w, 18);
-  const phoneScale = zoom ?? phoneFit;
-  const deskScale = zoom ?? deskFit;
-  const shown = mode === "phone" ? phoneScale : deskScale;
+  const pad = 16;
+  const gap = 32;
+  const devices: ("phone" | "desktop")[] =
+    mode === "phone" ? ["phone"] : mode === "desktop" ? ["desktop"] : ["desktop", "phone"];
+  const tallest = Math.max(...devices.map((d) => SIZES[d].h));
+  // Fit the tallest design to the pane's height: the design fills the view, and
+  // scrolling left/right swings between the phone and the desktop.
+  const base = box.h > 0 ? Math.min(1.5, (box.h - pad * 2) / tallest) : 1;
+  const scale = zoom ?? base;
 
   const step = (dir: 1 | -1) => {
     const next =
-      dir > 0 ? ZOOMS.find((z) => z > shown + 0.001) : [...ZOOMS].reverse().find((z) => z < shown - 0.001);
+      dir > 0 ? ZOOMS.find((z) => z > scale + 0.001) : [...ZOOMS].reverse().find((z) => z < scale - 0.001);
     setZoom(next ?? (dir > 0 ? ZOOMS[ZOOMS.length - 1] : ZOOMS[0]));
   };
 
-  // Web: ctrl/⌘ + wheel (and trackpad pinch) zooms the canvas, not the page.
-  const ref = useRef<View>(null);
-  const shownRef = useRef(shown);
+  const outer = useRef<View>(null);
+  const vref = useRef<ScrollView>(null);
+  const href = useRef<ScrollView>(null);
+  const scaleRef = useRef(scale);
   useEffect(() => {
-    shownRef.current = shown;
-  }, [shown]);
+    scaleRef.current = scale;
+  }, [scale]);
   const ready = box.w > 0;
+
+  // Web: ctrl/⌘ + wheel, or a trackpad pinch, zooms the canvas (not the page),
+  // anchored on the point under the pointer.
   useEffect(() => {
-    const el = ref.current as unknown as HTMLElement | null;
-    if (Platform.OS !== "web" || !el?.addEventListener) return;
+    const el = outer.current as unknown as HTMLElement | null;
+    if (Platform.OS !== "web" || !ready || !el?.addEventListener) return;
+    const scrollNode = (r: typeof vref) =>
+      (r.current as unknown as { getScrollableNode?: () => HTMLElement })?.getScrollableNode?.();
     const onWheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault();
-      const z = shownRef.current * Math.exp(-e.deltaY * 0.01);
-      setZoom(Math.min(3, Math.max(0.1, z)));
+      const prev = scaleRef.current;
+      const next = Math.min(3, Math.max(0.1, prev * Math.exp(-e.deltaY * 0.01)));
+      if (next === prev) return;
+      const rect = el.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      const v = scrollNode(vref);
+      const h = scrollNode(href);
+      const cx = ((h?.scrollLeft ?? 0) + px) * (next / prev);
+      const cy = ((v?.scrollTop ?? 0) + py) * (next / prev);
+      setZoom(next);
+      // Keep the point that was under the pointer in place after the zoom.
+      requestAnimationFrame(() => {
+        if (h) h.scrollLeft = cx - px;
+        if (v) v.scrollTop = cy - py;
+      });
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
@@ -126,34 +150,38 @@ export function Canvas({ url, version, mode }: { url: string; version: number; m
 
   return (
     <View
-      ref={ref}
+      ref={outer}
       style={[st.canvas, Platform.OS === "web" && (st.dots as any)]}
       onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
     >
-      {box.w > 0 ? (
-        <ScrollView style={st.pan} contentContainerStyle={{ flexGrow: 1 }}>
-          <ScrollView horizontal contentContainerStyle={[st.panInner, { minWidth: box.w, minHeight: box.h }]}>
-            <View style={st.devices}>
-              {mode !== "phone" ? (
-                <View style={st.desk}>
-                  <View style={st.chrome}>
-                    <View style={st.light} />
-                    <View style={st.light} />
-                    <View style={st.light} />
-                  </View>
-                  <Frame url={url} width={desk.w} height={desk.h} scale={deskScale} version={version} />
+      {ready ? (
+        <ScrollView
+          ref={vref}
+          style={st.pan}
+          contentContainerStyle={{ flexGrow: 1 }}
+          directionalLockEnabled
+          nestedScrollEnabled
+        >
+          <ScrollView
+            ref={href}
+            horizontal
+            nestedScrollEnabled
+            contentContainerStyle={[st.panInner, { minWidth: box.w, minHeight: box.h }]}
+          >
+            <View style={[st.devices, { gap, padding: pad }]}>
+              {devices.map((d) => (
+                <View key={d} style={[st.sheet, { width: SIZES[d].w * scale, height: SIZES[d].h * scale }]}>
+                  <Frame url={url} width={SIZES[d].w} height={SIZES[d].h} scale={scale} version={version} />
+                  {/* A preview: the cover takes scrolls and drags for the canvas,
+                      so panning and zooming work over the design, not in it. */}
+                  <View style={StyleSheet.absoluteFill} />
                 </View>
-              ) : null}
-              {mode !== "desktop" ? (
-                <View style={st.phone}>
-                  <Frame url={url} width={phone.w} height={phone.h} scale={phoneScale} version={version} />
-                </View>
-              ) : null}
+              ))}
             </View>
           </ScrollView>
         </ScrollView>
       ) : null}
-      {box.w > 0 ? (
+      {ready ? (
         <View style={st.zoomBar}>
           <Tap onPress={() => step(-1)} style={st.zoomKey} aria-label="Zoom out" id="canvas-zoom-out">
             <Text style={st.zoomKeyText}>−</Text>
@@ -164,7 +192,7 @@ export function Canvas({ url, version, mode }: { url: string; version: number; m
             aria-label={zoom === 1 ? "Fit" : "Actual size"}
             id="canvas-zoom-reset"
           >
-            <Text style={st.zoomPctText}>{Math.round(shown * 100)}%</Text>
+            <Text style={st.zoomPctText}>{Math.round(scale * 100)}%</Text>
           </Tap>
           <Tap onPress={() => step(1)} style={st.zoomKey} aria-label="Zoom in" id="canvas-zoom-in">
             <Text style={st.zoomKeyText}>+</Text>
@@ -181,35 +209,6 @@ export function Canvas({ url, version, mode }: { url: string; version: number; m
           </Tap>
         </View>
       ) : null}
-    </View>
-  );
-}
-
-/** Pick phone, desktop (or both) for the canvas. */
-export function DevicePicker({
-  value,
-  onChange,
-  options,
-  small,
-}: {
-  value: Device;
-  onChange: (d: Device) => void;
-  options: Device[];
-  small?: boolean;
-}) {
-  return (
-    <View style={[st.seg, small && st.segSmall]}>
-      {options.map((m) => (
-        <Tap
-          key={m}
-          onPress={() => onChange(m)}
-          style={[st.segItem, small && st.segItemSmall, value === m && st.segOn]}
-        >
-          <Text style={[st.segText, small && { fontSize: 12 }, value === m && { color: color.textStrong }]}>
-            {m.charAt(0).toUpperCase() + m.slice(1)}
-          </Text>
-        </Tap>
-      ))}
     </View>
   );
 }
@@ -588,7 +587,7 @@ const st = StyleSheet.create({
   segText: { fontSize: 14, color: color.textDim },
   canvas: { flex: 1, backgroundColor: "#0c0c0f" },
   pan: { flex: 1 },
-  panInner: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 20 },
+  panInner: { flexGrow: 1, alignItems: "center", justifyContent: "center" },
   zoomBar: {
     position: "absolute",
     right: 12,
@@ -614,40 +613,15 @@ const st = StyleSheet.create({
     borderRadius: 7,
   },
   zoomFitText: { fontSize: 12, color: color.textSoft },
-  devices: { flexDirection: "row", alignItems: "center", gap: 24 },
-  segSmall: { padding: 2, borderRadius: 7, backgroundColor: color.card },
-  segItemSmall: {
-    flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: "auto",
-    paddingVertical: 3,
-    paddingHorizontal: 9,
-    borderRadius: 5,
-  },
+  devices: { flexDirection: "row", alignItems: "center" },
   dots: { backgroundImage: "radial-gradient(#202027 1px, transparent 1px)", backgroundSize: "18px 18px" },
-  phone: {
-    borderRadius: 30,
-    borderWidth: 6,
-    borderColor: "#2c2c34",
-    overflow: "hidden",
-    backgroundColor: "#fff",
-  },
-  desk: {
-    borderRadius: 9,
+  sheet: {
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: "#2c2c34",
     overflow: "hidden",
     backgroundColor: "#fff",
   },
-  chrome: {
-    height: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    paddingHorizontal: 7,
-    backgroundColor: "#e4e1d8",
-  },
-  light: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#c9c5ba" },
   table: { padding: 16, paddingBottom: 30, gap: 10 },
   sources: {
     borderWidth: 1,
