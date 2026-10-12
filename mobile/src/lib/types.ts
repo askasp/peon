@@ -113,6 +113,11 @@ export type Message = {
   skills?: { name: string }[];
   command?: string;
   outcome?: string;
+  /** A compaction: "auto" (context filled up) or "manual", and what it kept. */
+  reason?: "auto" | "manual";
+  summary?: string;
+  /** An assistant reply: what the model read and wrote, for the context meter. */
+  tokens?: { input: number; output: number; reasoning: number; cache: { read: number; write: number } };
   model?: any;
   agent?: string;
   name?: string;
@@ -145,7 +150,14 @@ export type DiffFile = {
 };
 
 /** A model to pick; `variants` are how hard it can think ("low", "high", …). */
-export type ModelOption = { name: string; value: string; variants?: string[]; variant?: string | null };
+export type ModelOption = {
+  name: string;
+  value: string;
+  variants?: string[];
+  variant?: string | null;
+  /** Tokens it can hold. */
+  context?: number | null;
+};
 
 export type SessionOptions = {
   agents: string[];

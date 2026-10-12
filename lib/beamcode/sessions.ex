@@ -38,6 +38,51 @@ defmodule Beamcode.Sessions do
   end
 
   @doc """
+  Where new work in a Folder goes: its one chat in a single-chat Folder
+  (`Project.single_chat?/1`), else a new session (`start/3`).
+  """
+  def open(%Project{} = project, user, opts \\ []) do
+    if Project.single_chat?(project) do
+      with {:ok, session, _earlier} <- folder_chat(project, user), do: {:ok, session}
+    else
+      start(project, user, opts)
+    end
+  end
+
+  @doc """
+  A single-chat Folder's one chat, made the first time: the team chat worked in
+  last. Chats from before Folders had one chat come back as `earlier`, oldest
+  first, so the app can show them above it under their old titles:
+  `{:ok, session, earlier}`.
+  """
+  def folder_chat(%Project{} = project, user) do
+    lock = {{__MODULE__, :folder_chat, project.id}, self()}
+    :global.trans(lock, fn -> find_or_start_chat(project, user) end, [node()])
+  end
+
+  defp find_or_start_chat(project, user) do
+    with {:ok, sessions} <- list_visible(project, user) do
+      updated = &(get_in(&1, ["time", "updated"]) || 0)
+      shared = Enum.reject(sessions, &match?(%{"record" => %{scope: "private"}}, &1))
+
+      chat =
+        case shared do
+          [] -> start(project, user, title: project.name)
+          list -> {:ok, Enum.max_by(list, updated)}
+        end
+
+      with {:ok, chat} <- chat do
+        earlier =
+          sessions
+          |> Enum.reject(&(&1["id"] == chat["id"]))
+          |> Enum.sort_by(&(get_in(&1, ["time", "created"]) || 0))
+
+        {:ok, chat, earlier}
+      end
+    end
+  end
+
+  @doc """
   The project's top-level, unarchived sessions `user` may see, each with its
   record under `"record"`. On a routine, schedule runs are left out: they have
   their own list.

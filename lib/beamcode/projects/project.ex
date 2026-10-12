@@ -6,6 +6,9 @@ defmodule Beamcode.Projects.Project do
   # from. chat, document, design, dataset and home all behave like chat.
   @kinds ~w(code routine chat document design dataset home system)
   @chat_like ~w(chat document design dataset home)
+  # One working copy of their files, so one continuous chat (code chats each
+  # get a worktree; chat and home hold unrelated talks with no files to share).
+  @single_chat ~w(document design dataset)
   @scopes ~w(team private)
 
   schema "projects" do
@@ -28,6 +31,10 @@ defmodule Beamcode.Projects.Project do
   @doc "Kinds that are a plain folder for chatting and making files (no git, no routine)."
   def chat_like?(%__MODULE__{kind: kind}), do: kind in @chat_like
   def chat_like?(kind) when is_binary(kind), do: kind in @chat_like
+
+  @doc "Kinds whose Folder is one chat beside its files (see `Beamcode.Sessions.folder_chat/2`)."
+  def single_chat?(%__MODULE__{kind: kind}), do: kind in @single_chat
+  def single_chat?(kind) when is_binary(kind), do: kind in @single_chat
 
   def changeset(project, attrs) do
     project

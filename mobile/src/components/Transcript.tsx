@@ -3,6 +3,7 @@ import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { Markdown } from "./Markdown";
 import { viewFor, viewInfo, type ViewKind } from "@/lib/folders";
 
+import { Icon } from "./Icon";
 import { Tap } from "./ui";
 import { color, font } from "@/lib/theme";
 import type { Message } from "@/lib/types";
@@ -33,6 +34,8 @@ export type Block =
   | { kind: "steps"; key: string; tools: Tool[]; from?: number; to?: number }
   | { kind: "shell"; key: string; command: string; output: string }
   | { kind: "note"; key: string; text: string; tint?: string }
+  /** The agent summarised everything above to free up context (`messages` of them). */
+  | { kind: "compaction"; key: string; auto: boolean; summary: string; time?: number; messages: number }
   /** A file the agent wrote or edited, once per message. */
   | { kind: "file"; key: string; path: string; verb: "Wrote" | "Edited" };
 
@@ -158,7 +161,14 @@ export function toBlocks(items: Message[]): Block[] {
         out.push({ kind: "note", key: m.id, text: `ran skill /${m.name ?? ""}` });
         break;
       case "compaction":
-        out.push({ kind: "note", key: m.id, text: "compacted" });
+        out.push({
+          kind: "compaction",
+          key: m.id,
+          auto: m.reason !== "manual",
+          summary: m.summary ?? "",
+          time: m.time?.created,
+          messages: out.filter((b) => b.kind === "user" || b.kind === "text").length,
+        });
         break;
       case "idle":
         if (m.outcome === "failed")
@@ -337,8 +347,31 @@ export function BlockView({
       );
     case "note":
       return <Text style={[st.note, block.tint ? { color: block.tint } : null]}>{block.text}</Text>;
+    case "compaction":
+      return (
+        <View style={st.compaction}>
+          <View style={st.compactionHead}>
+            <Icon name="compact" size={14} color={color.textDim} />
+            <Text style={st.compactionTitle}>{block.auto ? "Compacted automatically" : "Compacted"}</Text>
+            {block.time ? <Text style={st.compactionTime}>{clock(block.time)}</Text> : null}
+            <View style={{ flex: 1 }} />
+            {block.summary ? (
+              <Tap onPress={() => setOpen(!open)} hitSlop={6}>
+                <Text style={st.compactionLink}>{open ? "Hide summary" : "View summary"}</Text>
+              </Tap>
+            ) : null}
+          </View>
+          <Text style={st.compactionText}>
+            The agent now works from a summary of the {block.messages} message
+            {block.messages === 1 ? "" : "s"} above, plus the files and AGENTS.md.
+          </Text>
+          {open ? <Markdown text={block.summary} /> : null}
+        </View>
+      );
   }
 }
+
+const clock = (t: number) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
 const st = StyleSheet.create({
   fileCard: {
@@ -421,4 +454,19 @@ const st = StyleSheet.create({
   toolOut: { maxHeight: 256 },
   toolOutText: { fontSize: 11.5, lineHeight: 17, fontFamily: font.mono, color: color.muted, padding: 10 },
   note: { fontSize: 12, color: color.muted, textAlign: "center" },
+  compaction: {
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginVertical: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: color.raised,
+    backgroundColor: "#17171b",
+  },
+  compactionHead: { flexDirection: "row", alignItems: "center", gap: 8 },
+  compactionTitle: { fontSize: 13, fontWeight: "600", color: color.text },
+  compactionTime: { fontSize: 13, color: color.faint },
+  compactionLink: { fontSize: 12, color: color.accentText },
+  compactionText: { fontSize: 12, lineHeight: 18, color: color.muted },
 });

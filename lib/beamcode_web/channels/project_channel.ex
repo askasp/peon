@@ -32,7 +32,9 @@ defmodule BeamcodeWeb.ProjectChannel do
 
   alias Beamcode.{
     Connectors,
+    DataSources,
     GitTokens,
+    Opencode,
     Projects,
     ProjectFiles,
     ProjectTools,
@@ -108,6 +110,42 @@ defmodule BeamcodeWeb.ProjectChannel do
 
         {:error, reason} ->
           error(reason)
+      end
+    end)
+  end
+
+  # A single-chat Folder's one chat, and the chats it had before (see
+  # Sessions.folder_chat/2).
+  def handle_in("folder_chat", _params, socket) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      case Sessions.folder_chat(project, user) do
+        {:ok, chat, earlier} ->
+          {:ok,
+           %{
+             session_id: chat["id"],
+             earlier: Enum.map(earlier, &AppJSON.listed_session(&1, project))
+           }}
+
+        {:error, reason} ->
+          error(reason)
+      end
+    end)
+  end
+
+  # The messages of an earlier chat in this Folder, shown above its one chat.
+  def handle_in("chat_history", %{"session_id" => sid}, socket) when is_binary(sid) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      with {:ok, _session, %{id: id}, _record} when id == project.id <-
+             Sessions.fetch_visible(sid, user),
+           {:ok, messages} <- Opencode.messages(sid) do
+        {:ok, %{messages: Enum.map(messages, &AppJSON.message/1)}}
+      else
+        {:error, reason} -> error(reason)
+        _ -> error("That chat isn't in this Folder.")
       end
     end)
   end
@@ -258,9 +296,31 @@ defmodule BeamcodeWeb.ProjectChannel do
     ChannelTasks.reply_async(socket, fn ->
       with {:ok, project} <- Worktrees.at(project, user, params["ref"]),
            {:ok, data} <- ProjectFiles.table(project, path, params["table"]) do
-        {:ok, data}
+        {:ok, clean} = ProjectFiles.clean_path(path)
+
+        {:ok,
+         Map.merge(data, %{
+           sources: DataSources.list(project, clean),
+           can_refresh: ProjectTools.can_edit?(project, user)
+         })}
       else
         {:error, reason} -> file_error(reason)
+      end
+    end)
+  end
+
+  # Runs a dataset source's script again (sources.json), without the agent.
+  def handle_in("refresh_source", %{"name" => name}, socket) when is_binary(name) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      if ProjectTools.can_edit?(project, user) do
+        case DataSources.refresh(project, name) do
+          :ok -> {:ok, %{}}
+          {:error, reason} -> error(reason)
+        end
+      else
+        error("Only the folder's owner can refresh its sources.")
       end
     end)
   end

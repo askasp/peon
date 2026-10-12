@@ -47,9 +47,13 @@ defmodule Beamcode.ProjectFiles do
     end
   end
 
-  @doc "A file's bytes: `{:ok, binary}`, or `{:error, :bad_path | :enoent | :too_big | reason}`."
+  @doc """
+  A file's bytes: `{:ok, binary}`, or `{:error, :bad_path | :enoent | :too_big | reason}`.
+  A `.env` (a dataset source's keys) is never read out: only scripts in the folder use it.
+  """
   def read(%Project{} = project, path, max_bytes \\ @max_bytes) do
     with {:ok, path} <- clean(path),
+         :ok <- if(Path.basename(path) == ".env", do: {:error, :enoent}, else: :ok),
          {:ok, body} <- Opencode.read_file(project.directory, path) do
       if byte_size(body) > max_bytes, do: {:error, :too_big}, else: {:ok, body}
     end

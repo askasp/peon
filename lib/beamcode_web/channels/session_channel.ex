@@ -553,7 +553,9 @@ defmodule BeamcodeWeb.SessionChannel do
       name: m["name"],
       value: "#{m["providerID"]}/#{m["id"]}",
       variants: for(%{"id" => v} <- m["variants"] || [], do: v),
-      variant: get_in(m, ["options", "variant"])
+      variant: get_in(m, ["options", "variant"]),
+      # Tokens the model can hold, for the context meter.
+      context: get_in(m, ["limit", "context"])
     }
   end
 

@@ -10,17 +10,20 @@ import { RunsTab } from "./RunsTab";
 import { SchedulesTab } from "./SchedulesTab";
 import { SessionsTab } from "./SessionsTab";
 import { SettingsTab } from "./SettingsTab";
+import { SessionChat } from "../session/SessionChat";
 import { SkillsTab } from "./SkillsTab";
 import type { ProjectCtx, RoutineInput } from "./types";
 import { usePeon } from "@/lib/peon";
 import { useChannel } from "@/lib/useChannel";
 import { useCurrent } from "@/lib/current";
 import { useWide } from "@/lib/useWide";
-import { firstTab, templateName } from "@/lib/folders";
+import { firstTab, singleChat, templateName } from "@/lib/folders";
+import { attachToChat, useAttached } from "@/lib/attach";
+import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
-import type { Project } from "@/lib/types";
+import type { Project, SessionSummary } from "@/lib/types";
 
-type Tab = "chats" | "files" | "runs" | "settings";
+type Tab = "chat" | "chats" | "files" | "runs" | "settings";
 type Section = "general" | "skills" | "schedules";
 
 // Old links (?tab=skills) land on the tab that has them now.
@@ -60,18 +63,42 @@ export function ProjectView({
   const p = (project?.id === Number(id) ? project : null) ?? ch.reply?.project ?? stored;
   useCurrent(p?.id);
   const routine = p?.kind === "routine";
+  // Design, Document and Dataset Folders are one chat beside their files.
+  const single = p ? singleChat(p.kind) : false;
   // Runs only when the Folder has a routine; other schedules are under Settings.
-  const tabs: { value: Tab; label: string }[] = [
-    { value: "chats", label: "Chats" },
-    { value: "files", label: "Files" },
-    ...(routine ? [{ value: "runs" as Tab, label: "Runs" }] : []),
-    { value: "settings", label: "Settings" },
-  ];
+  const tabs: { value: Tab; label: string }[] = single
+    ? [
+        { value: "chat", label: "Chat" },
+        { value: "files", label: "Files" },
+        { value: "settings", label: "Settings" },
+      ]
+    : [
+        { value: "chats", label: "Chats" },
+        { value: "files", label: "Files" },
+        ...(routine ? [{ value: "runs" as Tab, label: "Runs" }] : []),
+        { value: "settings", label: "Settings" },
+      ];
   const [from, fromSection] = legacy[initialTab ?? ""] ?? [initialTab as Tab | undefined];
   const [picked, setTab] = useState<Tab | null>(from ?? null);
   const [section, setSection] = useState<Section>(fromSection ?? "general");
   const tab =
     picked && tabs.some((t) => t.value === picked) ? picked : p ? (firstTab(p.kind) as Tab) : "chats";
+
+  // The one chat (made the first time), and the chats the Folder had before.
+  const { data: chat, error: chatError } = useLoad(
+    () =>
+      single
+        ? ch.call<{ session_id: string; earlier: SessionSummary[] }>("folder_chat", {}, 60000)
+        : Promise.resolve(null),
+    [id, single],
+  );
+  // "Chat about this" from Files (or the phone's View) lands in the chat.
+  const attached = useAttached(id);
+  const [seen, setSeen] = useState(attached);
+  if (attached !== seen) {
+    setSeen(attached);
+    if (attached) setTab("chat");
+  }
 
   // The header's primary action: a new chat here, or run the routine.
   const [running, setRunning] = useState(false);
@@ -124,6 +151,108 @@ export function ProjectView({
     : "";
 
   const tabProps = Platform.OS === "web" ? ({ dataSet: { kbTabs: "project" } } as object) : {};
+
+  const settingsView = (c: ProjectCtx) => (
+    <View style={{ flex: 1, minHeight: 0 }}>
+      {section !== "general" ? (
+        <Tap
+          testID="settings-up"
+          onPress={() => setSection("general")}
+          style={[st.up, wide && { paddingHorizontal: 32 }]}
+        >
+          <Icon name="back" size={16} color={color.accentText} strokeWidth={2.4} />
+          <Text style={st.upText}>Settings</Text>
+        </Tap>
+      ) : null}
+      {section === "skills" ? (
+        <SkillsTab ctx={c} />
+      ) : section === "schedules" ? (
+        <SchedulesTab ctx={c} />
+      ) : (
+        <SettingsTab ctx={c} onSection={setSection} />
+      )}
+    </View>
+  );
+
+  // A single-chat Folder opens as its chat: beside its files on the desktop
+  // (Settings is a button), Chat · Files · Settings on the phone.
+  if (single && p) {
+    const settings = tab === "settings";
+    const error = ch.error ?? chatError;
+    return (
+      <Screen full>
+        {wide ? (
+          <View style={st.singleHead}>
+            <Letter name={name} size={32} />
+            <View style={{ gap: 1, minWidth: 0, flexShrink: 1 }}>
+              <Text style={st.crumb}>Folders › {templateName[p.kind]}</Text>
+              <Text style={st.singleTitle} numberOfLines={1}>
+                {name}
+              </Text>
+            </View>
+            <Text style={st.singleSub} numberOfLines={1}>
+              {sub}
+            </Text>
+            <View style={{ flex: 1 }} />
+            <Tap
+              onPress={() => setTab(settings ? "chat" : "settings")}
+              style={st.settingsButton}
+              testID="folder-settings"
+            >
+              <Icon
+                name={settings ? "back" : "gear"}
+                size={14}
+                color={color.textSoft}
+                strokeWidth={settings ? 2.4 : undefined}
+              />
+              <Text style={st.settingsText}>{settings ? "Chat" : "Settings"}</Text>
+            </Tap>
+          </View>
+        ) : (
+          <>
+            <BackHeader label="Folders" />
+            <View style={st.head}>
+              <View style={st.titleRow}>
+                <Letter name={name} size={44} />
+                <View style={{ flex: 1, gap: 2 }}>
+                  <Text style={st.title} numberOfLines={1}>
+                    {name}
+                  </Text>
+                  <Text style={st.sub}>{sub}</Text>
+                </View>
+              </View>
+              <View {...tabProps}>
+                <Segmented options={tabs} value={tab} onChange={setTab} />
+              </View>
+            </View>
+          </>
+        )}
+        {error ? (
+          <View style={{ padding: 18 }}>
+            <ErrorLine message={error} />
+          </View>
+        ) : !ctx ? (
+          <Loading />
+        ) : settings ? (
+          settingsView(ctx)
+        ) : tab === "files" && !wide ? (
+          <FilesTab ctx={ctx} />
+        ) : !chat ? (
+          <Loading />
+        ) : (
+          <SessionChat
+            id={chat.session_id}
+            folder={{
+              ctx,
+              earlier: chat.earlier,
+              attached,
+              onAttach: (file) => attachToChat(id, file),
+            }}
+          />
+        )}
+      </Screen>
+    );
+  }
 
   return (
     <Screen full={wide && (tab === "files" || tab === "settings")}>
@@ -192,25 +321,7 @@ export function ProjectView({
       ) : tab === "runs" ? (
         <RunsTab ctx={ctx} />
       ) : (
-        <View style={{ flex: 1, minHeight: 0 }}>
-          {section !== "general" ? (
-            <Tap
-              testID="settings-up"
-              onPress={() => setSection("general")}
-              style={[st.up, wide && { paddingHorizontal: 32 }]}
-            >
-              <Icon name="back" size={16} color={color.accentText} strokeWidth={2.4} />
-              <Text style={st.upText}>Settings</Text>
-            </Tap>
-          ) : null}
-          {section === "skills" ? (
-            <SkillsTab ctx={ctx} />
-          ) : section === "schedules" ? (
-            <SchedulesTab ctx={ctx} />
-          ) : (
-            <SettingsTab ctx={ctx} onSection={setSection} />
-          )}
-        </View>
+        settingsView(ctx)
       )}
       {/* Phone: a new chat in this Folder, over the list (or the empty Files tab). */}
       {!wide && ctx && (tab === "chats" || tab === "files") ? (
@@ -268,4 +379,26 @@ const st = StyleSheet.create({
   wideTitle: { flexShrink: 1, fontFamily: font.brand, fontSize: 28, letterSpacing: -0.8, color: color.text },
   wideSub: { fontSize: 13, color: color.muted },
   run: { fontSize: 12, fontFamily: font.mono, color: color.muted, marginTop: -6 },
+  singleHead: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: color.hairline,
+  },
+  singleTitle: { fontSize: 20, fontWeight: "700", letterSpacing: -0.4, color: color.text },
+  singleSub: { alignSelf: "flex-end", paddingBottom: 3, flexShrink: 1, fontSize: 13, color: color.muted },
+  settingsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 7,
+    borderWidth: 1,
+    borderColor: "#2c2c34",
+  },
+  settingsText: { fontSize: 13, color: color.textSoft },
 });

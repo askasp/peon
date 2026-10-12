@@ -435,6 +435,26 @@ defmodule Beamcode.Workspace do
        data.sqlite (`peon.query(sql, "other.sqlite")` for another file). Load
        data with it on page load; never copy rows into the HTML. Changes to the
        data go through the chat.
+
+       Data from somewhere else (an API, a feed) comes in through a source, never
+       by fetching it yourself in the chat:
+
+       1. Write one script, `sources/<name>.py`, that fetches the data and upserts
+          it into one table (`insert ... on conflict do update`) with a
+          `fetched_at` column, the ISO UTC time of the fetch. Keep the API's own
+          ids as the key so a refresh never duplicates rows. It runs from the
+          folder root, so open `data.sqlite` there.
+       2. Keys and tokens go in `.env` (`NAME=value`), read from the environment
+          in the script; never write them into the script, the chat or schema.md.
+       3. Add it to `sources.json`:
+          `{"<name>": {"script": "sources/<name>.py", "table": "<table>", "every_hours": 6}}`
+       4. Run it once, check the rows, and document the table in schema.md as
+          synced from <name>.
+
+       The table view's refresh button runs the script again without you, so
+       never edit a synced table by hand: keep the user's own notes about its
+       rows in a separate table that joins on the id. Apps over synced data show
+       how old it is (`max(fetched_at)`).
        """}
 
   defp folder_skill(_), do: nil
@@ -467,7 +487,9 @@ defmodule Beamcode.Workspace do
     Keep the data in `data.sqlite` (use the `sqlite3` command). Keep the schema
     simple and documented in `schema.md`. A UI over the data goes in `app/` as
     standalone HTML files that read the data with `peon.query(sql)` (see the
-    sqlite-schema skill). Mention the path of every file you write.
+    sqlite-schema skill). Data from an API comes in through a script in
+    `sources/` listed in `sources.json` (see the skill), so it can be refreshed.
+    Mention the path of every file you write.
     """
   end
 

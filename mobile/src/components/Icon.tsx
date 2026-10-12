@@ -21,7 +21,9 @@ export type IconName =
   | "keyboard"
   | "close"
   | "lock"
-  | "branch";
+  | "branch"
+  | "compact"
+  | "gear";
 
 type Props = { name: IconName; size?: number; color?: string; strokeWidth?: number };
 
@@ -172,6 +174,27 @@ export function Icon({ name, size = 24, color = "currentColor", strokeWidth }: P
         <Svg width={size} height={size} viewBox="0 0 24 24">
           <Rect x={2.5} y={6} width={19} height={12} rx={2} {...stroke} strokeWidth={1.6} />
           <Path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" {...stroke} strokeWidth={1.8} />
+        </Svg>
+      );
+    case "compact":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 16 16">
+          <Path
+            d="M3 3l3.5 3.5M13 3L9.5 6.5M3 13l3.5-3.5M13 13l-3.5-3.5"
+            {...stroke}
+            strokeWidth={strokeWidth ?? 1.6}
+          />
+        </Svg>
+      );
+    case "gear":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 16 16">
+          <Circle cx={8} cy={8} r={2.2} {...stroke} strokeWidth={strokeWidth ?? 1.5} />
+          <Path
+            d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"
+            {...stroke}
+            strokeWidth={strokeWidth ?? 1.5}
+          />
         </Svg>
       );
     case "close":

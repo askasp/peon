@@ -653,7 +653,15 @@ function onKey(e: KeyboardEvent) {
 export function useShortcuts() {
   useEffect(() => {
     if (Platform.OS !== "web") return;
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // react-native-web's TextInput stops keydown from bubbling, so keys typed in a
+    // text field are caught on the way down; everything else on the way up.
+    const down = (e: KeyboardEvent) => editable(e.target) && onKey(e);
+    const up = (e: KeyboardEvent) => !editable(e.target) && onKey(e);
+    window.addEventListener("keydown", down, true);
+    window.addEventListener("keydown", up);
+    return () => {
+      window.removeEventListener("keydown", down, true);
+      window.removeEventListener("keydown", up);
+    };
   }, []);
 }

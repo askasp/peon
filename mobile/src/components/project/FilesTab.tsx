@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Linking, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Button, Dot, Empty, ErrorLine, Loading, Tap } from "../ui";
 import { PickSheet } from "../Sheet";
@@ -358,7 +358,10 @@ export function FileView({
   version = 0,
   onClose,
   onAsk,
+  onView,
   onOpenInFiles,
+  onPick,
+  count,
   readOnly = false,
 }: {
   /** A project channel's, aimed at the file's tree (see `treeCall`). */
@@ -369,8 +372,13 @@ export function FileView({
   readOnly?: boolean;
   onOpenInFiles?: () => void;
   onClose?: () => void;
-  /** "Chat about this": shown on the Files tab. */
-  onAsk?: () => void;
+  /** "Chat about this", with the device the canvas shows ("Phone"), if one. */
+  onAsk?: (view: string | null) => void;
+  /** Told the device the canvas shows ("Phone"), or null, whenever it changes. */
+  onView?: (view: string | null) => void;
+  /** The path is a picker for the Folder's other files (`count` of them). */
+  onPick?: () => void;
+  count?: number;
 }) {
   const [saved, setSaved] = useState(0);
   const { data: f, error } = useLoad(() => call<Opened>("open_file", { path }), [path, version, saved]);
@@ -379,6 +387,14 @@ export function FileView({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [device, setDevice] = useState<Device>("both");
   const kind = viewFor(path);
+  const view = kind === "canvas" && device !== "both" ? deviceName[device] : null;
+  const told = useRef(onView);
+  useEffect(() => {
+    told.current = onView;
+  });
+  useEffect(() => {
+    told.current?.(view);
+  }, [view]);
   const slash = path.lastIndexOf("/");
   const url = f ? serverUrl(f.url) : null;
 
@@ -432,15 +448,30 @@ export function FileView({
   return (
     <View style={st.view}>
       <View style={st.viewHead}>
-        <View style={st.kindChip}>
-          <Text style={st.kindText}>{viewInfo[kind][0]}</Text>
-        </View>
-        <Text style={st.viewPath} numberOfLines={1}>
-          {slash > 0 ? (
-            <Text style={{ color: color.faint }}>{path.slice(0, slash).split("/").join(" / ")} / </Text>
-          ) : null}
-          {path.slice(slash + 1)}
-        </Text>
+        {onPick ? null : (
+          <View style={st.kindChip}>
+            <Text style={st.kindText}>{viewInfo[kind][0]}</Text>
+          </View>
+        )}
+        <Tap
+          disabled={!onPick}
+          onPress={onPick}
+          style={[{ flexShrink: 1 }, onPick && st.pathPicker]}
+          testID="file-picker"
+        >
+          <Text style={st.viewPath} numberOfLines={1}>
+            {slash > 0 ? (
+              <Text style={{ color: color.muted }}>{path.slice(0, slash).split("/").join(" / ")} / </Text>
+            ) : null}
+            {path.slice(slash + 1)}
+            {onPick ? <Text style={{ color: color.muted }}> ▾</Text> : null}
+          </Text>
+        </Tap>
+        {count != null ? (
+          <Text style={st.count}>
+            {count} file{count === 1 ? "" : "s"}
+          </Text>
+        ) : null}
         <View style={{ flex: 1 }} />
         {kind === "canvas" && editing == null ? (
           <DevicePicker value={device} onChange={setDevice} options={["desktop", "phone", "both"]} small />
@@ -461,7 +492,7 @@ export function FileView({
           </>
         ) : null}
         {onAsk ? (
-          <Tap onPress={onAsk} style={st.ask}>
+          <Tap onPress={() => onAsk(view)} style={st.ask} testID="chat-about-this">
             <Text style={st.askText}>Chat about this</Text>
           </Tap>
         ) : null}
@@ -482,7 +513,11 @@ export function FileView({
   );
 }
 
+const deviceName: Record<Device, string> = { desktop: "Desktop", phone: "Phone", both: "Both" };
+
 const st = StyleSheet.create({
+  pathPicker: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: color.field },
+  count: { fontSize: 12, color: color.faint },
   bar: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap", paddingBottom: 8 },
   treeChip: {
     flexDirection: "row",
@@ -552,8 +587,8 @@ const st = StyleSheet.create({
     backgroundColor: color.textStrong,
   },
   headSolidText: { fontSize: 12, fontWeight: "600", color: color.bg },
-  ask: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, backgroundColor: color.accentWash },
-  askText: { fontSize: 12, color: color.accentText },
+  ask: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, backgroundColor: color.accentWash },
+  askText: { fontSize: 12, fontWeight: "600", color: color.accentText },
   close: { width: 26, height: 26, borderRadius: 6, alignItems: "center", justifyContent: "center" },
   editor: {
     flex: 1,

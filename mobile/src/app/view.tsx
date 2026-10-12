@@ -20,9 +20,12 @@ import { ErrorLine, Loading, Tap } from "@/components/ui";
 import { serverUrl, usePeon } from "@/lib/peon";
 import { useChannel } from "@/lib/useChannel";
 import { useLoad } from "@/lib/useLoad";
-import { viewFor, viewInfo, type ViewKind } from "@/lib/folders";
+import { singleChat, viewFor, viewInfo, type ViewKind } from "@/lib/folders";
+import { attachToChat } from "@/lib/attach";
 import { getViewDiff } from "@/lib/viewStore";
 import { color, font } from "@/lib/theme";
+
+const deviceName: Record<Device, string> = { desktop: "Desktop", phone: "Phone", both: "Both" };
 
 // A file (or a chat's diff) full screen: the phone's View. `from=files` adds
 // "Chat about this file"; `tree` is a chat id to read that chat's worktree.
@@ -157,12 +160,21 @@ export default function ViewScreen() {
       {from === "files" && !diff ? (
         <View style={[st.ask, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}>
           <Tap
-            onPress={() =>
-              router.replace({ pathname: "/compose", params: { folder: project, text: `About ${path}: ` } })
-            }
+            onPress={() => {
+              // A single-chat Folder: back to its chat, the file in the composer.
+              if (folder && singleChat(folder.kind)) {
+                attachToChat(project, { path, view: kind === "canvas" ? deviceName[device] : null });
+                router.back();
+              } else
+                router.replace({
+                  pathname: "/compose",
+                  params: { folder: project, text: `About ${path}: ` },
+                });
+            }}
             style={st.askButton}
+            testID="chat-about-this"
           >
-            <Text style={st.askText}>Chat about this file</Text>
+            <Text style={st.askText}>Chat about this</Text>
           </Tap>
         </View>
       ) : null}

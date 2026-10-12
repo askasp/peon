@@ -200,7 +200,8 @@ defmodule Beamcode.Composer do
 
   @doc """
   Starts what `parse/2` read and returns the session to open. A run starts its
-  routine; everything else starts a session in the project and sends the task.
+  routine; everything else opens a chat in the project (`Sessions.open/3`) and
+  sends the task.
   """
   def start(%{project: nil}, _user), do: {:error, "Say which project, e.g. “in chatos-web”."}
 
@@ -215,7 +216,7 @@ defmodule Beamcode.Composer do
       agent: parsed[:agent]
     ]
 
-    with {:ok, session} <- Sessions.start(project, user, opts) do
+    with {:ok, session} <- Sessions.open(project, user, opts) do
       dir = get_in(session, ["location", "directory"]) || project.directory
       id = session["id"]
 

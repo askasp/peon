@@ -3,6 +3,7 @@ import { FlatList, Image, Platform, ScrollView, StyleSheet, Text, TextInput, Vie
 import { Frame } from "./Frame";
 import { ErrorLine, Loading, Tap } from "./ui";
 import { useLoad } from "@/lib/useLoad";
+import { ago } from "@/lib/time";
 import { color, font } from "@/lib/theme";
 
 // The Views: how each kind of file is shown, on the phone (full screen) and on
@@ -225,17 +226,98 @@ export function AppView({ url }: { url: string }) {
   );
 }
 
+type Source = { name: string; table: string; fetched_at: string | null; stale: boolean };
+
+/**
+ * A dataset's sources (sources.json): where a table's data comes from, how old
+ * it is, and ↻ to run its script again. Stale ones refresh once when shown.
+ */
+function Sources({
+  call,
+  sources,
+  canRefresh,
+  onDone,
+}: {
+  call: Call;
+  sources: Source[];
+  canRefresh: boolean;
+  onDone: () => void;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const tried = useRef(new Set<string>());
+
+  const refresh = async (name: string) => {
+    tried.current.add(name);
+    setBusy(name);
+    try {
+      await call("refresh_source", { name }, 660000);
+      setErrors(({ [name]: _, ...rest }) => rest);
+      onDone();
+    } catch (e: any) {
+      setErrors((m) => ({ ...m, [name]: e.message }));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // One at a time (the server runs one per folder), and only once per source.
+  useEffect(() => {
+    if (!canRefresh || busy) return;
+    const next = sources.find((s) => s.stale && !tried.current.has(s.name));
+    if (next) refresh(next.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources, canRefresh, busy]);
+
+  return (
+    <View style={st.sources}>
+      {sources.map((s) => {
+        const on = busy === s.name;
+        return (
+          <View key={s.name} style={st.source}>
+            <View style={[st.sourceDot, s.stale && !on && { backgroundColor: color.needs }]} />
+            <Text style={st.sourceText} numberOfLines={1}>
+              {s.name} <Text style={{ color: color.faint }}>→ {s.table}</Text>
+            </Text>
+            <Text style={st.sourceAge}>
+              {on ? "Refreshing…" : s.fetched_at ? ago(s.fetched_at, true) : "never fetched"}
+            </Text>
+            {canRefresh ? (
+              <Tap
+                onPress={() => refresh(s.name)}
+                disabled={busy != null}
+                haptic
+                style={st.sourceKey}
+                accessibilityLabel={`Refresh ${s.name}`}
+              >
+                <Text style={[st.sourceKeyText, on && { color: color.accentText }]}>↻</Text>
+              </Tap>
+            ) : null}
+            {errors[s.name] ? (
+              <Text style={st.sourceError} numberOfLines={2}>
+                {errors[s.name]}
+              </Text>
+            ) : null}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 /** Rows of a SQLite table (read on the server) or a CSV, view only. */
 export function Table({ call, path, text }: { call: Call; path: string; text: string | null }) {
   const csv = path.toLowerCase().endsWith(".csv");
   const [table, setTable] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [sort, setSort] = useState<[string, 1 | -1] | null>(null);
-  const { data, error } = useLoad(async (): Promise<{
+  const { data, error, reload } = useLoad(async (): Promise<{
     tables: { name: string; rows: number | null }[];
     columns: string[];
     rows: any[];
     table: string | null;
+    sources?: Source[];
+    can_refresh?: boolean;
   }> => {
     if (!csv) return call("table", { path, table }, 60000);
     const [head = [], ...rest] = parseCsv(text ?? "");
@@ -271,6 +353,9 @@ export function Table({ call, path, text }: { call: Call; path: string; text: st
   const W = 150;
   return (
     <ScrollView contentContainerStyle={st.table}>
+      {data.sources?.length ? (
+        <Sources call={call} sources={data.sources} canRefresh={!!data.can_refresh} onDone={reload} />
+      ) : null}
       {data.tables.length > 1 ? (
         <View style={st.seg}>
           {data.tables.map((t) => {
@@ -493,6 +578,28 @@ const st = StyleSheet.create({
   },
   light: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#c9c5ba" },
   table: { padding: 16, paddingBottom: 30, gap: 10 },
+  sources: {
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: 10,
+    backgroundColor: color.card,
+    paddingVertical: 4,
+  },
+  source: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    gap: 10,
+    paddingLeft: 12,
+    paddingRight: 4,
+    minHeight: 40,
+  },
+  sourceDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.accent },
+  sourceText: { flex: 1, fontSize: 14, color: color.text },
+  sourceAge: { fontSize: 12, color: color.muted, fontVariant: ["tabular-nums"] },
+  sourceKey: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 8 },
+  sourceKeyText: { fontSize: 18, lineHeight: 20, color: color.textSoft },
+  sourceError: { width: "100%", paddingLeft: 17, paddingBottom: 8, fontSize: 12, color: color.red },
   filter: {
     height: 38,
     borderRadius: 10,

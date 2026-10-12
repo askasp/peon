@@ -16,6 +16,8 @@ import { useCommand } from "@/lib/commands";
 import { bindingMatches } from "@/lib/keys";
 import { getState } from "@/lib/peon";
 import { fileToAttachment, pickImage, type Attachment } from "@/lib/images";
+import { attachedText, type Attached } from "@/lib/attach";
+import { viewFor, viewInfo } from "@/lib/folders";
 import { useDictation, useVoiceSettings } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 import type { SessionOptions } from "@/lib/types";
@@ -37,6 +39,11 @@ type Props = {
   setAgent: (agent: string) => Promise<unknown>;
   setModel: (model: string, variant?: string | null) => Promise<unknown>;
   onError: (message: string | null) => void;
+  /** "Chat about this": a file shown as a chip, sent as an @mention with the message. */
+  attached?: Attached | null;
+  onDetach?: () => void;
+  /** The chip is what's in view, so it stays after a send. */
+  keepAttached?: boolean;
 };
 
 // What the cursor is completing: "/name" at the start, or the "@path" being typed.
@@ -114,15 +121,21 @@ export function SessionComposer(p: Props) {
     input.current?.focus();
   }
 
+  // A file attached from Files: type about it straight away.
+  useEffect(() => {
+    if (p.attached && !p.keepAttached) input.current?.focus();
+  }, [p.attached, p.keepAttached]);
+
   async function send(text: string) {
     const t = text.trim();
     if (!t && files.length === 0) return;
     setSending(true);
     p.onError(null);
     try {
-      await p.send(t, files);
+      await p.send(p.attached ? attachedText(p.attached, t) : t, files);
       setDraft("");
       setFiles([]);
+      if (!p.keepAttached) p.onDetach?.();
     } catch (e: any) {
       p.onError(e.message);
       setDraft(t);
@@ -200,6 +213,23 @@ export function SessionComposer(p: Props) {
               ) : null}
             </Pressable>
           ))}
+        </View>
+      ) : null}
+
+      {p.attached ? (
+        <View style={st.attachedRow}>
+          <View style={st.attached} testID="attached">
+            <View style={st.attachedGlyph}>
+              <Text style={st.attachedGlyphText}>{viewInfo[viewFor(p.attached.path)][1]}</Text>
+            </View>
+            <Text style={st.attachedPath} numberOfLines={1}>
+              {p.attached.path}
+            </Text>
+            {p.attached.view ? <Text style={st.attachedView}>· {p.attached.view}</Text> : null}
+            <Tap onPress={p.onDetach} hitSlop={8} aria-label="Remove the file">
+              <Icon name="close" size={11} color={color.faint} />
+            </Tap>
+          </View>
         </View>
       ) : null}
 
@@ -450,6 +480,29 @@ const st = StyleSheet.create({
   chip: { paddingHorizontal: 8, height: 24, borderRadius: 6, justifyContent: "center", maxWidth: 220 },
   chipText: { fontSize: 12, color: color.muted },
   files: { flexDirection: "row", gap: 8, paddingLeft: 52 },
+  attachedRow: { flexDirection: "row", paddingLeft: 52 },
+  attached: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    maxWidth: "100%",
+    paddingVertical: 5,
+    paddingLeft: 6,
+    paddingRight: 8,
+    borderRadius: 8,
+    backgroundColor: "#24242a",
+  },
+  attachedGlyph: {
+    width: 22,
+    height: 22,
+    borderRadius: 5,
+    backgroundColor: color.cream,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  attachedGlyphText: { fontSize: 10, fontWeight: "700", color: "#24493a" },
+  attachedPath: { flexShrink: 1, fontSize: 12, fontFamily: font.mono, color: color.text },
+  attachedView: { fontSize: 12, color: color.muted },
   thumbWrap: { position: "relative" },
   thumb: { width: 56, height: 56, borderRadius: 8, backgroundColor: color.field },
   remove: {

@@ -160,7 +160,7 @@ defmodule BeamcodeWeb.AppChannel do
 
       ChannelTasks.reply_async(socket, fn ->
         with {:ok, session} <-
-               Sessions.start(project, user, worktree: worktree, branch: params["branch"]),
+               Sessions.open(project, user, worktree: worktree, branch: params["branch"]),
              {:ok, _} <- send_first(session, project, text) do
           {:ok, %{session_id: session["id"]}}
         else

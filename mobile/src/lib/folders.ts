@@ -31,9 +31,9 @@ export const templateName: Record<Kind, string> = {
 /** The templates a new Folder can start from. */
 export const templates: { kind: Kind; label: string; detail: string; opens: string }[] = [
   { kind: "code", label: "Code", detail: "git clone or init, worktrees on", opens: "Chats" },
-  { kind: "document", label: "Document", detail: "docs/ and a writing skill", opens: "Files" },
-  { kind: "design", label: "Design", detail: "designs/ and an HTML design skill", opens: "Files" },
-  { kind: "dataset", label: "Dataset", detail: "data.sqlite, a schema skill and app/", opens: "Files" },
+  { kind: "document", label: "Document", detail: "docs/ and a writing skill", opens: "Chat" },
+  { kind: "design", label: "Design", detail: "designs/ and an HTML design skill", opens: "Chat" },
+  { kind: "dataset", label: "Dataset", detail: "data.sqlite, a schema skill and app/", opens: "Chat" },
   { kind: "routine", label: "Procedure", detail: "routine.json and a skill", opens: "Runs" },
 ];
 
@@ -89,13 +89,14 @@ export function sortFolders(projects: Project[], filter = "all") {
 export const folderHref = (p: Pick<Project, "id" | "kind">) =>
   p.kind === "routine" ? `/routine/${p.id}` : `/project/${p.id}`;
 
+/**
+ * Folders with one working copy of their files, so one continuous chat beside
+ * them (Code chats each get a worktree; Chat and Home hold unrelated talks).
+ */
+export const singleChat = (kind: Kind) => kind === "document" || kind === "design" || kind === "dataset";
+
 /** Where a Folder opens first. */
-export const firstTab = (kind: Kind) =>
-  kind === "routine"
-    ? "runs"
-    : kind === "document" || kind === "design" || kind === "dataset"
-      ? "files"
-      : "chats";
+export const firstTab = (kind: Kind) => (kind === "routine" ? "runs" : singleChat(kind) ? "chat" : "chats");
 
 export type ViewKind = "doc" | "canvas" | "app" | "table" | "image" | "code" | "diff";
 
