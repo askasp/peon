@@ -14,7 +14,8 @@ defmodule Beamcode.Composer do
   amino-monorepo?", "anything waiting?") are answered by Peon itself from live
   session data (`Beamcode.Composer.Status`), not by an agent.
   """
-  alias Beamcode.{Routines, Sessions}
+  alias Beamcode.Sessions
+  alias Beamcode.Procedures.Runs
   alias Beamcode.Composer.Catalog
   alias Beamcode.Projects.Project
 
@@ -206,7 +207,7 @@ defmodule Beamcode.Composer do
   def start(%{project: nil}, _user), do: {:error, "Say which project, e.g. “in chatos-web”."}
 
   def start(%{action: :run, project: project}, user) do
-    Routines.run(project, user)
+    with {:ok, run} <- Runs.start(project, user, nil), do: {:ok, run.session_id}
   end
 
   def start(%{project: project} = parsed, user) do

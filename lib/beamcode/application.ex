@@ -14,7 +14,8 @@ defmodule Beamcode.Application do
         {DNSCluster, query: Application.get_env(:beamcode, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Beamcode.PubSub},
         {Task.Supervisor, name: Beamcode.TaskSupervisor},
-        Beamcode.Connectors.Limiter
+        Beamcode.Connectors.Limiter,
+        Beamcode.Procedures.Cache
       ] ++
         workers() ++
         [
@@ -34,7 +35,8 @@ defmodule Beamcode.Application do
         Beamcode.Opencode.Events,
         Beamcode.Schedules.Scheduler,
         Beamcode.SourceSync.Ticker,
-        Beamcode.TaskQueue.Runner
+        Beamcode.TaskQueue.Runner,
+        Beamcode.Procedures.Runner
       ]
     else
       []

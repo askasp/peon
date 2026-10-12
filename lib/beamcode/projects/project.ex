@@ -8,7 +8,7 @@ defmodule Beamcode.Projects.Project do
   @chat_like ~w(chat document design dataset home)
   # One working copy of their files, so one continuous chat (code chats each
   # get a worktree; chat and home hold unrelated talks with no files to share).
-  # A Procedure Folder's chat is where its procedures run.
+  # An Operations Folder's (routine) chat is where its procedures run.
   @single_chat ~w(document design dataset routine)
   @scopes ~w(team private)
 
@@ -25,6 +25,8 @@ defmodule Beamcode.Projects.Project do
     field :default_branch, :string
     # Code Folders: a worktree starts its next ready task when one finishes.
     field :queue_auto, :boolean, default: true
+    # Procedures whose file schedule is paused (see Beamcode.Procedures.Schedule).
+    field :paused_schedules, {:array, :string}, default: []
     belongs_to :owner, Beamcode.Accounts.User
     timestamps(type: :utc_datetime)
   end

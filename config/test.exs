@@ -26,6 +26,9 @@ config :beamcode, Beamcode.Mailer, adapter: Swoosh.Adapters.Test
 # Disable swoosh api client as it is only required for production adapters
 config :swoosh, :api_client, false
 
+# Tests stub OpenCode per test: read procedure files every time.
+config :beamcode, :procedures_cache_ms, 0
+
 # Print only warnings and errors during test
 config :logger, level: :warning
 

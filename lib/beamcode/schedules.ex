@@ -7,7 +7,7 @@ defmodule Beamcode.Schedules do
                             "scope": "team", "owner": "aksel" } }
 
   Optional keys: `agent`, `model` ("provider/model"), `paused` (true: kept, but
-  not run), and in a Procedure Folder `procedure` (which one a blank prompt
+  not run), and `procedure` (which procedure a blank prompt
   runs) and `inputs`. `scope` is `team` or `me`.
   Each run is an ordinary session; runs are listed from `schedule_runs`.
   Times are server local time.
@@ -173,34 +173,34 @@ defmodule Beamcode.Schedules do
   end
 
   @doc """
-  Starts a scheduled run. A blank prompt in a Procedure Folder runs its
+  Starts a scheduled run. A blank prompt runs its
   `procedure` (or its first one) with its defaults and the schedule's `inputs`.
   """
   def run(project, key, sched) do
     owner = sched["owner"] && Accounts.get_user_by_username(sched["owner"])
+    scope = if sched["scope"] == "me", do: "private", else: "team"
 
-    {prompt, procedure} =
-      case String.trim(sched["prompt"] || "") do
-        "" ->
-          case Beamcode.Routines.find(project, sched["procedure"]) do
-            nil -> {"Do your job as described in AGENTS.md.", nil}
-            p -> {Beamcode.Routines.prompt(p, sched["inputs"] || %{}), p.name}
-          end
+    case String.trim(sched["prompt"] || "") do
+      "" ->
+        # A procedure (the one named, else the Folder's first), run like any other.
+        Beamcode.Procedures.Runs.start(project, owner, sched["procedure"], sched["inputs"] || %{},
+          trigger: "schedule",
+          key: key,
+          scope: scope
+        )
 
-        prompt ->
-          {prompt, procedure_of(prompt)}
-      end
-
-    start_run(project, owner, prompt,
-      key: key,
-      procedure: procedure,
-      scope: if(sched["scope"] == "me", do: "private", else: "team"),
-      agent: sched["agent"],
-      model: sched["model"],
-      inputs: sched["inputs"] || %{},
-      # Unattended runs on a repo never touch its main checkout.
-      worktree: project.kind == "code"
-    )
+      prompt ->
+        start_run(project, owner, prompt,
+          key: key,
+          procedure: procedure_of(prompt),
+          scope: scope,
+          agent: sched["agent"],
+          model: sched["model"],
+          inputs: sched["inputs"] || %{},
+          # Unattended runs on a repo never touch its main checkout.
+          worktree: project.kind == "code"
+        )
+    end
   end
 
   # "/refund …" ran the refund procedure.
@@ -298,8 +298,34 @@ defmodule Beamcode.Schedules do
     )
   end
 
+  @doc """
+  The run a session is (a schedule's own session, or a run from before
+  procedures ran in chats); nil for a chat that procedure runs only pass through.
+  """
   def run_for_session(session_id),
-    do: Repo.one(from r in Run, where: r.session_id == ^session_id, limit: 1, preload: :owner)
+    do:
+      Repo.one(
+        from r in Run,
+          where: r.session_id == ^session_id and is_nil(r.trigger),
+          limit: 1,
+          preload: :owner
+      )
+
+  @doc "The procedure runs shown in a chat (newest last), with the runs they started."
+  def chat_runs(session_id, limit \\ 40) do
+    top =
+      Repo.all(
+        from r in Run,
+          where: r.session_id == ^session_id and not is_nil(r.trigger) and is_nil(r.parent_id),
+          order_by: [desc: r.inserted_at],
+          limit: ^limit,
+          preload: :owner
+      )
+
+    ids = Enum.map(top, & &1.id)
+    children = Repo.all(from r in Run, where: r.parent_id in ^ids, order_by: [asc: r.inserted_at])
+    Enum.reverse(top) ++ children
+  end
 
   def runs(project_id, key, limit \\ 10) do
     Repo.all(
@@ -312,9 +338,25 @@ defmodule Beamcode.Schedules do
 
   def last_run(project_id, key), do: runs(project_id, key, 1) |> List.first()
 
+  @doc "Each procedure's newest top-level run in a project, by name."
+  def last_runs_by_procedure(project_id) do
+    from(r in Run,
+      where: r.project_id == ^project_id and not is_nil(r.procedure) and is_nil(r.parent_id),
+      distinct: r.procedure,
+      order_by: [asc: r.procedure, desc: r.inserted_at]
+    )
+    |> Repo.all()
+    |> Map.new(&{&1.procedure, &1})
+  end
+
   @doc "Called when a run's session stops. Saves a one-line summary of the result."
   def session_finished(session_id, status) do
-    from(r in Run, where: r.session_id == ^session_id and r.status == "running")
+    # Runs of steps move on in Beamcode.Procedures.Runs instead.
+    from(r in Run,
+      where:
+        r.session_id == ^session_id and r.status == "running" and
+          fragment("cardinality(?) = 0", r.steps)
+    )
     |> Repo.all()
     |> Enum.each(fn run ->
       finish(run, status, nil, summarize(session_id))

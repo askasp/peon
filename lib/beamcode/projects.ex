@@ -63,6 +63,20 @@ defmodule Beamcode.Projects do
     end)
   end
 
+  @doc "Pauses (or resumes) the schedule in procedure `name`'s file."
+  def pause_schedule(%Project{} = project, name, paused) do
+    list = project.paused_schedules || []
+    list = if paused, do: Enum.uniq(list ++ [name]), else: List.delete(list, name)
+
+    project
+    |> Ecto.Changeset.change(paused_schedules: list)
+    |> Repo.update()
+    |> tap(fn
+      {:ok, p} -> broadcast({:project_changed, p})
+      _ -> :ok
+    end)
+  end
+
   def set_github_repo(%Project{github_repo: repo} = project, repo), do: {:ok, project}
 
   def set_github_repo(project, repo) do

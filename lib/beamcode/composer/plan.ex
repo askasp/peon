@@ -8,7 +8,7 @@ defmodule Beamcode.Composer.Plan do
 
     * `:session` / `:chat` – `project`, `task`, `skill`, `use_model`, `agent`
     * `:send` – `session` (%{id, title, project}), `text`
-    * `:run` – `project` (the Procedure Folder), `procedure`, `inputs`
+    * `:run` – `project` (the Operations Folder), `procedure`, `inputs`
     * `:status` – `project` or nil, `status` (:latest | :overview)
     * `:create_routine` – `name`, `brief`, `connectors`
     * `:permission` – `perm`, `decision`
@@ -16,7 +16,7 @@ defmodule Beamcode.Composer.Plan do
 
   plus `summary` (the model's one-liner) and `model`.
   """
-  alias Beamcode.{Composer, Connectors, Opencode, Routines, Sessions, Workspace}
+  alias Beamcode.{Composer, Connectors, Opencode, Procedures, Sessions, Workspace}
   alias Beamcode.Composer.{Catalog, Router, Status}
   alias Beamcode.Projects.Project
   alias Beamcode.Opencode.Events
@@ -100,7 +100,7 @@ defmodule Beamcode.Composer.Plan do
 
   defp routine_inputs(routines) do
     routines
-    |> Task.async_stream(&{&1.name, Routines.list(&1)},
+    |> Task.async_stream(&{&1.name, Procedures.list(&1)},
       timeout: 15_000,
       on_timeout: :kill_task
     )
@@ -367,8 +367,8 @@ defmodule Beamcode.Composer.Plan do
   end
 
   def execute(%{action: :run, project: routine, inputs: inputs} = plan, user, _projects) do
-    case Routines.run(routine, user, inputs, plan[:procedure]) do
-      {:ok, session_id} -> {:navigate, session_id}
+    case Procedures.Runs.start(routine, user, plan[:procedure], inputs) do
+      {:ok, run} -> {:navigate, run.session_id}
       error -> error
     end
   end
@@ -390,7 +390,7 @@ defmodule Beamcode.Composer.Plan do
         Connectors.sync_all()
       end
 
-      case Routines.draft(project, user, plan.brief, plan.connectors) do
+      case Procedures.draft(project, user, plan.brief, plan.connectors) do
         {:ok, session_id, _not_ready} -> {:navigate, session_id}
         error -> error
       end

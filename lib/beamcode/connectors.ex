@@ -195,6 +195,7 @@ defmodule Beamcode.Connectors do
         |> then(fn o ->
           if is_map(args["body"]), do: Keyword.put(o, :json, args["body"]), else: o
         end)
+        |> add_headers(args["headers"])
 
       case request_with_retry(c, opts, 3) do
         {:ok, %Req.Response{status: status, body: body}} ->
@@ -206,6 +207,14 @@ defmodule Beamcode.Connectors do
       end
     end
   end
+
+  # Extra headers a procedure's call step sends (an Idempotency-Key).
+  defp add_headers(opts, headers) when is_map(headers) and map_size(headers) > 0 do
+    extra = for {k, v} <- headers, is_binary(k), do: {k, to_string(v)}
+    Keyword.update(opts, :headers, extra, &(List.wrap(&1) ++ extra))
+  end
+
+  defp add_headers(opts, _), do: opts
 
   # Paces calls per connector, and on 429 waits as long as the API asks
   # (Retry-After, or "retry in N milliseconds" in the body), then tries again.

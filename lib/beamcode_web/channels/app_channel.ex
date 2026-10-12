@@ -46,7 +46,7 @@ defmodule BeamcodeWeb.AppChannel do
     Opencode,
     Projects,
     ProjectTools,
-    Routines,
+    Procedures,
     Schedules,
     Sessions,
     Vault,
@@ -54,6 +54,7 @@ defmodule BeamcodeWeb.AppChannel do
   }
 
   alias Beamcode.Composer.{Catalog, Plan}
+  alias Beamcode.Procedures.Runs
   alias Beamcode.Opencode.Events
   alias BeamcodeWeb.{AppJSON, AppToken, ChannelTasks}
 
@@ -193,8 +194,8 @@ defmodule BeamcodeWeb.AppChannel do
 
     with_project(socket, id, fn project ->
       ChannelTasks.reply_async(socket, fn ->
-        case Routines.run(project, user) do
-          {:ok, session_id} -> {:ok, %{session_id: session_id}}
+        case Runs.start(project, user, nil) do
+          {:ok, run} -> {:ok, %{session_id: run.session_id}}
           {:error, reason} -> error(reason)
         end
       end)
@@ -525,7 +526,7 @@ defmodule BeamcodeWeb.AppChannel do
         # A described Procedure Folder starts by drafting its first procedure.
         if project.kind == "routine" and params["import"] != "true" and
              String.trim(params["description"] || "") != "" do
-          case Routines.draft(project, user, params["description"] || "", granted) do
+          case Procedures.draft(project, user, params["description"] || "", granted) do
             {:ok, session_id, []} ->
               {:ok, %{project_id: project.id, session_id: session_id}}
 

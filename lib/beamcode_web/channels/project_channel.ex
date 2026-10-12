@@ -4,7 +4,7 @@ defmodule BeamcodeWeb.ProjectChannel do
   schedules and settings, through `Beamcode.ProjectTools`.
 
   Join replies `{project, can_edit, admin, procedures, procedures_error}`
-  (a Procedure Folder's procedures, see `Beamcode.Routines.list/1`; else []).
+  (the procedures the Folder can run, see `Beamcode.Procedures.list/1`).
 
   Requests:
     * `sessions` → `{sessions}`; `runs` → `{runs}`
@@ -18,8 +18,13 @@ defmodule BeamcodeWeb.ProjectChannel do
       `{ref, id, params}`, `queue_dep` `{ref, id, dep, on}` and `queue_auto`
       `{on}` each reply with `{queue}` (and `ids` / `session_id`)
     * `procedures` → `{procedures, error}`
-    * `run` `{procedure?, inputs? | rows?}` → `{session_id}`: runs a procedure in
-      the Folder's chat, once with `inputs` or once per row of `rows` (one message)
+    * `run` `{procedure?, inputs? | rows?, session_id?}` → `{session_id, run}`: starts a
+      procedure (`Beamcode.Procedures.Runs.start/5`) in the Folder's chat (a new
+      worktree chat in a code Folder) or the chat given, once with `inputs` or
+      once per row of `rows`
+    * `run_continue` `{id, items?}`, `run_skip` `{id}`, `run_back` `{id, note}`,
+      `run_stop` `{id}` → `{run}`: answer a run that waits for you, or stop it
+    * `pause_schedule` `{procedure, paused}` → `{procedures}`: pause a procedure's schedule
     * `run_result` `{id}` → `{text}`: a run's result, to show it in the Folder's chat
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
@@ -57,7 +62,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     Projects,
     ProjectFiles,
     ProjectTools,
-    Routines,
+    Procedures,
     Schedules,
     Sessions,
     TaskQueue,
@@ -67,6 +72,7 @@ defmodule BeamcodeWeb.ProjectChannel do
   }
 
   alias Beamcode.Opencode.Events
+  alias Beamcode.Procedures.Runs
   alias BeamcodeWeb.{AppJSON, ChannelTasks}
 
   # Text bigger than this is opened by URL instead of sent over the socket.
@@ -178,13 +184,56 @@ defmodule BeamcodeWeb.ProjectChannel do
     {:reply, {:ok, %{runs: Enum.map(runs, &AppJSON.run/1)}}, socket}
   end
 
-  def handle_in("procedures", _params, socket) do
+  def handle_in("procedures", params, socket) do
     project = socket.assigns.project
+    if params["fresh"], do: Procedures.changed(project)
 
     ChannelTasks.reply_async(socket, fn ->
       {procedures, error} = procedures(project)
-      {:ok, %{procedures: procedures, error: error}}
+      {:ok, %{procedures: procedures, error: error, notes: Procedures.notes(project)}}
     end)
+  end
+
+  def handle_in("draft_procedure", %{"description" => text}, socket) when is_binary(text) do
+    %{project: project, user: user} = socket.assigns
+
+    cond do
+      String.trim(text) == "" ->
+        {:reply, {:error, %{message: "Say what it should do."}}, socket}
+
+      not ProjectTools.can_edit?(project, user) ->
+        {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+
+      true ->
+        granted = for c <- Connectors.for_project(project), do: c.name
+
+        ChannelTasks.reply_async(socket, fn ->
+          case Procedures.draft(project, user, text, granted) do
+            {:ok, session_id, _} -> {:ok, %{session_id: session_id}}
+            {:error, reason} -> error(reason)
+          end
+        end)
+    end
+  end
+
+  def handle_in("save_procedure", %{"name" => name, "edit" => edit}, socket)
+      when is_binary(name) and is_map(edit) do
+    %{project: project, user: user} = socket.assigns
+
+    if ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        case Procedures.edit(project, name, edit) do
+          :ok ->
+            {procedures, error} = procedures(project)
+            {:ok, %{procedures: procedures, error: error}}
+
+          {:error, reason} ->
+            error(reason)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+    end
   end
 
   def handle_in("run", params, socket) do
@@ -196,12 +245,64 @@ defmodule BeamcodeWeb.ProjectChannel do
         _ -> values(params["inputs"])
       end
 
+    opts =
+      [trigger: if(params["trigger"] in ["slash", "button"], do: params["trigger"], else: "button")] ++
+        if(is_binary(params["session_id"]) and params["session_id"] != "",
+          do: [session_id: params["session_id"]],
+          else: []
+        )
+
     ChannelTasks.reply_async(socket, fn ->
-      case Routines.run(project, user, values, params["procedure"]) do
-        {:ok, session_id} -> {:ok, %{session_id: session_id}}
+      case Runs.start(project, user, params["procedure"], values, opts) do
+        {:ok, run} -> {:ok, %{session_id: run.session_id, run: AppJSON.run(run)}}
         {:error, reason} -> error(reason)
       end
     end)
+  end
+
+  def handle_in("run_" <> action, %{"id" => id} = params, socket)
+      when action in ["continue", "skip", "back", "stop"] do
+    %{project: project, user: user} = socket.assigns
+
+    with %{} = run <- Enum.find(Schedules.project_runs(project.id, 200), &(to_string(&1.id) == to_string(id))),
+         true <- (run.scope == "team" or run.owner_id == user.id) and ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        result =
+          case action do
+            "continue" -> Runs.continue(run, items: list_or_nil(params["items"]))
+            "skip" -> Runs.skip(run)
+            "back" -> Runs.back(run, to_string(params["note"] || ""))
+            "stop" -> Runs.stop(run)
+          end
+
+        case result do
+          {:ok, run} -> {:ok, %{run: AppJSON.run(run)}}
+          {:error, reason} -> error(reason)
+        end
+      end)
+    else
+      _ -> {:reply, {:error, %{message: "No such run here."}}, socket}
+    end
+  end
+
+  def handle_in("pause_schedule", %{"procedure" => name, "paused" => paused}, socket)
+      when is_binary(name) and is_boolean(paused) do
+    %{project: project, user: user} = socket.assigns
+
+    if ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        case Projects.pause_schedule(project, name, paused) do
+          {:ok, project} ->
+            {procedures, error} = procedures(project)
+            {:ok, %{procedures: procedures, error: error}}
+
+          {:error, reason} ->
+            error(reason)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+    end
   end
 
   def handle_in("run_result", %{"id" => id}, socket) do
@@ -253,7 +354,10 @@ defmodule BeamcodeWeb.ProjectChannel do
   def handle_in("queue_add", %{"ref" => ref, "titles" => titles} = params, socket)
       when is_binary(ref) and is_list(titles) do
     queue_edit(socket, params, fn project, user ->
-      with {:ok, ids} <- TaskQueue.add(project, user, ref, titles, params["chain"] == true),
+      procedure = if is_binary(params["procedure"]), do: params["procedure"]
+
+      with {:ok, ids} <-
+             TaskQueue.add(project, user, ref, titles, params["chain"] == true, procedure: procedure),
            do: {:ok, %{ids: ids}}
     end)
   end
@@ -826,16 +930,25 @@ defmodule BeamcodeWeb.ProjectChannel do
 
   defp values(_), do: %{}
 
-  defp procedures(%{kind: "routine"} = project) do
-    list =
-      for p <- Routines.list(project) do
-        Map.take(p, [:name, :description, :inputs, :key])
+  defp procedures(project) do
+    {list, errors} = Procedures.load(project)
+    paused = project.paused_schedules || []
+    last = Schedules.last_runs_by_procedure(project.id)
+
+    warnings = Procedures.warnings(list)
+
+    json =
+      for p <- list do
+        p
+        |> AppJSON.procedure(paused: p.name in paused, last: last[p.name])
+        |> Map.put(:warnings, Map.get(warnings, p.name, []))
       end
 
-    {list, Routines.error(project)}
+    {json, if(errors == [], do: nil, else: Enum.join(errors, "; "))}
   end
 
-  defp procedures(_project), do: {[], nil}
+  defp list_or_nil(list) when is_list(list), do: Enum.filter(list, &is_map/1)
+  defp list_or_nil(_), do: nil
 
   # The Folder's tasks, to reply after any change.
   defp ticket_reply(project) do

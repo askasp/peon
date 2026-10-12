@@ -3,7 +3,9 @@ defmodule BeamcodeWeb.SessionChannel do
   One session for the app ("session:<id>"), fed by the OpenCode events
   (`Beamcode.Opencode.Events`).
 
-  Join replies `{session, project, messages, status, perms, forms, run, diff}`.
+  Join replies `{session, project, messages, status, perms, forms, run, runs, diff}`
+  (`runs`: the procedure runs in this chat and the runs they started, see
+  `Beamcode.Schedules.chat_runs/1`).
 
   Requests:
     * `send` `{text, files?}` – files are `[{uri: "data:image/…;base64,…", name}]`
@@ -18,6 +20,8 @@ defmodule BeamcodeWeb.SessionChannel do
       than the one on screen, so a chat opens with the newest page and loads
       earlier ones as you scroll up
     * `image` `{message_id, index}` → `{mime, data}`, a pasted image too big to come with its message
+    * `run_continue` `{id, items?}`, `run_skip` `{id}`, `run_back` `{id, note}`, `run_stop` `{id}`
+      → `{}`: answer a procedure run in this chat that waits for you, or stop it
 
   Pushes:
     * `delta` `{message_id, kind, delta}` – streamed text ("text" or "reasoning")
@@ -25,13 +29,15 @@ defmodule BeamcodeWeb.SessionChannel do
     * `status` `{status, perms}` – idle | running | waiting, and pending permission requests
     * `session` `{session}` – renamed, or model/agent switched
     * `run` `{run}` – the routine run this session is, when it starts or finishes
+    * `runs` `{runs}` – the procedure runs in this chat, when one moves on
     * `forms` `{forms}` – the questions the agent is waiting on, when they change
     * `diff` `{files}` – changed files (`file`, `additions`, `deletions`, `patch`, `hidden`), when they change
     * `speak` `{text}` – a short line to say: the reply when a turn ends, or a permission ask
   """
   use BeamcodeWeb, :channel
 
-  alias Beamcode.{Inbox, Opencode, Schedules, Sessions, Speech}
+  alias Beamcode.{Inbox, Opencode, Procedures, Schedules, Sessions, Speech}
+  alias Beamcode.Procedures.Runs
   alias Beamcode.Opencode.Events
   alias BeamcodeWeb.{AppJSON, ChannelTasks}
 
@@ -85,6 +91,7 @@ defmodule BeamcodeWeb.SessionChannel do
              perms: perms(id),
              forms: forms(id),
              run: run(id),
+             runs: chat_runs(id),
              diff: socket.assigns.diff
            }, socket}
 
@@ -110,10 +117,27 @@ defmodule BeamcodeWeb.SessionChannel do
       # While a run works, follow-ups wait for it instead of steering it.
       delivery = if running_run?(sid, socket.assigns.status), do: "queue"
 
+      user = socket.assigns.user
+
       ChannelTasks.reply_async(socket, fn ->
-        case Sessions.send_text(sid, text, dir, files, delivery) do
-          {:ok, _} -> {:ok, %{}}
-          {:error, reason} -> error(reason)
+        case procedure_message(project, sid, text, files) do
+          {:run, name, values} ->
+            case Runs.start(project, user, name, values, session_id: sid, trigger: "slash") do
+              {:ok, _run} -> {:ok, %{}}
+              {:error, reason} -> error(reason)
+            end
+
+          {:back, run} ->
+            case Runs.back(run, text) do
+              {:ok, _run} -> {:ok, %{}}
+              {:error, reason} -> error(reason)
+            end
+
+          :send ->
+            case Sessions.send_text(sid, text, dir, files, delivery) do
+              {:ok, _} -> {:ok, %{}}
+              {:error, reason} -> error(reason)
+            end
         end
       end)
     end
@@ -199,11 +223,14 @@ defmodule BeamcodeWeb.SessionChannel do
             nil
         end
 
-      # A Procedure Folder's `/` lists only its own procedures.
+      # Procedures first; an Operations Folder's `/` lists only those.
+      procedures = Procedures.slash_items(socket.assigns.project)
+      names = MapSet.new(procedures, & &1.name)
+
       slash =
         if socket.assigns.project.kind == "routine",
-          do: Beamcode.Routines.slash_items(socket.assigns.project),
-          else: Sessions.slash_items(dir, 2)
+          do: procedures,
+          else: procedures ++ Enum.reject(Sessions.slash_items(dir, 2), &MapSet.member?(names, &1.name))
 
       {:ok, %{agents: agents, models: models, default: default, slash: slash}}
     end)
@@ -312,6 +339,44 @@ defmodule BeamcodeWeb.SessionChannel do
     end)
   end
 
+  def handle_in("run_" <> action, %{"id" => id} = params, socket)
+      when action in ["continue", "skip", "back", "stop"] do
+    %{session_id: sid, user: user, project: project} = socket.assigns
+
+    case Enum.find(Schedules.chat_runs(sid), &(to_string(&1.id) == to_string(id))) do
+      nil ->
+        {:reply, {:error, %{message: "No such run in this chat."}}, socket}
+
+      run ->
+        if Beamcode.ProjectTools.can_edit?(project, user) do
+          ChannelTasks.reply_async(socket, fn ->
+            result =
+              case action do
+                "continue" ->
+                  items = if is_list(params["items"]), do: Enum.filter(params["items"], &is_map/1)
+                  Runs.continue(run, items: items)
+
+                "skip" ->
+                  Runs.skip(run)
+
+                "back" ->
+                  Runs.back(run, to_string(params["note"] || ""))
+
+                "stop" ->
+                  Runs.stop(run)
+              end
+
+            case result do
+              {:ok, _} -> {:ok, %{}}
+              {:error, reason} -> error(reason)
+            end
+          end)
+        else
+          {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+        end
+    end
+  end
+
   def handle_in("run_again", _params, socket) do
     %{session_id: sid, project: project, user: user} = socket.assigns
 
@@ -321,8 +386,8 @@ defmodule BeamcodeWeb.SessionChannel do
 
       run ->
         ChannelTasks.reply_async(socket, fn ->
-          case Beamcode.Routines.run(project, user, run.inputs, run.procedure) do
-            {:ok, session_id} -> {:ok, %{session_id: session_id}}
+          case Runs.start(project, user, run.procedure, run.inputs) do
+            {:ok, run} -> {:ok, %{session_id: run.session_id}}
             {:error, reason} -> error(reason)
           end
         end)
@@ -491,9 +556,17 @@ defmodule BeamcodeWeb.SessionChannel do
     end
   end
 
-  def handle_info({:runs_changed, _}, socket) do
-    if run = run(socket.assigns.session_id), do: push(socket, "run", %{run: run})
-    {:noreply, socket}
+  def handle_info({:runs_changed, pid}, socket) do
+    sid = socket.assigns.session_id
+    if run = run(sid), do: push(socket, "run", %{run: run})
+
+    if pid in [nil, socket.assigns.project.id] do
+      runs = chat_runs(sid)
+      if runs != [] or socket.assigns[:had_runs], do: push(socket, "runs", %{runs: runs})
+      {:noreply, assign(socket, had_runs: runs != [])}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({ref, _} = msg, socket) when is_reference(ref),
@@ -645,10 +718,52 @@ defmodule BeamcodeWeb.SessionChannel do
     end
   end
 
+  defp chat_runs(sid), do: sid |> Schedules.chat_runs() |> Enum.map(&AppJSON.run/1)
+
   defp run(sid) do
     case Schedules.run_for_session(sid) do
       nil -> nil
       run -> AppJSON.run(run)
+    end
+  end
+
+  # What a typed message does: `/name …` starts a procedure from a file (a
+  # legacy skill one is sent as it is), and text at a run that waits for you
+  # after a step sends it back with that note.
+  defp procedure_message(project, sid, text, files) do
+    with [_, name, rest] <- Regex.run(~r{^/([\w.-]+)\s*(.*)$}s, String.trim(text)),
+         [] <- files,
+         %{source: source} = p when source != "legacy" <- Procedures.find(project, name) do
+      {:run, p, typed_values(p, rest)}
+    else
+      _ ->
+        case Runs.waiting_in(sid) do
+          %{waiting: %{"kind" => kind}} = run when kind in ["after", "changes"] and files == [] ->
+            {:back, run}
+
+          _ ->
+            :send
+        end
+    end
+  end
+
+  # "charge: ch_1, amount: 299" sets those inputs; other text goes to the one
+  # input there is, else rides along as `request`.
+  defp typed_values(_p, ""), do: %{}
+
+  defp typed_values(p, rest) do
+    pairs =
+      for part <- String.split(rest, ~r/,\s*/),
+          [_, k, v] <- [Regex.run(~r/^([\w-]+):\s*(.+)$/s, String.trim(part))],
+          into: %{},
+          do: {k, String.trim(v)}
+
+    names = Enum.map(p.inputs, & &1.name)
+
+    cond do
+      pairs != %{} and Enum.all?(Map.keys(pairs), &(&1 in names)) -> pairs
+      length(names) == 1 -> %{hd(names) => rest}
+      true -> %{"request" => rest}
     end
   end
 

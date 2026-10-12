@@ -56,6 +56,17 @@ defmodule Beamcode.TaskQueueTest do
               data(conn, %{"output" => elem(Agent.get(runs, & &1[id]), 1)})
           end
 
+        {"GET", "/api/fs/list"} ->
+          full = Path.join(at, URI.decode_query(conn.query_string)["path"])
+
+          case File.ls(full) do
+            {:ok, names} ->
+              data(conn, for(n <- names, do: %{"path" => Path.join(Path.relative_to(full, at), n), "type" => "file"}))
+
+            _ ->
+              Plug.Conn.send_resp(conn, 404, "")
+          end
+
         {"GET", "/api/fs/read/" <> path} ->
           Plug.Conn.send_resp(conn, 200, File.read!(Path.join(at, URI.decode(path))))
 
@@ -155,5 +166,45 @@ defmodule Beamcode.TaskQueueTest do
 
     assert :ok = Tickets.delete(tree, b)
     refute File.exists?(Path.join(wt, ".tickets/#{b}.md"))
+  end
+
+  test "a task runs through its procedure, else the Folder's Queue default", %{
+    project: project,
+    wt: wt,
+    told: told
+  } do
+    File.mkdir_p!(Path.join(wt, ".peon/procedures"))
+
+    File.write!(Path.join(wt, ".peon/procedures/ship.md"), """
+    ---
+    name: ship
+    queue: default
+    inputs:
+      task: { type: text }
+    steps:
+      - name: Plan
+      - name: Build
+    ---
+
+    ## Plan
+    Plan {task}.
+
+    ## Build
+    Build it.
+    """)
+
+    File.write!(Path.join(wt, ".peon/procedures/quick.md"), "Just do {task}.")
+
+    assert {:ok, [a]} = TaskQueue.add(project, nil, "s1", ["Replace fixed waits"])
+    assert [prompt] = Agent.get(told, & &1)
+    assert prompt =~ "/ship · Plan (step 1 of 2)"
+    assert prompt =~ "Plan Replace fixed waits."
+
+    run = Beamcode.Repo.get_by!(Beamcode.Schedules.Run, ticket: a)
+    assert %{procedure: "ship", trigger: "queue", session_id: "s1"} = run
+
+    {:ok, project} = Projects.update_settings(project, %{queue_auto: false})
+    assert {:ok, [b]} = TaskQueue.add(project, nil, "s1", ["Two"], false, procedure: "quick")
+    assert status(tree(project, "s1"), b)["procedure"] == "quick"
   end
 end

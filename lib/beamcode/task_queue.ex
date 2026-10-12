@@ -10,6 +10,7 @@ defmodule Beamcode.TaskQueue do
   worktree's next ready task starts (`finished/1`, from `TaskQueue.Runner`).
   """
   require Logger
+  import Ecto.Query, only: [from: 2]
   alias Beamcode.{Opencode, Projects, Sessions, Tickets, Worktrees}
   alias Beamcode.Opencode.Events
   alias Beamcode.Projects.Project
@@ -40,8 +41,39 @@ defmodule Beamcode.TaskQueue do
           %{ref: c.id, worktree: Path.basename(c.dir), chat: chat(c), tickets: annotate(tickets)}
         end
 
-      {:ok, %{auto: project.queue_auto, trees: [main | trees]}}
+      trees = with_runs(project, [main | trees])
+      {:ok, %{auto: project.queue_auto, trees: trees}}
     end
+  end
+
+  # Each task's latest procedure run: where it is in its steps.
+  defp with_runs(project, trees) do
+    ids = for t <- trees, ticket <- t.tickets, do: ticket["id"]
+
+    runs =
+      from(r in Beamcode.Schedules.Run,
+        where: r.project_id == ^project.id and r.ticket in ^ids,
+        order_by: [asc: r.inserted_at]
+      )
+      |> Beamcode.Repo.all()
+      |> Map.new(&{&1.ticket, &1})
+
+    for t <- trees do
+      %{t | tickets: Enum.map(t.tickets, &Map.put(&1, "run", run_json(runs[&1["id"]])))}
+    end
+  end
+
+  defp run_json(nil), do: nil
+
+  defp run_json(run) do
+    %{
+      id: run.id,
+      procedure: run.procedure,
+      status: run.status,
+      step: run.step,
+      waiting: run.waiting && run.waiting["text"],
+      steps: Enum.map(run.steps, &Map.take(&1, ["name", "status", "model"]))
+    }
   end
 
   # One chat per worktree folder: the one worked in last.
@@ -76,15 +108,19 @@ defmodule Beamcode.TaskQueue do
 
   @doc """
   Adds tasks to the tree `ref`, from `titles`. With `chain`, each waits on the
-  one before. Then, with `queue_auto`, an idle worktree starts the first.
-  `{:ok, ids}`.
+  one before. `procedure:` names the procedure they run through (else the
+  Folder's Queue default). Then, with `queue_auto`, an idle worktree starts
+  the first. `{:ok, ids}`.
   """
-  def add(%Project{} = project, user, ref, titles, chain \\ false) do
+  def add(%Project{} = project, user, ref, titles, chain \\ false, opts \\ []) do
     titles = titles |> Enum.map(&String.trim(to_string(&1))) |> Enum.reject(&(&1 == ""))
 
     with {:ok, tree} <- tree(project, user, ref),
          true <- titles != [] || {:error, "Say what the task is."},
          {:ok, ids} <- create_all(tree, titles) do
+      if opts[:procedure] not in [nil, ""],
+        do: Enum.each(ids, &Tickets.edit(tree, &1, %{"procedure" => opts[:procedure]}))
+
       if chain do
         ids
         |> Enum.chunk_every(2, 1, :discard)
@@ -120,7 +156,7 @@ defmodule Beamcode.TaskQueue do
 
       with :ok <- Tickets.put(wt, id, raw),
            :ok <- Tickets.delete(project, id),
-           :ok <- run(wt, session["id"], ticket) do
+           :ok <- run(wt, session["id"], ticket, user) do
         {:ok, session["id"]}
       end
     end
@@ -140,19 +176,54 @@ defmodule Beamcode.TaskQueue do
           {:error, "This chat is working. #{id} can start when it stops."}
 
         true ->
-          with :ok <- run(tree, ref, ticket), do: {:ok, ref}
+          with :ok <- run(tree, ref, ticket, user), do: {:ok, ref}
       end
     end
   end
 
-  # Marks the task in progress and hands it to the chat.
-  defp run(tree, session_id, ticket) do
+  # Marks the task in progress and hands it to the chat: as a run of its
+  # procedure (the ticket's, else the Folder's Queue default), else as one
+  # message (`prompt/1`). A run closes the task when its last step is done.
+  defp run(tree, session_id, ticket, user) do
     id = ticket["id"]
 
     with :ok <- Tickets.edit(tree, id, %{"paused" => false}),
-         :ok <- Tickets.set_status(tree, id, "in_progress"),
-         {:ok, _} <- Sessions.send_text(session_id, prompt(ticket), tree.directory) do
-      :ok
+         :ok <- Tickets.set_status(tree, id, "in_progress") do
+      case procedure(tree, ticket) do
+        nil ->
+          with {:ok, _} <- Sessions.send_text(session_id, prompt(ticket), tree.directory), do: :ok
+
+        proc ->
+          user = user || owner(session_id)
+          task = String.trim("#{ticket["title"]}\n\n#{ticket["body"]}")
+          input = (Enum.at(proc.inputs, 0) || %{name: "task"}).name
+
+          with {:ok, _run} <-
+                 Beamcode.Procedures.Runs.start(tree, user, proc, %{input => task},
+                   session_id: session_id,
+                   trigger: "queue",
+                   ticket: id
+                 ),
+               do: :ok
+      end
+    end
+  end
+
+  @doc "The procedure a task runs through: its own `procedure:`, else the Queue default."
+  def procedure(tree, ticket) do
+    list = Beamcode.Procedures.list(tree)
+
+    case ticket["procedure"] do
+      name when is_binary(name) and name != "" -> Enum.find(list, &(&1.name == name))
+      _ -> Enum.find(list, &(&1.queue == "default"))
+    end
+  end
+
+  defp owner(session_id) do
+    case Projects.session_record(session_id) do
+      %{user: %{} = user} -> user
+      %{user_id: id} when is_integer(id) -> Beamcode.Accounts.get_user(id)
+      _ -> nil
     end
   end
 
@@ -235,7 +306,7 @@ defmodule Beamcode.TaskQueue do
          :idle <- Events.status(session_id),
          %{} = next <- tickets |> annotate() |> Enum.find(&ready?/1) do
       Logger.info("task queue: starting #{next["id"]} in #{Path.basename(dir)}")
-      run(tree, session_id, next)
+      run(tree, session_id, next, nil)
     end
   end
 

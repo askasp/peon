@@ -122,8 +122,73 @@ defmodule BeamcodeWeb.AppJSON do
       error: r.error,
       summary: r.summary,
       started: r.inserted_at,
-      finished: r.finished_at
+      finished: r.finished_at,
+      trigger: r.trigger,
+      step: r.step,
+      steps: Enum.map(r.steps || [], &run_step/1),
+      waiting: r.waiting,
+      parent_id: r.parent_id,
+      ticket: r.ticket,
+      # What each output holds, by count (the lists stay on the server).
+      outputs: Map.new(r.outputs || %{}, fn {k, v} -> {k, if(is_list(v), do: length(v), else: 1)} end)
     }
+  end
+
+  # A step of a run, as the chat shows it; its reply is cut to what a card needs.
+  defp run_step(s) do
+    s
+    |> Map.take(~w(name status session_id model effort session loops error started finished children results))
+    |> Map.put("text", s["text"] && String.slice(s["text"], 0, 4000))
+  end
+
+  @doc """
+  A procedure for the app: what it takes, its steps and how it starts.
+  opts: `paused` (its schedule), `last` (its last run).
+  """
+  def procedure(p, opts \\ []) do
+    %{
+      name: p.name,
+      description: p.description,
+      inputs: Enum.map(p.inputs, &Map.take(&1, [:name, :type, :default, :options, :multi, :currency])),
+      key: p.key,
+      source: p.source,
+      path: p.path,
+      overrides: p.overrides,
+      queue: p.queue,
+      outputs: p.outputs,
+      schedule:
+        p.schedule &&
+          %{
+            at: p.schedule.at,
+            tz: p.schedule.tz,
+            when: p.schedule.cron && Beamcode.Schedules.Cron.describe(p.schedule.cron),
+            next: next_time(p.schedule.cron),
+            paused: Keyword.get(opts, :paused, false)
+          },
+      steps:
+        Enum.map(p.steps, fn st ->
+          Map.take(st, ~w(name kind prompt model effort session wait uses hand_over offers skill run
+                          for_each returns on_fail queue title call params confirm)a)
+          |> Map.put(:on_changes, st.on_changes)
+          |> Map.put(:model_label, Beamcode.Procedures.model_label(st.model))
+        end),
+      last: opts[:last] && run(opts[:last])
+    }
+  end
+
+  defp next_time(nil), do: nil
+
+  defp next_time(cron) do
+    case Beamcode.Schedules.Cron.parse(cron) do
+      {:ok, c} ->
+        case Beamcode.Schedules.Cron.next(c, Beamcode.Schedules.Cron.local_now()) do
+          %NaiveDateTime{} = t -> NaiveDateTime.to_iso8601(t)
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   # Base64 images up to this size travel with the message; bigger ones are only named.

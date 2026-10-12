@@ -6,15 +6,15 @@ defmodule Beamcode.Workspace do
         setup/                 system project, admins only
           AGENTS.md
           connectors/*.json    one file per connector
+          procedures/*.md      global procedures, in every Folder
         routines/
           AGENTS.md            shared by all routines
           .opencode/skill/     shared skills
-          <name>/              a Procedure Folder = its own project
+          <name>/              an Operations Folder = its own project
             AGENTS.md
-            .opencode/skill/   one skill per procedure
-            procedures.json    the procedures' inputs
+            .peon/procedures/  one file per procedure (any Folder can have these)
+            .peon/*.md         notes a step can be handed
             opencode.json      gateway MCP server + connector permissions
-            schedules.json
         code/<name>/           cloned or new git repos
         home/<username>/       each user's private Home folder
         <name>/                chat, document, design and dataset folders
@@ -354,7 +354,7 @@ defmodule Beamcode.Workspace do
 
   defp q(s), do: "'" <> String.replace(s, "'", "'\\''") <> "'"
 
-  # A Procedure Folder starts with no procedures: they're added in its chat.
+  # An Operations Folder starts with no procedures: they're added in its chat.
   defp prepare_routine(root, dir, name, attrs) do
     rel = Path.relative_to(dir, root)
     desc = String.trim(attrs["description"] || "")
@@ -364,13 +364,10 @@ defmodule Beamcode.Workspace do
 
     #{if desc == "", do: "What these procedures are for.", else: desc}
 
-    #{Beamcode.Routines.conventions()}
+    #{Beamcode.Procedures.conventions()}
     """
 
-    with :ok <- write_new(root, Path.join(rel, "AGENTS.md"), agents),
-         :ok <- write_new(root, Path.join(rel, "procedures.json"), "{}\n") do
-      write_new(root, Path.join(rel, "schedules.json"), "{}\n")
-    end
+    write_new(root, Path.join(rel, "AGENTS.md"), agents)
   end
 
   # AGENTS.md (with what the Folder is for, if given) and the template's skill.
@@ -628,8 +625,9 @@ defmodule Beamcode.Workspace do
     """
     # Routines
 
-    Shared by all Procedure Folders: company, tone, policies. Each folder here
-    groups related procedures. Shared skills live in `.opencode/skill/`.
+    Shared by all Operations Folders: company, tone, policies. Each folder here
+    groups related procedures (`.peon/procedures/*.md`). Shared skills live in
+    `.opencode/skill/`.
     """
   end
 
@@ -694,29 +692,27 @@ defmodule Beamcode.Workspace do
     4. Call one or two read tools to test it, and say what you found.
     5. Ask which projects should get it and update `projects`.
 
-    ## Routines and schedules
+    ## Procedures
 
-    Procedure Folders live in `../routines/<name>/`. Each procedure is a skill in
-    the Folder, run as `/<name>` in its chat, with its inputs in `procedures.json`:
+    A procedure is a file, `.peon/procedures/<name>.md`, in any Folder; it runs
+    as `/<name>` there. Operations Folders (procedures only, no repo) live in
+    `../routines/<name>/`. Their AGENTS.md explains the format: inputs, steps
+    with their own model and session, schedules, run-links, and the blocks a
+    step's reply ends with.
 
-    ```json
-    { "digest": { "inputs": { "since": { "default": "last run", "options": ["last run", "today", "this week"] },
-                              "inboxes": { "default": ["Support"], "multi": true, "options": ["Support", "Billing"] } } } }
-    ```
+    Global procedures are `procedures/<name>.md` here in setup. They show up in
+    every Folder; a Folder's own file with the same name replaces one.
 
-    A run's final answer is shown as its result, so end the skill with the result
-    itself (markdown), not with commentary. The Folder's AGENTS.md explains
-    run-links (a result starting the next procedure) and `peon-status`.
-
-    Skills that read an API should narrow first (search by keywords, dates,
+    Steps that read an API should narrow first (search by keywords, dates,
     status) and only then read details, one call per item. Reading everything
     and filtering afterwards hits rate limits.
 
-    A Folder's schedules are in its `schedules.json` (leave `prompt` out to run
-    `procedure` with its defaults and the schedule's `inputs`):
+    A schedule goes in the procedure file (`schedule: Mon 07:00`, or
+    `{ at: daily 02:00, tz: Europe/Oslo }`); pausing it is done in the app.
+    A Folder's `schedules.json` still runs plain prompts on a cron line:
 
     ```json
-    { "morning-digest": { "cron": "0 8 * * 1-5", "procedure": "digest", "inputs": { "since": "last run" },
+    { "morning-digest": { "cron": "0 8 * * 1-5", "prompt": "/digest since the last run",
                           "scope": "team", "owner": "aksel" } }
     ```
 

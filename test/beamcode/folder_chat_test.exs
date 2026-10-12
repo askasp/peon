@@ -85,15 +85,17 @@ defmodule Beamcode.FolderChatTest do
           {:ok, body, conn} = Plug.Conn.read_body(conn)
           Agent.update(sent, &[Jason.decode!(body) | &1])
           data(conn, %{})
+
+        _ ->
+          Plug.Conn.send_resp(conn, 404, "")
       end
     end)
 
     rows = [%{"charge" => "ch_1", "name" => "Ola"}, %{"charge" => "ch_2", "name" => "Kari"}]
-    assert {:ok, "chat"} = Beamcode.Routines.run(folder, user, rows, "refund")
-    assert {:ok, "chat"} = Beamcode.Routines.run(folder, user, %{"charge" => "ch_3"}, "refund")
-
-    assert {:error, "No procedure called nope."} =
-             Beamcode.Routines.run(folder, user, %{}, "nope")
+    alias Beamcode.Procedures.Runs
+    assert {:ok, %{session_id: "chat"}} = Runs.start(folder, user, "refund", rows)
+    assert {:ok, %{session_id: "chat"}} = Runs.start(folder, user, "refund", %{"charge" => "ch_3"})
+    assert {:error, "No procedure called nope."} = Runs.start(folder, user, "nope", %{})
 
     assert [
              %{"skills" => [%{"id" => "refund"}], "text" => "charge: ch_3"},

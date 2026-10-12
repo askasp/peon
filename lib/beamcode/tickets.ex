@@ -203,6 +203,7 @@ defmodule Beamcode.Tickets do
         front =
           front
           |> put_front("priority", attrs["priority"])
+          |> put_front("procedure", blank_to_nil(attrs["procedure"]))
           |> put_paused(attrs["paused"])
 
         rest = rest |> put_title(title) |> put_body(body)
@@ -224,6 +225,9 @@ defmodule Beamcode.Tickets do
         Enum.map_join(lines, "\n", &if(String.starts_with?(&1, key <> ":"), do: line, else: &1)),
       else: front <> "\n" <> line
   end
+
+  defp blank_to_nil(v) when v in [nil, ""], do: nil
+  defp blank_to_nil(v), do: to_string(v)
 
   defp put_paused(front, nil), do: front
 
@@ -300,6 +304,8 @@ defmodule Beamcode.Tickets do
       "tags" => List.wrap(attrs["tags"] || []),
       "deps" => attrs["deps"] || [],
       "created" => attrs["created"],
+      # The procedure the Queue runs it through (see Beamcode.TaskQueue).
+      "procedure" => attrs["procedure"],
       "body" => text,
       "notes" => notes
     }
