@@ -199,8 +199,13 @@ defmodule BeamcodeWeb.SessionChannel do
             nil
         end
 
-      {:ok,
-       %{agents: agents, models: models, default: default, slash: Sessions.slash_items(dir, 2)}}
+      # A Procedure Folder's `/` lists only its own procedures.
+      slash =
+        if socket.assigns.project.kind == "routine",
+          do: Beamcode.Routines.slash_items(socket.assigns.project),
+          else: Sessions.slash_items(dir, 2)
+
+      {:ok, %{agents: agents, models: models, default: default, slash: slash}}
     end)
   end
 
@@ -316,8 +321,8 @@ defmodule BeamcodeWeb.SessionChannel do
 
       run ->
         ChannelTasks.reply_async(socket, fn ->
-          case Beamcode.Routines.run(project, user, run.inputs) do
-            {:ok, new_run} -> {:ok, %{session_id: new_run.session_id}}
+          case Beamcode.Routines.run(project, user, run.inputs, run.procedure) do
+            {:ok, session_id} -> {:ok, %{session_id: session_id}}
             {:error, reason} -> error(reason)
           end
         end)

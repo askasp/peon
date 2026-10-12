@@ -24,8 +24,8 @@ const extra: Partial<Record<Kind, { label: string; placeholder: string; param: s
     param: "description",
   },
   routine: {
-    label: "What should it do?",
-    placeholder: "e.g. sum up open PRs and post them in Slack",
+    label: "First procedure (optional)",
+    placeholder: "e.g. read support mail and list who should get a refund",
     param: "description",
   },
 };

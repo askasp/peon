@@ -206,7 +206,7 @@ defmodule Beamcode.Composer do
   def start(%{project: nil}, _user), do: {:error, "Say which project, e.g. “in chatos-web”."}
 
   def start(%{action: :run, project: project}, user) do
-    with {:ok, run} <- Routines.run(project, user), do: {:ok, run.session_id}
+    Routines.run(project, user)
   end
 
   def start(%{project: project} = parsed, user) do

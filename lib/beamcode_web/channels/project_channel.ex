@@ -3,8 +3,8 @@ defmodule BeamcodeWeb.ProjectChannel do
   One project for the app ("project:<id>"): its sessions, runs, skills,
   schedules and settings, through `Beamcode.ProjectTools`.
 
-  Join replies `{project, can_edit, admin, inputs, routine}` (`inputs` is the routine's
-  run form, or []).
+  Join replies `{project, can_edit, admin, procedures, procedures_error}`
+  (a Procedure Folder's procedures, see `Beamcode.Routines.list/1`; else []).
 
   Requests:
     * `sessions` → `{sessions}`; `runs` → `{runs}`
@@ -17,7 +17,10 @@ defmodule BeamcodeWeb.ProjectChannel do
       `queue_pause`, `queue_cancel`, `queue_done`, `queue_delete` `{ref, id}`, `queue_edit`
       `{ref, id, params}`, `queue_dep` `{ref, id, dep, on}` and `queue_auto`
       `{on}` each reply with `{queue}` (and `ids` / `session_id`)
-    * `run` `{inputs?}` → `{session_id}` (routines)
+    * `procedures` → `{procedures, error}`
+    * `run` `{procedure?, inputs? | rows?}` → `{session_id}`: runs a procedure in
+      the Folder's chat, once with `inputs` or once per row of `rows` (one message)
+    * `run_result` `{id}` → `{text}`: a run's result, to show it in the Folder's chat
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
     * `slash` → `{slash}`: skills and commands for `/` completion (`Sessions.slash_items/2`)
@@ -96,20 +99,15 @@ defmodule BeamcodeWeb.ProjectChannel do
         Schedules.subscribe()
         Projects.subscribe()
 
-        routine = if project.kind == "routine", do: Routines.config(project)
+        {procedures, error} = procedures(project)
 
         {:ok,
          %{
            project: AppJSON.project(project),
            can_edit: ProjectTools.can_edit?(project, user),
            admin: user.admin,
-           inputs:
-             Enum.map(
-               (routine && routine.inputs) || [],
-               &Map.take(&1, [:name, :default, :options, :multi])
-             ),
-           # What a run does, and what's wrong with routine.json if anything.
-           routine: routine && %{run: routine.run, error: routine.error}
+           procedures: procedures,
+           procedures_error: error
          }, assign(socket, project: project, changed_ref: nil, tasks: %{})}
     end
   end
@@ -180,17 +178,48 @@ defmodule BeamcodeWeb.ProjectChannel do
     {:reply, {:ok, %{runs: Enum.map(runs, &AppJSON.run/1)}}, socket}
   end
 
+  def handle_in("procedures", _params, socket) do
+    project = socket.assigns.project
+
+    ChannelTasks.reply_async(socket, fn ->
+      {procedures, error} = procedures(project)
+      {:ok, %{procedures: procedures, error: error}}
+    end)
+  end
+
   def handle_in("run", params, socket) do
     %{project: project, user: user} = socket.assigns
 
-    ChannelTasks.reply_async(socket, fn ->
-      config = Routines.config(project)
+    values =
+      case params["rows"] do
+        rows when is_list(rows) and rows != [] -> for r <- rows, is_map(r), do: values(r)
+        _ -> values(params["inputs"])
+      end
 
-      case Routines.run(project, user, inputs(params["inputs"], config)) do
-        {:ok, run} -> {:ok, %{session_id: run.session_id}}
+    ChannelTasks.reply_async(socket, fn ->
+      case Routines.run(project, user, values, params["procedure"]) do
+        {:ok, session_id} -> {:ok, %{session_id: session_id}}
         {:error, reason} -> error(reason)
       end
     end)
+  end
+
+  def handle_in("run_result", %{"id" => id}, socket) do
+    %{project: project, user: user} = socket.assigns
+
+    case Enum.find(Schedules.project_runs(project.id), &(to_string(&1.id) == to_string(id))) do
+      %{session_id: sid, scope: scope, owner_id: owner}
+      when is_binary(sid) and (scope == "team" or owner == user.id) ->
+        ChannelTasks.reply_async(socket, fn ->
+          case Schedules.result(sid) do
+            {:ok, text} -> {:ok, %{text: text}}
+            {:error, reason} -> error(reason)
+          end
+        end)
+
+      _ ->
+        {:reply, {:error, %{message: "No such run here."}}, socket}
+    end
   end
 
   ## Tasks (tk tickets in the Folder's .tickets/)
@@ -786,16 +815,27 @@ defmodule BeamcodeWeb.ProjectChannel do
     }
   end
 
-  # Form values for the routine's inputs; multi-choice inputs are lists.
-  defp inputs(values, config) when is_map(values) do
-    Map.new(config.inputs, fn input ->
-      value = Map.get(values, input.name, input.default)
-      value = if input.multi, do: value |> List.wrap() |> Enum.reject(&(&1 == "")), else: value
-      {input.name, value}
-    end)
+  # A procedure's inputs from the app: strings, and lists for multi-choice ones.
+  defp values(map) when is_map(map) do
+    for {k, v} <- map, is_binary(k), into: %{} do
+      if is_list(v),
+        do: {k, v |> Enum.map(&to_string/1) |> Enum.reject(&(&1 == ""))},
+        else: {k, to_string(v)}
+    end
   end
 
-  defp inputs(_, _config), do: %{}
+  defp values(_), do: %{}
+
+  defp procedures(%{kind: "routine"} = project) do
+    list =
+      for p <- Routines.list(project) do
+        Map.take(p, [:name, :description, :inputs, :key])
+      end
+
+    {list, Routines.error(project)}
+  end
+
+  defp procedures(_project), do: {[], nil}
 
   # The Folder's tasks, to reply after any change.
   defp ticket_reply(project) do

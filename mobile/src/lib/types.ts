@@ -45,6 +45,8 @@ export type Perm = {
   action: string;
   resources: string[];
   title: string;
+  /** What the call carries (a tool's arguments), as JSON. */
+  detail?: string;
 };
 
 export type Run = {
@@ -53,6 +55,8 @@ export type Run = {
   owner_id: number | null;
   inputs: Record<string, string | string[]>;
   schedule_key: string;
+  /** Which of the Folder's procedures ran. */
+  procedure?: string | null;
   session_id: string | null;
   status: "running" | "done" | "failed" | string;
   scope: string;
@@ -90,6 +94,8 @@ export type Schedule = {
   scope: "team" | "me";
   owner: string | null;
   prompt: string;
+  /** In a Procedure Folder: the procedure a blank prompt runs. */
+  procedure?: string | null;
   paused: boolean;
   next: string | null;
   last: Run | null;
@@ -166,7 +172,13 @@ export type SessionOptions = {
   models: ModelOption[];
   /** The model used when none is picked. */
   default?: ModelOption | null;
-  slash: { name: string; description: string | null; kind: "skill" | "command" }[];
+  /** `/` items; a Procedure Folder lists its procedures, with their inputs. */
+  slash: {
+    name: string;
+    description: string | null;
+    kind: "skill" | "command" | "procedure";
+    inputs?: string[];
+  }[];
 };
 
 export type Keys = {

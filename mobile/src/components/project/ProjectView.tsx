@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
 import { BackHeader, ErrorLine, Loading, Screen, Segmented, Tap, Toggle, UnderlineTabs } from "../ui";
@@ -6,7 +6,7 @@ import { notify } from "@/lib/notice";
 import { Icon } from "../Icon";
 import { Letter } from "../desktop/Sidebar";
 import { FilesTab } from "./FilesTab";
-import { RunsTab } from "./RunsTab";
+import { ProceduresTab } from "./ProceduresTab";
 import { SchedulesTab } from "./SchedulesTab";
 import { SessionsTab } from "./SessionsTab";
 import { SettingsTab } from "./SettingsTab";
@@ -14,7 +14,8 @@ import { SessionChat } from "../session/SessionChat";
 import { SkillsTab } from "./SkillsTab";
 import { TasksTab } from "./TasksTab";
 import { QueueTab } from "./QueueTab";
-import type { ProjectCtx, RoutineInput } from "./types";
+import type { ProjectCtx } from "./types";
+import type { Procedure } from "@/lib/procedures";
 import { usePeon } from "@/lib/peon";
 import { useChannel } from "@/lib/useChannel";
 import { useCurrent } from "@/lib/current";
@@ -25,12 +26,13 @@ import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
 import type { Project, SessionSummary } from "@/lib/types";
 
-type Tab = "chat" | "chats" | "files" | "runs" | "queue" | "tasks" | "settings";
+type Tab = "chat" | "chats" | "files" | "procedures" | "queue" | "tasks" | "settings";
 type Section = "general" | "skills" | "schedules";
 
 // Old links (?tab=skills) land on the tab that has them now.
 const legacy: Record<string, [Tab, Section?]> = {
   sessions: ["chats"],
+  runs: ["procedures"],
   skills: ["settings", "skills"],
   schedules: ["settings", "schedules"],
 };
@@ -55,8 +57,8 @@ export function ProjectView({
     project: Project;
     can_edit: boolean;
     admin: boolean;
-    inputs: RoutineInput[];
-    routine: { run: string; error: string | null } | null;
+    procedures: Procedure[];
+    procedures_error: string | null;
   }>(`project:${id}`, {
     changed: () => setChanged((n) => n + 1),
     project: ({ project }) => setProject(project),
@@ -65,19 +67,30 @@ export function ProjectView({
   const p = (project?.id === Number(id) ? project : null) ?? ch.reply?.project ?? stored;
   useCurrent(p?.id);
   const routine = p?.kind === "routine";
-  // Design, Document and Dataset Folders are one chat beside their files.
+  // Design, Document, Dataset and Procedure Folders are one chat beside their files.
   const single = p ? singleChat(p.kind) : false;
-  // Runs only when the Folder has a routine; other schedules are under Settings.
+  // A Procedure Folder's procedures, as joined and when the chat may have added one.
+  const [reloaded, setProcedures] = useState<{ list: Procedure[]; error: string | null } | null>(null);
+  const procedures = reloaded?.list ?? ch.reply?.procedures ?? [];
+  const proceduresError = reloaded ? reloaded.error : (ch.reply?.procedures_error ?? null);
+  const call = ch.call;
+  const reloadProcedures = useCallback(() => {
+    if (!routine) return;
+    call<{ procedures: Procedure[]; error: string | null }>("procedures", {}, 30000)
+      .then((r) => setProcedures({ list: r.procedures, error: r.error }))
+      .catch(() => {});
+  }, [call, routine]);
+  // Other schedules are under Settings.
   const tabs: { value: Tab; label: string }[] = single
     ? [
         { value: "chat", label: "Chat" },
+        ...(routine ? [{ value: "procedures" as Tab, label: "Procedures" }] : []),
         { value: "files", label: "Files" },
         { value: "settings", label: "Settings" },
       ]
     : [
         { value: "chats", label: "Chats" },
         { value: "files", label: "Files" },
-        ...(routine ? [{ value: "runs" as Tab, label: "Runs" }] : []),
         // Code Folders queue tasks by worktree; the others keep one list.
         p?.kind === "code" ? { value: "queue", label: "Queue" } : { value: "tasks", label: "Tasks" },
         { value: "settings", label: "Settings" },
@@ -104,21 +117,9 @@ export function ProjectView({
     if (attached) setTab("chat");
   }
 
-  // The header's primary action: a new chat here, or run the routine.
-  const [running, setRunning] = useState(false);
   const [worktreeOverride, setWorktree] = useState<boolean | null>(null);
   const worktree = worktreeOverride ?? p?.always_worktree ?? false;
   const newChat = () => p && router.push({ pathname: "/compose", params: { folder: String(p.id) } });
-  async function runNow() {
-    setRunning(true);
-    try {
-      const { session_id } = await ch.call<{ session_id: string }>("run", {}, 60000);
-      router.push(`/session/${session_id}`);
-    } catch (e: any) {
-      notify(e.message);
-    }
-    setRunning(false);
-  }
   async function saveWorktree(v: boolean) {
     setWorktree(v);
     try {
@@ -135,8 +136,9 @@ export function ProjectView({
           project: p,
           canEdit: ch.reply.can_edit,
           admin: ch.reply.admin,
-          inputs: ch.reply.inputs,
-          routine: ch.reply.routine,
+          procedures,
+          proceduresError,
+          reloadProcedures,
           tree,
           changed,
           call: ch.call,
@@ -146,9 +148,13 @@ export function ProjectView({
   const name = p?.kind === "home" ? "Home" : (p?.name ?? "Folder");
   const sub = p
     ? [
-        p.kind === "home" ? null : `${templateName[p.kind]} template`,
+        routine
+          ? `${procedures.length} procedure${procedures.length === 1 ? "" : "s"}`
+          : p.kind === "home"
+            ? null
+            : `${templateName[p.kind]} template`,
         p.scope === "private" ? "only you" : "Team",
-        routine ? p.schedule || "on demand" : p.default_branch,
+        routine ? p.schedule : p.default_branch,
       ]
         .filter(Boolean)
         .join(" · ")
@@ -198,6 +204,15 @@ export function ProjectView({
               {sub}
             </Text>
             <View style={{ flex: 1 }} />
+            {routine ? (
+              <Tap
+                onPress={() => setTab(tab === "procedures" ? "chat" : "procedures")}
+                style={st.settingsButton}
+                testID="folder-procedures"
+              >
+                <Text style={st.settingsText}>{tab === "procedures" ? "Chat" : "Procedures"}</Text>
+              </Tap>
+            ) : null}
             <Tap
               onPress={() => setTab(settings ? "chat" : "settings")}
               style={st.settingsButton}
@@ -239,6 +254,8 @@ export function ProjectView({
           <Loading />
         ) : settings ? (
           settingsView(ctx)
+        ) : tab === "procedures" ? (
+          <ProceduresTab ctx={ctx} onRan={() => setTab("chat")} />
         ) : tab === "files" && !wide ? (
           <FilesTab ctx={ctx} />
         ) : !chat ? (
@@ -283,8 +300,8 @@ export function ProjectView({
                     <Text style={st.wtText}>New worktree</Text>
                   </View>
                 ) : null}
-                <Tap haptic onPress={routine ? runNow : newChat} style={st.primary} testID="folder-primary">
-                  <Text style={st.primaryText}>{routine ? (running ? "Starting…" : "Run") : "New chat"}</Text>
+                <Tap haptic onPress={newChat} style={st.primary} testID="folder-primary">
+                  <Text style={st.primaryText}>New chat</Text>
                 </Tap>
               </View>
             ) : null}
@@ -322,8 +339,6 @@ export function ProjectView({
         <SessionsTab ctx={ctx} />
       ) : tab === "files" ? (
         <FilesTab ctx={ctx} />
-      ) : tab === "runs" ? (
-        <RunsTab ctx={ctx} />
       ) : tab === "queue" ? (
         <QueueTab ctx={ctx} />
       ) : tab === "tasks" ? (

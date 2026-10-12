@@ -64,4 +64,43 @@ defmodule Beamcode.FolderChatTest do
     code = project_fixture(%{name: "app", kind: "code"}, user)
     assert {:ok, %{"id" => "new"}} = Sessions.open(code, user)
   end
+
+  test "a procedure runs in its Folder's one chat, a batch as one message", %{user: user} do
+    folder = project_fixture(%{name: "amino-maintenance", kind: "routine"}, user)
+    sent = start_supervised!({Agent, fn -> [] end})
+
+    setup_stub(fn conn ->
+      case {conn.method, conn.request_path} do
+        {"GET", "/api/session"} ->
+          data(conn, [session("chat", 1, 1)])
+
+        {"GET", "/api/skill"} ->
+          path = folder.directory <> "/.opencode/skill/refund/SKILL.md"
+          data(conn, [%{"name" => "refund", "id" => "refund", "path" => path}])
+
+        {"GET", "/api/fs/read/procedures.json"} ->
+          Plug.Conn.send_resp(conn, 200, ~s({"refund": {"key": "charge"}}))
+
+        {"POST", "/api/session/chat/prompt"} ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          Agent.update(sent, &[Jason.decode!(body) | &1])
+          data(conn, %{})
+      end
+    end)
+
+    rows = [%{"charge" => "ch_1", "name" => "Ola"}, %{"charge" => "ch_2", "name" => "Kari"}]
+    assert {:ok, "chat"} = Beamcode.Routines.run(folder, user, rows, "refund")
+    assert {:ok, "chat"} = Beamcode.Routines.run(folder, user, %{"charge" => "ch_3"}, "refund")
+
+    assert {:error, "No procedure called nope."} =
+             Beamcode.Routines.run(folder, user, %{}, "nope")
+
+    assert [
+             %{"skills" => [%{"id" => "refund"}], "text" => "charge: ch_3"},
+             %{
+               "text" =>
+                 "Run this once for each row, in order:\n- charge: ch_1, name: Ola\n- charge: ch_2, name: Kari"
+             }
+           ] = Agent.get(sent, & &1)
+  end
 end

@@ -7,7 +7,8 @@ defmodule Beamcode.Schedules do
                             "scope": "team", "owner": "aksel" } }
 
   Optional keys: `agent`, `model` ("provider/model"), `paused` (true: kept, but
-  not run). `scope` is `team` or `me`.
+  not run), and in a Procedure Folder `procedure` (which one a blank prompt
+  runs) and `inputs`. `scope` is `team` or `me`.
   Each run is an ordinary session; runs are listed from `schedule_runs`.
   Times are server local time.
   """
@@ -128,7 +129,7 @@ defmodule Beamcode.Schedules do
         with {:ok, scheds} <- read(project) do
           entry =
             attrs
-            |> Map.take(~w(cron prompt scope owner agent model paused))
+            |> Map.take(~w(cron prompt procedure scope owner agent model paused))
             |> Enum.reject(fn {_, v} -> v in [nil, "", false] end)
             |> Map.new()
 
@@ -172,20 +173,27 @@ defmodule Beamcode.Schedules do
   end
 
   @doc """
-  Starts a scheduled run. A blank prompt on a routine means "Run the routine"
-  with its routine.json defaults (or the schedule's own `inputs`).
+  Starts a scheduled run. A blank prompt in a Procedure Folder runs its
+  `procedure` (or its first one) with its defaults and the schedule's `inputs`.
   """
   def run(project, key, sched) do
     owner = sched["owner"] && Accounts.get_user_by_username(sched["owner"])
 
-    prompt =
+    {prompt, procedure} =
       case String.trim(sched["prompt"] || "") do
-        "" -> Beamcode.Routines.prompt(Beamcode.Routines.config(project), sched["inputs"] || %{})
-        prompt -> prompt
+        "" ->
+          case Beamcode.Routines.find(project, sched["procedure"]) do
+            nil -> {"Do your job as described in AGENTS.md.", nil}
+            p -> {Beamcode.Routines.prompt(p, sched["inputs"] || %{}), p.name}
+          end
+
+        prompt ->
+          {prompt, procedure_of(prompt)}
       end
 
     start_run(project, owner, prompt,
       key: key,
+      procedure: procedure,
       scope: if(sched["scope"] == "me", do: "private", else: "team"),
       agent: sched["agent"],
       model: sched["model"],
@@ -193,6 +201,14 @@ defmodule Beamcode.Schedules do
       # Unattended runs on a repo never touch its main checkout.
       worktree: project.kind == "code"
     )
+  end
+
+  # "/refund …" ran the refund procedure.
+  defp procedure_of(prompt) do
+    case Regex.run(~r{^/([\w.-]+)}, prompt) do
+      [_, name] -> name
+      _ -> nil
+    end
   end
 
   @doc """
@@ -206,7 +222,7 @@ defmodule Beamcode.Schedules do
 
   @doc """
   Creates a run: a new session titled by `run_title/2` that gets `prompt`.
-  opts: :key ("manual" for the Run button), :scope, :agent, :model ("provider/id"),
+  opts: :key ("manual" for the Run button), :procedure, :scope, :agent, :model ("provider/id"),
   :inputs, :seen (manual runs skip the Inbox), :worktree (start in a fresh git worktree).
   """
   def start_run(project, owner, prompt, opts) do
@@ -225,6 +241,7 @@ defmodule Beamcode.Schedules do
       scope: scope,
       owner_id: owner && owner.id,
       inputs: Keyword.get(opts, :inputs, %{}),
+      procedure: opts[:procedure],
       seen: Keyword.get(opts, :seen, false)
     }
 
@@ -319,6 +336,14 @@ defmodule Beamcode.Schedules do
   # One line for the Runs list: the result's section headings ("Urgent · 2 ·
   # Waiting · 5"), or else its first plain line.
   defp summarize(session_id) do
+    case result(session_id) do
+      {:ok, text} -> summary_line(text)
+      _ -> nil
+    end
+  end
+
+  @doc "A run's result: its session's last reply text (\"\" when there is none)."
+  def result(session_id) do
     with {:ok, messages} <- Beamcode.Opencode.messages(session_id, 50) do
       text =
         messages
@@ -329,14 +354,51 @@ defmodule Beamcode.Schedules do
         |> List.last()
         |> Kernel.||("")
 
-      summary_line(text)
-    else
-      _ -> nil
+      {:ok, text}
     end
   end
 
   @doc false
   def summary_line(text) do
+    text = String.replace(text, ~r/```peon-status.*?(```|\z)/s, "")
+    links_line(text) || headings_line(text)
+  end
+
+  # A result offering next steps as run-links: "3 × Send refund · 897 NOK".
+  defp links_line(text) do
+    links =
+      for [_, label, query] <- Regex.scan(~r/\[([^\]]+)\]\(run:[\w.-]+\?([^)\s]*)\)/, text),
+          do: {label, URI.decode_query(query)}
+
+    case links do
+      [] ->
+        nil
+
+      [{label, _} | _] ->
+        same = Enum.filter(links, &(elem(&1, 0) == label))
+        currencies = same |> Enum.map(&elem(&1, 1)["currency"]) |> Enum.uniq()
+
+        amounts =
+          for {_, q} <- same do
+            case Float.parse(q["amount"] || "") do
+              {n, ""} -> n
+              _ -> nil
+            end
+          end
+
+        total =
+          if Enum.all?(amounts) and length(currencies) == 1 and hd(currencies),
+            do: " · #{amount(Enum.sum(amounts))} #{hd(currencies)}",
+            else: ""
+
+        "#{length(same)} × #{label}#{total}"
+    end
+  end
+
+  defp amount(n) when n == trunc(n), do: Integer.to_string(trunc(n))
+  defp amount(n), do: :erlang.float_to_binary(n, decimals: 2)
+
+  defp headings_line(text) do
     lines = String.split(text, "\n")
     sections = for "## " <> h <- lines, do: String.trim(h)
 

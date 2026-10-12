@@ -1,10 +1,14 @@
-import { ReactNode, useState } from "react";
+import { ReactNode, useContext, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { color, font } from "@/lib/theme";
+import { parseRunLink } from "@/lib/procedures";
+import { offeredRow, RunLinksContext, RunRows, type OfferedRow } from "./session/RunRows";
 
 // Just enough markdown for agent replies: paragraphs, headings, lists, code
-// blocks, **bold**, `code` and [links](…) as their text.
+// blocks, **bold**, `code` and [links](…) as their text. In a chat that can run
+// them, lines with run-links ([Send refund](run:refund?…)) become rows with a
+// button, and `peon-status` blocks (what happened per row) aren't shown.
 
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -56,10 +60,12 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
+  const runnable = useContext(RunLinksContext) != null;
   const blocks: ReactNode[] = [];
   const parts = text.split(/```/);
 
   parts.forEach((part, pi) => {
+    if (pi % 2 === 1 && /^peon-status\b/.test(part)) return;
     if (pi % 2 === 1) {
       // A code block; drop the language line.
       const code = part.replace(/^[^\n]*\n/, "").replace(/\n$/, "");
@@ -77,6 +83,7 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
     }
 
     let para: string[] = [];
+    let rows: OfferedRow[] = [];
     const flush = (k: string) => {
       if (para.length)
         blocks.push(
@@ -85,6 +92,8 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
           </Text>,
         );
       para = [];
+      if (rows.length) blocks.push(<RunRows key={`${k}r`} rows={rows} />);
+      rows = [];
     };
 
     part.split("\n").forEach((line, li) => {
@@ -92,9 +101,15 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
       const trimmed = line.trim();
       const heading = /^#{1,6}\s+(.*)$/.exec(trimmed);
       const bullet = /^([-*+]|\d+[.)])\s+(.*)$/.exec(trimmed);
+      const href = runnable ? /\[([^\]]+)\]\((run:[^)\s]+)\)/.exec(trimmed) : null;
+      const link = href ? parseRunLink(href[2], href[1]) : null;
 
-      if (!trimmed) {
-        flush(k);
+      if (link) {
+        if (para.length) flush(`${k}p`);
+        rows.push(offeredRow(trimmed, link));
+      } else if (!trimmed) {
+        // Blank lines between rows keep them in one card.
+        if (!rows.length) flush(k);
       } else if (heading) {
         flush(`${k}p`);
         blocks.push(
@@ -121,6 +136,7 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
             </Text>,
           );
       } else {
+        if (rows.length) flush(`${k}r`);
         para.push(trimmed);
       }
     });

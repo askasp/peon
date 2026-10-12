@@ -2,6 +2,7 @@ defmodule Beamcode.Schedules.Run do
   @moduledoc """
   One run of a routine or schedule. Each run is an ordinary session.
   `schedule_key` is the schedule's name, or "manual" for the Run button.
+  `procedure` is which of the Folder's procedures ran.
   """
   use Ecto.Schema
 
@@ -15,6 +16,7 @@ defmodule Beamcode.Schedules.Run do
     field :finished_at, :utc_datetime
     field :summary, :string
     field :inputs, :map, default: %{}
+    field :procedure, :string
     belongs_to :project, Beamcode.Projects.Project
     belongs_to :owner, Beamcode.Accounts.User
     timestamps(type: :utc_datetime)

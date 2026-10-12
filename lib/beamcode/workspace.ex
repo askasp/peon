@@ -9,8 +9,10 @@ defmodule Beamcode.Workspace do
         routines/
           AGENTS.md            shared by all routines
           .opencode/skill/     shared skills
-          <name>/              a routine = its own project
+          <name>/              a Procedure Folder = its own project
             AGENTS.md
+            .opencode/skill/   one skill per procedure
+            procedures.json    the procedures' inputs
             opencode.json      gateway MCP server + connector permissions
             schedules.json
         code/<name>/           cloned or new git repos
@@ -352,6 +354,7 @@ defmodule Beamcode.Workspace do
 
   defp q(s), do: "'" <> String.replace(s, "'", "'\\''") <> "'"
 
+  # A Procedure Folder starts with no procedures: they're added in its chat.
   defp prepare_routine(root, dir, name, attrs) do
     rel = Path.relative_to(dir, root)
     desc = String.trim(attrs["description"] || "")
@@ -359,14 +362,13 @@ defmodule Beamcode.Workspace do
     agents = """
     # #{name}
 
-    #{if desc == "", do: "Describe this routine's one job here.", else: desc}
+    #{if desc == "", do: "What these procedures are for.", else: desc}
+
+    #{Beamcode.Routines.conventions()}
     """
 
-    skill = name |> String.split("-") |> List.last()
-    routine = Jason.encode!(%{"run" => "/" <> skill, "inputs" => %{}}, pretty: true) <> "\n"
-
     with :ok <- write_new(root, Path.join(rel, "AGENTS.md"), agents),
-         :ok <- write_new(root, Path.join(rel, "routine.json"), routine) do
+         :ok <- write_new(root, Path.join(rel, "procedures.json"), "{}\n") do
       write_new(root, Path.join(rel, "schedules.json"), "{}\n")
     end
   end
@@ -626,8 +628,8 @@ defmodule Beamcode.Workspace do
     """
     # Routines
 
-    Shared by all routines: company, tone, policies. Each folder here is one routine
-    that does one job. Shared skills live in `.opencode/skill/`.
+    Shared by all Procedure Folders: company, tone, policies. Each folder here
+    groups related procedures. Shared skills live in `.opencode/skill/`.
     """
   end
 
@@ -694,27 +696,27 @@ defmodule Beamcode.Workspace do
 
     ## Routines and schedules
 
-    Routines live in `../routines/<name>/`. `routine.json` says how a run starts:
-    the prompt sent to a new session, and optional inputs the Run button asks for.
+    Procedure Folders live in `../routines/<name>/`. Each procedure is a skill in
+    the Folder, run as `/<name>` in its chat, with its inputs in `procedures.json`:
 
     ```json
-    { "run": "/digest since {since}",
-      "inputs": { "since": { "default": "last run", "options": ["last run", "today", "this week"] },
-                  "inboxes": { "default": ["Support"], "multi": true, "options": ["Support", "Billing"] } } }
+    { "digest": { "inputs": { "since": { "default": "last run", "options": ["last run", "today", "this week"] },
+                              "inboxes": { "default": ["Support"], "multi": true, "options": ["Support", "Billing"] } } } }
     ```
 
     A run's final answer is shown as its result, so end the skill with the result
-    itself (markdown), not with commentary.
+    itself (markdown), not with commentary. The Folder's AGENTS.md explains
+    run-links (a result starting the next procedure) and `peon-status`.
 
     Skills that read an API should narrow first (search by keywords, dates,
     status) and only then read details, one call per item. Reading everything
     and filtering afterwards hits rate limits.
 
-    A routine's schedules are in its `schedules.json` (leave `prompt` out to use
-    routine.json with its defaults):
+    A Folder's schedules are in its `schedules.json` (leave `prompt` out to run
+    `procedure` with its defaults and the schedule's `inputs`):
 
     ```json
-    { "morning-digest": { "cron": "0 8 * * 1-5", "prompt": "/digest since the last run",
+    { "morning-digest": { "cron": "0 8 * * 1-5", "procedure": "digest", "inputs": { "since": "last run" },
                           "scope": "team", "owner": "aksel" } }
     ```
 

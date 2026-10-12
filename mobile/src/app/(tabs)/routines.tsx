@@ -9,7 +9,7 @@ import { runLine, stopRun } from "@/lib/runs";
 import { color } from "@/lib/theme";
 import type { Project, Run } from "@/lib/types";
 
-// 06 · Routines: each routine with its schedule, last run, and run / stop.
+// 06 · Procedure Folders: each with its schedule and last run; stop a run that's going.
 export default function Routines() {
   const projects = usePeon((s) => s.projects);
   const runsChanged = usePeon((s) => s.runsChanged);
@@ -40,17 +40,13 @@ export default function Routines() {
   }, [ids, runsChanged, activity]);
   const last = data ?? {};
 
-  async function toggle(p: Project) {
+  async function stop(p: Project) {
     const run = last[p.id];
+    if (!run?.session_id) return;
     setBusy(p.id);
     setError(null);
     try {
-      if (run?.status === "running" && run.session_id) {
-        await stopRun(run.session_id);
-      } else {
-        const { session_id } = await ask<{ session_id: string }>("run_routine", { project_id: p.id }, 60000);
-        router.push(`/session/${session_id}`);
-      }
+      await stopRun(run.session_id);
       await load();
     } catch (e: any) {
       setError(e.message);
@@ -85,7 +81,10 @@ export default function Routines() {
         </LargeTitle>
         <ErrorLine message={error} />
         {routines.length === 0 ? (
-          <Empty title="No procedures yet" detail="Create one from the composer: “make a procedure that…”." />
+          <Empty
+            title="No procedures yet"
+            detail="Make a Procedure Folder with +, or from the composer: “make a procedure that…”."
+          />
         ) : null}
 
         {routines.map((p) => {
@@ -111,21 +110,19 @@ export default function Routines() {
                   </Text>
                 ) : null}
               </View>
-              <Tap
-                haptic
-                onPress={() => toggle(p)}
-                style={[st.action, running ? st.stop : st.play]}
-                disabled={busy === p.id}
-                hitSlop={8}
-              >
-                {busy === p.id ? (
-                  <ActivityIndicator color={running ? color.text : color.bg} />
-                ) : running ? (
-                  <View style={st.stopSquare} />
-                ) : (
-                  <Icon name="play" size={14} color={color.bg} />
-                )}
-              </Tap>
+              {running ? (
+                <Tap
+                  haptic
+                  onPress={() => stop(p)}
+                  style={[st.action, st.stop]}
+                  disabled={busy === p.id}
+                  hitSlop={8}
+                >
+                  {busy === p.id ? <ActivityIndicator color={color.text} /> : <View style={st.stopSquare} />}
+                </Tap>
+              ) : (
+                <Icon name="chevron" size={16} color={color.muted} />
+              )}
             </Tap>
           );
         })}
@@ -149,7 +146,6 @@ const st = StyleSheet.create({
   name: { fontSize: 16, color: color.text },
   meta: { fontSize: 13, color: color.muted },
   action: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  play: { backgroundColor: color.textStrong },
   stop: { borderWidth: 1, borderColor: color.outline },
   stopSquare: { width: 12, height: 12, borderRadius: 2, backgroundColor: color.text },
 });

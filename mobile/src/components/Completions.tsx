@@ -11,7 +11,14 @@ import {
 import { color, font } from "@/lib/theme";
 import type { SessionOptions } from "@/lib/types";
 
-export type Completion = { key: string; label: string; detail?: string | null; insert: string };
+export type Completion = {
+  key: string;
+  label: string;
+  /** A procedure's inputs, after its name ("name amount"). */
+  hint?: string | null;
+  detail?: string | null;
+  insert: string;
+};
 
 // What the cursor is completing: "/name" at the start, or the "@path" being typed.
 function completing(draft: string): { kind: "slash" | "file"; query: string } | null {
@@ -47,7 +54,8 @@ export function useCompletions(o: {
           .map((i) => ({
             key: i.name,
             label: `/${i.name}`,
-            detail: i.description ?? i.kind,
+            hint: i.inputs?.length ? i.inputs.join(" ") : null,
+            detail: i.description || (i.kind === "procedure" ? null : i.kind),
             insert: `/${i.name} `,
           }))
       : [];
@@ -121,6 +129,7 @@ export function Completions({
         >
           <Text style={st.optionLabel} numberOfLines={1}>
             {c.label}
+            {c.hint ? <Text style={st.optionHint}> {c.hint}</Text> : null}
           </Text>
           {c.detail ? (
             <Text style={st.optionDetail} numberOfLines={1}>
@@ -152,5 +161,6 @@ const st = StyleSheet.create({
     borderRadius: 8,
   },
   optionLabel: { fontSize: 13.5, color: color.text, fontFamily: font.mono, flexShrink: 1 },
+  optionHint: { fontSize: 12, color: color.faint },
   optionDetail: { fontSize: 12, color: color.muted, flex: 1 },
 });

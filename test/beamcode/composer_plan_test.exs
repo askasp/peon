@@ -12,7 +12,18 @@ defmodule Beamcode.Composer.PlanTest do
     routines: [@stripe],
     inputs: %{
       "stripe-reconcile" => [
-        %{name: "since", default: "last run", options: ["last run", "this week"], multi: false}
+        %{name: "payouts", inputs: []},
+        %{
+          name: "reconcile",
+          inputs: [
+            %{
+              name: "since",
+              default: "last run",
+              options: ["last run", "this week"],
+              multi: false
+            }
+          ]
+        }
       ]
     },
     connectors: ["front", "stripe"],
@@ -90,13 +101,32 @@ defmodule Beamcode.Composer.PlanTest do
              Plan.resolve(json, @ctx)
   end
 
-  test "run_routine keeps only the routine's inputs" do
-    assert {:ok, %{action: :run, project: @stripe, inputs: %{"since" => "this week"}}} =
+  test "run_routine keeps only the procedure's inputs" do
+    assert {:ok,
+            %{
+              action: :run,
+              project: @stripe,
+              procedure: "reconcile",
+              inputs: %{"since" => "this week"}
+            }} =
              Plan.resolve(
                %{
                  "action" => "run_routine",
                  "routine" => "stripe-reconcile",
+                 "procedure" => "reconcile",
                  "inputs" => %{"since" => "this week", "x" => 1}
+               },
+               @ctx
+             )
+  end
+
+  test "run_routine without a procedure runs the Folder's first" do
+    assert {:ok, %{action: :run, procedure: "payouts", inputs: %{}}} =
+             Plan.resolve(
+               %{
+                 "action" => "run_routine",
+                 "routine" => "stripe-reconcile",
+                 "inputs" => %{"since" => "x"}
                },
                @ctx
              )

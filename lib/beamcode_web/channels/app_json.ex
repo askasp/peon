@@ -63,7 +63,9 @@ defmodule BeamcodeWeb.AppJSON do
       session_id: perm["sessionID"],
       action: perm["action"],
       resources: List.wrap(perm["resources"]),
-      title: Inbox.permission_title(perm)
+      title: Inbox.permission_title(perm),
+      # What the call carries (a tool's arguments), so a row it acts on can show "waiting".
+      detail: perm["metadata"] |> Kernel.||(%{}) |> Jason.encode!() |> String.slice(0, 2000)
     }
   end
 
@@ -113,6 +115,7 @@ defmodule BeamcodeWeb.AppJSON do
       owner_id: r.owner_id,
       inputs: r.inputs || %{},
       schedule_key: r.schedule_key,
+      procedure: r.procedure,
       session_id: r.session_id,
       status: r.status,
       scope: r.scope,
@@ -151,6 +154,7 @@ defmodule BeamcodeWeb.AppJSON do
       scope: s.scope,
       owner: s.owner,
       prompt: s.prompt,
+      procedure: s[:raw] && s.raw["procedure"],
       paused: s.paused,
       next: s.next && NaiveDateTime.to_iso8601(s.next),
       last: s.last && run(s.last)

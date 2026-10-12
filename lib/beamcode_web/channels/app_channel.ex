@@ -194,7 +194,7 @@ defmodule BeamcodeWeb.AppChannel do
     with_project(socket, id, fn project ->
       ChannelTasks.reply_async(socket, fn ->
         case Routines.run(project, user) do
-          {:ok, run} -> {:ok, %{session_id: run.session_id}}
+          {:ok, session_id} -> {:ok, %{session_id: session_id}}
           {:error, reason} -> error(reason)
         end
       end)
@@ -522,7 +522,9 @@ defmodule BeamcodeWeb.AppChannel do
           Connectors.sync_all()
         end
 
-        if project.kind == "routine" and params["import"] != "true" do
+        # A described Procedure Folder starts by drafting its first procedure.
+        if project.kind == "routine" and params["import"] != "true" and
+             String.trim(params["description"] || "") != "" do
           case Routines.draft(project, user, params["description"] || "", granted) do
             {:ok, session_id, []} ->
               {:ok, %{project_id: project.id, session_id: session_id}}
@@ -533,7 +535,7 @@ defmodule BeamcodeWeb.AppChannel do
 
             {:error, reason} ->
               note =
-                "Created, but the setup session failed: #{ChannelTasks.error_message(reason)}"
+                "Created, but drafting its procedure failed: #{ChannelTasks.error_message(reason)}"
 
               {:ok, %{project_id: project.id, note: note}}
           end

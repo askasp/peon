@@ -8,7 +8,7 @@ defmodule Beamcode.Composer.Plan do
 
     * `:session` / `:chat` – `project`, `task`, `skill`, `use_model`, `agent`
     * `:send` – `session` (%{id, title, project}), `text`
-    * `:run` – `project` (the routine), `inputs`
+    * `:run` – `project` (the Procedure Folder), `procedure`, `inputs`
     * `:status` – `project` or nil, `status` (:latest | :overview)
     * `:create_routine` – `name`, `brief`, `connectors`
     * `:permission` – `perm`, `decision`
@@ -60,11 +60,17 @@ defmodule Beamcode.Composer.Plan do
         Enum.map(ctx.routines, fn r ->
           %{
             name: r.name,
-            inputs:
-              Enum.map(
-                ctx.inputs[r.name] || [],
-                &%{name: &1.name, options: &1.options, multi: &1.multi, default: &1.default}
-              )
+            procedures:
+              for p <- ctx.inputs[r.name] || [] do
+                %{
+                  name: p.name,
+                  inputs:
+                    Enum.map(
+                      p.inputs,
+                      &%{name: &1.name, options: &1.options, multi: &1.multi, default: &1.default}
+                    )
+                }
+              end
           }
         end),
       connectors: ctx.connectors,
@@ -94,7 +100,7 @@ defmodule Beamcode.Composer.Plan do
 
   defp routine_inputs(routines) do
     routines
-    |> Task.async_stream(&{&1.name, Routines.config(&1).inputs},
+    |> Task.async_stream(&{&1.name, Routines.list(&1)},
       timeout: 15_000,
       on_timeout: :kill_task
     )
@@ -168,14 +174,20 @@ defmodule Beamcode.Composer.Plan do
 
   defp resolve_action("run_routine", json, ctx) do
     with {:ok, routine} <- named(ctx.routines, json["routine"], "procedure") do
-      known = MapSet.new(ctx.inputs[routine.name] || [], & &1.name)
+      procedures = ctx.inputs[routine.name] || []
+
+      procedure =
+        Enum.find(procedures, &(&1.name == json["procedure"])) || List.first(procedures)
+
+      known = MapSet.new((procedure && procedure.inputs) || [], & &1.name)
 
       inputs =
         for {k, v} <- json["inputs"] || %{}, is_binary(k), MapSet.member?(known, k), into: %{} do
           {k, v}
         end
 
-      {:ok, %{action: :run, project: routine, inputs: inputs}}
+      {:ok,
+       %{action: :run, project: routine, procedure: procedure && procedure.name, inputs: inputs}}
     end
   end
 
@@ -354,9 +366,9 @@ defmodule Beamcode.Composer.Plan do
     end
   end
 
-  def execute(%{action: :run, project: routine, inputs: inputs}, user, _projects) do
-    case Routines.run(routine, user, inputs) do
-      {:ok, run} -> {:navigate, run.session_id}
+  def execute(%{action: :run, project: routine, inputs: inputs} = plan, user, _projects) do
+    case Routines.run(routine, user, inputs, plan[:procedure]) do
+      {:ok, session_id} -> {:navigate, session_id}
       error -> error
     end
   end
@@ -426,7 +438,7 @@ defmodule Beamcode.Composer.Plan do
 
   def rows(%{action: :run} = p),
     do:
-      [{"Action", "Run procedure"}, {"Procedure", p.project.name}] ++
+      [{"Action", "Run procedure"}, {"Procedure", "#{p.project.name} /#{p[:procedure]}"}] ++
         for({k, v} <- p.inputs, do: {k, v |> List.wrap() |> Enum.join(", ")})
 
   def rows(%{action: :status} = p),

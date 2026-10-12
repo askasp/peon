@@ -51,9 +51,10 @@ defmodule Beamcode.Composer.Router do
   - {"action": "send_to_session", "session": ID, "text": TEXT}
     Continue one of the recent sessions ("tell the checkout session to…",
     "in that session, also…", or a follow-up to the current session).
-  - {"action": "run_routine", "routine": NAME, "inputs": {INPUT: VALUE}}
-    Run a routine now. Fill inputs only from its listed inputs and options;
-    leave the rest out.
+  - {"action": "run_routine", "routine": NAME, "procedure": NAME, "inputs": {INPUT: VALUE}}
+    Run one of a routine's procedures now (the routine is its Folder). Fill
+    inputs only from that procedure's listed inputs and options; leave the
+    rest out.
   - {"action": "status", "project": NAME or null, "scope": "latest" or "overview"}
     Questions about sessions or runs: what is running, waiting, done, how a
     session or routine is doing. "latest" for one session, else "overview".

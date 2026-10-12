@@ -8,7 +8,8 @@ defmodule Beamcode.Projects.Project do
   @chat_like ~w(chat document design dataset home)
   # One working copy of their files, so one continuous chat (code chats each
   # get a worktree; chat and home hold unrelated talks with no files to share).
-  @single_chat ~w(document design dataset)
+  # A Procedure Folder's chat is where its procedures run.
+  @single_chat ~w(document design dataset routine)
   @scopes ~w(team private)
 
   schema "projects" do
