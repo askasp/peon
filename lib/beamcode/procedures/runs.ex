@@ -87,7 +87,9 @@ defmodule Beamcode.Procedures.Runs do
         {:ok, opts[:session_id]}
 
       parent = opts[:parent] ->
-        if needs_session?(proc), do: child_session(project, user, parent.session_id, proc.name, nil), else: {:ok, nil}
+        if needs_session?(proc),
+          do: child_session(project, user, parent.session_id, proc.name, nil),
+          else: {:ok, nil}
 
       true ->
         title = if project.kind == "code", do: proc.name
@@ -125,7 +127,8 @@ defmodule Beamcode.Procedures.Runs do
   defp inputs(proc, values, project) do
     defaults =
       Map.new(proc.inputs, fn i ->
-        {i.name, if(i.default == "last_run", do: last_run_text(project, proc.name), else: i.default)}
+        {i.name,
+         if(i.default == "last_run", do: last_run_text(project, proc.name), else: i.default)}
       end)
 
     Map.merge(defaults, for({k, v} <- values || %{}, v not in [nil, ""], into: %{}, do: {k, v}))
@@ -172,7 +175,9 @@ defmodule Beamcode.Procedures.Runs do
   # waits first, then runs on the last model.
   # A connector call asks first when it says `confirm:` or its tool is "ask"
   # (Peon calls it directly, so OpenCode's approval never runs).
-  defp wait_before?(project, %{kind: "call"} = s), do: s.wait or s.confirm != nil or call_asks?(project, s)
+  defp wait_before?(project, %{kind: "call"} = s),
+    do: s.wait or s.confirm != nil or call_asks?(project, s)
+
   defp wait_before?(_project, %{kind: "run", confirm: c}) when is_binary(c), do: true
   defp wait_before?(_project, %{wait: false}), do: false
   defp wait_before?(_project, %{kind: "prompt", model: m}) when is_binary(m), do: false
@@ -191,10 +196,19 @@ defmodule Beamcode.Procedures.Runs do
     project = project(run)
     user = owner(run)
     values = values(run)
-    models = if s.model, do: list_models(), else: []
-    model = Procedures.resolve_model(s.model, s.effort, models)
 
-    if s.model && model == nil, do: Logger.warning("procedure #{proc.name}: no model like #{s.model}")
+    model =
+      s.model &&
+        Procedures.resolve_model(s.model, s.effort, list_models(), default_provider(project))
+
+    if s.model && model == nil,
+      do: Logger.warning("procedure #{proc.name}: no model like #{s.model}")
+
+    # The chat's own model, put back when the run ends (a step's switch would stick).
+    previous =
+      if model && s.session == "same" && run.session_id &&
+           not Enum.any?(run.steps, & &1["previous_model"]),
+         do: chat_model(run.session_id, project)
 
     with {:ok, sid} <- step_session(run, project, user, proc, s, model) do
       text = message(run, proc, i, s, values, opts[:note])
@@ -209,14 +223,19 @@ defmodule Beamcode.Procedures.Runs do
 
       with {:ok, _} <- sent do
         {:ok,
-         put_step(run, i, %{
-           "status" => "running",
-           "session_id" => sid,
-           "model" => Procedures.model_label(s.model),
-           "effort" => s.effort,
-           "session" => s.session,
-           "started" => now()
-         })}
+         put_step(
+           run,
+           i,
+           %{
+             "status" => "running",
+             "session_id" => sid,
+             "model" => Procedures.model_label(s.model),
+             "effort" => s.effort,
+             "session" => s.session,
+             "started" => now()
+           }
+           |> then(&if(previous, do: Map.put(&1, "previous_model", previous), else: &1))
+         )}
       end
     end
   end
@@ -230,9 +249,17 @@ defmodule Beamcode.Procedures.Runs do
     items = opts[:items] || items(run, s)
 
     if items == [] and s.for_each do
-      {:ok, done_step(run, proc, i, %{"status" => "done", "text" => "Nothing to run."}) |> elem(0)}
+      {:ok,
+       done_step(run, proc, i, %{"status" => "done", "text" => "Nothing to run."}) |> elem(0)}
     else
-      run = put_step(run, i, %{"status" => "running", "started" => now(), "children" => [], "pending" => items || [nil]})
+      run =
+        put_step(run, i, %{
+          "status" => "running",
+          "started" => now(),
+          "children" => [],
+          "pending" => items || [nil]
+        })
+
       {:ok, next_child(run, proc, i)}
     end
   end
@@ -240,9 +267,13 @@ defmodule Beamcode.Procedures.Runs do
   defp do_step(run, proc, i, %{kind: "queue"} = s, opts) do
     items = opts[:items] || items(run, s) || [%{}]
     project = project(run)
-    titles = for item <- items, do: Procedures.fill(s.title || "{task}", Map.merge(values(run), item || %{}))
 
-    with {:ok, ids} <- TaskQueue.add(project, owner(run), "main", titles, false, procedure: s.queue) do
+    titles =
+      for item <- items,
+          do: Procedures.fill(s.title || "{task}", Map.merge(values(run), item || %{}))
+
+    with {:ok, ids} <-
+           TaskQueue.add(project, owner(run), "main", titles, false, procedure: s.queue) do
       {:ok,
        done_step(run, proc, i, %{
          "status" => "done",
@@ -257,7 +288,9 @@ defmodule Beamcode.Procedures.Runs do
 
     case call(project, s, values(run)) do
       {:ok, text} ->
-        {:ok, done_step(run, proc, i, %{"status" => "done", "text" => text, "finished" => now()}) |> elem(0)}
+        {:ok,
+         done_step(run, proc, i, %{"status" => "done", "text" => text, "finished" => now()})
+         |> elem(0)}
 
       {:error, reason} ->
         {:error, reason}
@@ -338,7 +371,8 @@ defmodule Beamcode.Procedures.Runs do
     parts =
       for item <- s.hand_over do
         cond do
-          step = Enum.find(run.steps, &(String.downcase(&1["name"] || "") == String.downcase(item))) ->
+          step =
+              Enum.find(run.steps, &(String.downcase(&1["name"] || "") == String.downcase(item))) ->
             "### What #{item} said\n\n#{step["text"] || "(nothing)"}"
 
           item == "ticket" and run.ticket ->
@@ -461,11 +495,17 @@ defmodule Beamcode.Procedures.Runs do
     run = save(run, outputs: Map.merge(run.outputs || %{}, outputs))
 
     {run, _} =
-      done_step(run, proc, i, %{
-        "status" => "done",
-        "text" => String.slice(strip_blocks(text), 0, @text_limit),
-        "finished" => now()
-      }, false)
+      done_step(
+        run,
+        proc,
+        i,
+        %{
+          "status" => "done",
+          "text" => String.slice(strip_blocks(text), 0, @text_limit),
+          "finished" => now()
+        },
+        false
+      )
 
     cond do
       s.on_changes && changes ->
@@ -474,7 +514,8 @@ defmodule Beamcode.Procedures.Runs do
         back = s.on_changes.back_to && index(proc, s.on_changes.back_to)
 
         if back && loops <= s.on_changes.max,
-          do: step(run, proc, back, note: "#{s.name} asked for changes:\n\n" <> strip_blocks(text)),
+          do:
+            step(run, proc, back, note: "#{s.name} asked for changes:\n\n" <> strip_blocks(text)),
           else: wait(run, proc, i, "changes")
 
       s.wait ->
@@ -511,9 +552,18 @@ defmodule Beamcode.Procedures.Runs do
     case st["pending"] || [] do
       [] ->
         failed = Enum.count(st["results"] || [], &(&1["status"] == "failed"))
-        text = "#{length(st["children"] || [])} run#{if(length(st["children"] || []) == 1, do: "", else: "s")}"
+
+        text =
+          "#{length(st["children"] || [])} run#{if(length(st["children"] || []) == 1, do: "", else: "s")}"
+
         text = if failed > 0, do: text <> " · #{failed} failed", else: text
-        done_step(run, proc, i, %{"status" => if(failed > 0, do: "partial", else: "done"), "text" => text, "finished" => now()}) |> elem(0)
+
+        done_step(run, proc, i, %{
+          "status" => if(failed > 0, do: "partial", else: "done"),
+          "text" => text,
+          "finished" => now()
+        })
+        |> elem(0)
 
       [item | rest] ->
         project = project(run)
@@ -527,7 +577,10 @@ defmodule Beamcode.Procedures.Runs do
                scope: run.scope
              ) do
           {:ok, child} ->
-            put_step(run, i, %{"pending" => rest, "children" => (st["children"] || []) ++ [child.id]})
+            put_step(run, i, %{
+              "pending" => rest,
+              "children" => (st["children"] || []) ++ [child.id]
+            })
 
           {:error, reason} ->
             child_done(run, proc, i, %{"status" => "failed", "error" => error_text(reason)}, rest)
@@ -551,19 +604,27 @@ defmodule Beamcode.Procedures.Runs do
 
       parent = save(parent, outputs: outputs)
 
-      child_done(parent, proc, parent.step, %{
-        "id" => child.id,
-        "status" => child.status,
-        "summary" => child.summary,
-        "error" => child.error
-      }, st["pending"] || [])
+      child_done(
+        parent,
+        proc,
+        parent.step,
+        %{
+          "id" => child.id,
+          "status" => child.status,
+          "summary" => child.summary,
+          "error" => child.error
+        },
+        st["pending"] || []
+      )
     end
   end
 
   defp child_done(parent, proc, i, result, pending) do
     st = Enum.at(parent.steps, i)
     s = Enum.at(proc.steps, i)
-    parent = put_step(parent, i, %{"results" => (st["results"] || []) ++ [result], "pending" => pending})
+
+    parent =
+      put_step(parent, i, %{"results" => (st["results"] || []) ++ [result], "pending" => pending})
 
     if result["status"] == "failed" and s.on_fail != "continue",
       do: fail(parent, proc, i, "#{s.run} failed: #{result["error"] || "see its run"}"),
@@ -704,7 +765,13 @@ defmodule Beamcode.Procedures.Runs do
   defp back_name(proc, i) do
     s = Enum.at(proc.steps, i)
     prompts = for {st, j} <- Enum.with_index(proc.steps), st.kind == "prompt", do: {st, j}
-    earlier_wait = proc.steps |> Enum.take(i) |> Enum.with_index() |> Enum.filter(fn {st, _} -> st.wait end) |> List.last()
+
+    earlier_wait =
+      proc.steps
+      |> Enum.take(i)
+      |> Enum.with_index()
+      |> Enum.filter(fn {st, _} -> st.wait end)
+      |> List.last()
 
     cond do
       s.back_to -> s.back_to
@@ -732,7 +799,13 @@ defmodule Beamcode.Procedures.Runs do
     failed = Enum.count(run.steps, &(&1["status"] in ["failed", "partial"]))
     last = run.steps |> Enum.reverse() |> Enum.find(&(&1["text"] not in [nil, ""]))
     summary = last && Schedules.summary_line(last["text"])
-    summary = if failed > 0, do: "Done with #{failed} failure#{if failed == 1, do: "", else: "s"}" <> if(summary, do: " · " <> summary, else: ""), else: summary
+
+    summary =
+      if failed > 0,
+        do:
+          "Done with #{failed} failure#{if failed == 1, do: "", else: "s"}" <>
+            if(summary, do: " · " <> summary, else: ""),
+        else: summary
 
     run =
       save(run,
@@ -742,6 +815,7 @@ defmodule Beamcode.Procedures.Runs do
         finished_at: DateTime.utc_now(:second)
       )
 
+    restore_model(run)
     close_ticket(run)
     child_finished(run)
     _ = proc
@@ -759,6 +833,7 @@ defmodule Beamcode.Procedures.Runs do
         finished_at: DateTime.utc_now(:second)
       )
 
+    restore_model(run)
     child_finished(run)
     run
   end
@@ -779,8 +854,14 @@ defmodule Beamcode.Procedures.Runs do
     if st && st["session_id"], do: Opencode.interrupt(st["session_id"])
 
     run =
-      save(run, status: "failed", waiting: nil, error: "Stopped.", finished_at: DateTime.utc_now(:second))
+      save(run,
+        status: "failed",
+        waiting: nil,
+        error: "Stopped.",
+        finished_at: DateTime.utc_now(:second)
+      )
 
+    restore_model(run)
     child_finished(run)
     {:ok, run}
   end
@@ -794,9 +875,15 @@ defmodule Beamcode.Procedures.Runs do
     [connector | tool] = String.split(s.call, ".")
     tool = Enum.join(tool, ".")
 
-    with %{} = c <- Enum.find(Connectors.list(), &(&1.name == connector)) || {:error, "No #{connector} connector."},
+    with %{} = c <-
+           Enum.find(Connectors.list(), &(&1.name == connector)) ||
+             {:error, "No #{connector} connector."},
          %{} = t <- find_tool(c, tool) || {:error, "#{connector} has no #{tool}."},
-         :ok <- if(t.permission == "deny", do: {:error, "#{connector} · #{tool} is denied."}, else: :ok) do
+         :ok <-
+           if(t.permission == "deny",
+             do: {:error, "#{connector} · #{tool} is denied."},
+             else: :ok
+           ) do
       params = Map.new(s.params, fn {k, v} -> {k, Procedures.fill(to_string(v), values)} end)
       {idempotency, params} = Map.pop(params, "idempotency_key")
       placeholders = for [_, p] <- Regex.scan(~r/\{(\w+)\}/, t.path), do: p
@@ -807,7 +894,10 @@ defmodule Beamcode.Procedures.Runs do
           do: Map.put(path_args, "query", rest),
           else: Map.put(path_args, "body", rest)
 
-      args = if idempotency, do: Map.put(args, "headers", %{"Idempotency-Key" => idempotency}), else: args
+      args =
+        if idempotency,
+          do: Map.put(args, "headers", %{"Idempotency-Key" => idempotency}),
+          else: args
 
       case Connectors.call(project, Connectors.tool_name(c, t), args) do
         {:ok, status, body} when status in 200..299 -> {:ok, call_note(body)}
@@ -826,7 +916,10 @@ defmodule Beamcode.Procedures.Runs do
   defp call_note(body) do
     case Jason.decode(body) do
       {:ok, %{} = m} ->
-        [m["status"], m["id"]] |> Enum.filter(&is_binary/1) |> Enum.join(" · ") |> then(&if(&1 == "", do: String.slice(body, 0, 200), else: &1))
+        [m["status"], m["id"]]
+        |> Enum.filter(&is_binary/1)
+        |> Enum.join(" · ")
+        |> then(&if(&1 == "", do: String.slice(body, 0, 200), else: &1))
 
       _ ->
         String.slice(body, 0, 200)
@@ -854,12 +947,44 @@ defmodule Beamcode.Procedures.Runs do
   defp session_dir(nil, project), do: project.directory
 
   # Only a code Folder's chats have their own (worktree) folder.
-  defp session_dir(_sid, %Project{kind: kind} = project) when kind != "code", do: project.directory
+  defp session_dir(_sid, %Project{kind: kind} = project) when kind != "code",
+    do: project.directory
 
   defp session_dir(sid, project) do
     case Opencode.get_session(sid) do
       {:ok, %{} = session} -> Sessions.session_dir(session, project)
       _ -> project.directory
+    end
+  end
+
+  defp chat_model(sid, project) do
+    case Opencode.get_session(sid) do
+      {:ok, %{"model" => %{"id" => _, "providerID" => _} = m}} ->
+        m
+        |> Map.take(["id", "providerID", "variant"])
+        |> Map.reject(&(elem(&1, 1) in [nil, "default"]))
+
+      _ ->
+        case Opencode.default_model(project.directory) do
+          {:ok, %{"id" => id, "providerID" => p}} -> %{"id" => id, "providerID" => p}
+          _ -> nil
+        end
+    end
+  end
+
+  # Puts the chat's model back once the run is over.
+  defp restore_model(run) do
+    case Enum.find_value(run.steps, & &1["previous_model"]) do
+      nil -> :ok
+      model -> Opencode.switch_model(run.session_id, model)
+    end
+  end
+
+  # Short model names prefer the provider the Folder's default model is from.
+  defp default_provider(project) do
+    case Opencode.default_model(project.directory) do
+      {:ok, %{"providerID" => p}} -> p
+      _ -> nil
     end
   end
 

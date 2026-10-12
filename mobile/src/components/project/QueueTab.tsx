@@ -7,6 +7,7 @@ import { cancelled, sortTree } from "@/lib/queue";
 import { ago } from "@/lib/time";
 import { useWide } from "@/lib/useWide";
 import { color, font } from "@/lib/theme";
+import type { Procedure } from "@/lib/procedures";
 import type { Queue, QueueTree, Ticket } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
@@ -94,7 +95,14 @@ export function QueueTab({ ctx }: { ctx: ProjectCtx }) {
         <Text style={st.none}>Loading…</Text>
       ) : (
         trees.map((tree) => (
-          <TreeCard key={tree.ref} tree={tree} act={act} folder={ctx.project.id} canEdit={ctx.canEdit} />
+          <TreeCard
+            key={tree.ref}
+            tree={tree}
+            act={act}
+            folder={ctx.project.id}
+            canEdit={ctx.canEdit}
+            procedures={ctx.procedures}
+          />
         ))
       )}
 
@@ -146,6 +154,7 @@ export function TreeCard({
   canEdit,
   inChat = false,
   focusAdd = false,
+  procedures = [],
 }: {
   tree: QueueTree;
   act: QueueAct;
@@ -153,6 +162,8 @@ export function TreeCard({
   canEdit: boolean;
   inChat?: boolean;
   focusAdd?: boolean;
+  /** The Folder's procedures: a task can pick the one it runs through. */
+  procedures?: Procedure[];
 }) {
   const wide = useWide();
   const main = tree.ref === "main";
@@ -164,6 +175,10 @@ export function TreeCard({
   const [title, setTitle] = useState("");
   const [adding, setAdding] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
+  // The procedure new tasks run through: the Queue default unless picked.
+  const fallback = procedures.find((p) => p.queue === "default")?.name ?? null;
+  const [procedure, setProcedure] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
 
   const dot = running.length ? color.accent : waiting ? color.needs : color.faint;
   const state = main
@@ -180,7 +195,8 @@ export function TreeCard({
     const t = title.trim();
     if (!t || adding) return;
     setAdding(true);
-    if (await act("queue_add", { ref: tree.ref, titles: [t] })) setTitle("");
+    const picked = procedure && procedure !== fallback ? { procedure } : {};
+    if (await act("queue_add", { ref: tree.ref, titles: [t], ...picked })) setTitle("");
     setAdding(false);
   }
 
@@ -231,9 +247,13 @@ export function TreeCard({
               {t.title}
             </Text>
           </View>
-          <View style={st.track}>
-            <View style={st.trackFill} />
-          </View>
+          {t.run ? (
+            <StepsLine run={t.run} />
+          ) : (
+            <View style={st.track}>
+              <View style={st.trackFill} />
+            </View>
+          )}
           <View style={st.runFoot}>
             <Text style={st.runNote} numberOfLines={1}>
               {t.notes[t.notes.length - 1]?.text ?? "Working in the chat"}
@@ -272,11 +292,14 @@ export function TreeCard({
               <Text style={st.rowTitle} numberOfLines={1}>
                 {t.title}
               </Text>
+              {t.run ? <StepsLine run={t.run} /> : null}
               <Text style={st.needsSub} numberOfLines={2}>
                 {[
-                  tree.chat?.status === "waiting"
-                    ? "Needs you: a question in the chat"
-                    : "Stopped before it was done",
+                  t.run?.waiting
+                    ? `Needs you: ${t.run.waiting}`
+                    : tree.chat?.status === "waiting"
+                      ? "Needs you: a question in the chat"
+                      : "Stopped before it was done",
                   waitsOnIt.length
                     ? `${waitsOnIt.join(", ")} wait${waitsOnIt.length > 1 ? "" : "s"} on it`
                     : null,
@@ -360,8 +383,67 @@ export function TreeCard({
             style={st.addInput}
             testID={`queue-add-${tree.ref}`}
           />
+          {procedures.length ? (
+            <Tap
+              onPress={() => setPicking(!picking)}
+              style={st.recipe}
+              testID={`queue-procedure-${tree.ref}`}
+            >
+              <Text style={st.recipeLabel}>Procedure</Text>
+              <Text style={st.recipeName}>{procedure ?? fallback ?? "none"}</Text>
+              <Text style={st.recipeLabel}>▾</Text>
+            </Tap>
+          ) : null}
         </View>
       ) : null}
+      {picking ? (
+        <View style={st.recipes}>
+          {[null, ...procedures.map((p) => p.name)].map((name) => (
+            <Tap
+              key={name ?? "-"}
+              onPress={() => {
+                setProcedure(name);
+                setPicking(false);
+              }}
+              style={[st.recipeChip, (procedure ?? fallback) === name && st.recipeOn]}
+            >
+              <Text style={st.recipeChipText}>
+                {name ?? "No procedure: one message"}
+                {name && name === fallback ? " · default" : ""}
+              </Text>
+            </Tap>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** "ship · Plan ✓ Build ✓ Review Sonnet · Preview · Merge": where a task is in its procedure (R2). */
+function StepsLine({ run }: { run: NonNullable<Ticket["run"]> }) {
+  return (
+    <View style={st.stepsLine}>
+      <Text style={st.stepsProc}>{run.procedure}</Text>
+      <Text style={st.stepsText}>·</Text>
+      {run.steps.map((s, i) => {
+        const current = i === run.step && run.status !== "done";
+        const waiting = current && run.status === "waiting";
+        return (
+          <View key={`${i}-${s.name}`} style={st.stepItem}>
+            <Text
+              style={[
+                st.stepsText,
+                current && { color: waiting ? color.needs : color.text },
+                s.status === "failed" && { color: color.red },
+              ]}
+            >
+              {s.name}
+              {s.status === "done" && !current ? " ✓" : ""}
+            </Text>
+            {current && s.model && !waiting ? <Text style={st.stepModel}>{s.model}</Text> : null}
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -550,6 +632,35 @@ function Pill({
 }
 
 const st = StyleSheet.create({
+  stepsLine: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 6 },
+  stepsProc: { fontFamily: font.mono, fontSize: 12, color: color.muted },
+  stepItem: { flexDirection: "row", alignItems: "center", gap: 5 },
+  stepsText: { fontSize: 12, color: color.faint },
+  stepModel: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    overflow: "hidden",
+    backgroundColor: color.accentWash,
+    color: color.accentText,
+    fontFamily: font.mono,
+    fontSize: 11,
+  },
+  recipe: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 7,
+    backgroundColor: color.raised,
+  },
+  recipeLabel: { fontSize: 12, color: color.muted },
+  recipeName: { fontFamily: font.mono, fontSize: 12, color: color.text },
+  recipes: { flexDirection: "row", flexWrap: "wrap", gap: 6, paddingTop: 4 },
+  recipeChip: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, backgroundColor: color.field },
+  recipeOn: { backgroundColor: color.pill },
+  recipeChipText: { fontSize: 12, color: color.textSoft },
   body: { paddingHorizontal: 16, paddingTop: 8, paddingBottom: 40, gap: 14, width: "100%" },
   bodyWide: { maxWidth: 900, paddingHorizontal: 32, paddingTop: 22 },
   top: { flexDirection: "row", alignItems: "center", gap: 10 },

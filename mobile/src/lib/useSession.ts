@@ -23,6 +23,8 @@ type SessionState = {
   /** Questions the agent is waiting on. */
   forms: Form[];
   run: Run | null;
+  /** Procedure runs in this chat (oldest first), and the runs they started. */
+  runs: Run[];
   diff: DiffFile[];
   /** Cursor for the page of messages just older than the ones loaded, or null. */
   older: string | null;
@@ -41,6 +43,7 @@ const initial: SessionState = {
   perms: [],
   forms: [],
   run: null,
+  runs: [],
   diff: [],
   older: null,
 };
@@ -101,6 +104,7 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
     ch.on("session", ({ session }) => setState((s) => ({ ...s, session })));
     ch.on("diff", ({ files }) => setState((s) => ({ ...s, diff: files })));
     ch.on("run", ({ run }) => setState((s) => ({ ...s, run })));
+    ch.on("runs", ({ runs }) => setState((s) => ({ ...s, runs })));
     ch.on("speak", ({ text }) => speak.current?.(text));
     // The server closed it: the project was made private or removed.
     ch.on("gone", () =>
@@ -126,6 +130,7 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
           perms: r.perms,
           forms: r.forms ?? [],
           run: r.run,
+          runs: r.runs ?? [],
           diff: r.diff ?? [],
           older: r.older ?? null,
         }));

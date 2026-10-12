@@ -8,7 +8,7 @@ import { offeredRow, RunLinksContext, RunRows, type OfferedRow } from "./session
 // Just enough markdown for agent replies: paragraphs, headings, lists, code
 // blocks, **bold**, `code` and [links](…) as their text. In a chat that can run
 // them, lines with run-links ([Send refund](run:refund?…)) become rows with a
-// button, and `peon-status` blocks (what happened per row) aren't shown.
+// button, and `peon-status`, `peon-output` and `peon-step` blocks (for Peon) aren't shown.
 
 function inline(text: string, key: string): ReactNode[] {
   const out: ReactNode[] = [];
@@ -65,7 +65,8 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
   const parts = text.split(/```/);
 
   parts.forEach((part, pi) => {
-    if (pi % 2 === 1 && /^peon-status\b/.test(part)) return;
+    // What a step hands back to Peon (per-row status, outputs, "changes needed").
+    if (pi % 2 === 1 && /^peon-(status|output|step)\b/.test(part)) return;
     if (pi % 2 === 1) {
       // A code block; drop the language line.
       const code = part.replace(/^[^\n]*\n/, "").replace(/\n$/, "");

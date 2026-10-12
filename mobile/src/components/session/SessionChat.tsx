@@ -30,6 +30,7 @@ import { queueIntent } from "@/lib/queue";
 import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap, UnderlineTabs } from "@/components/ui";
 import { CopyResult, RunProgress } from "@/components/session/RunProgress";
 import { RunLinksContext, type OfferedRow, type RunLinksApi } from "@/components/session/RunRows";
+import { RunMarkView, runMarks, withMarks, type RunMark } from "@/components/session/RunCards";
 import {
   ProcedureChips,
   ProcedureSheet,
@@ -115,31 +116,35 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
 
   const all = useMemo(() => toBlocks(s.items), [s.items]);
   const [full, setFull] = useState(false);
-  // A Procedure Folder's chat shows its scheduled runs' results where they finished.
+  // An Operations Folder's chat: scheduled runs from before procedures ran in
+  // chats show their result where they finished.
   const procedureChat = inFolder?.ctx.project.kind === "routine";
   const { data: scheduled } = useLoad(
     () =>
       procedureChat
         ? inFolder!.ctx
             .call<{ runs: Run[] }>("runs")
-            .then((r) => r.runs.filter((x) => x.schedule_key !== "manual" && x.status !== "running"))
+            .then((r) =>
+              r.runs.filter((x) => !x.trigger && x.schedule_key !== "manual" && x.status !== "running"),
+            )
         : Promise.resolve([] as Run[]),
     [procedureChat, inFolder?.ctx.changed],
   );
   // A routine run reads as its result: the steps fold into one "Run transcript" row.
   // While a run works it shows its progress instead (RunProgress); after, the result.
   const runWorking = s.run?.status === "running" && (s.status === "running" || s.status === "waiting");
-  const blocks: Item[] = useMemo(
-    () =>
-      s.run && !full
-        ? runWorking
-          ? []
-          : foldRun(all)
-        : scheduled?.length
-          ? withRuns(s.items, scheduled, s.older != null)
-          : all,
-    [all, s.run, full, runWorking, scheduled, s.items, s.older],
-  );
+  // Procedure runs in this chat: a divider where each step starts, and the wait at the end.
+  const blocks: Item[] = useMemo(() => {
+    if (s.run && !full) return runWorking ? [] : foldRun(all);
+    const marks: { at: number; mark: Item }[] = [
+      ...runMarks(s.runs, id),
+      ...(scheduled ?? []).map((r) => ({
+        at: new Date(r.finished ?? r.started).getTime(),
+        mark: { kind: "scheduled" as const, key: `run-${r.id}`, run: r },
+      })),
+    ];
+    return marks.length ? withMarks<Block, Item>(s.items, marks, s.older != null, toBlocks) : all;
+  }, [all, s.run, full, runWorking, scheduled, s.items, s.older, s.runs, id]);
   const [image, setImage] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [, tick] = useState(0);
@@ -263,15 +268,16 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const [sendAll, setSendAll] = useState<OfferedRow[] | null>(null);
   const keys = useMemo(() => Object.fromEntries(procedures.map((p) => [p.name, p.key])), [procedures]);
   const stateOf = useMemo(() => rowStates(s.items, s.perms, keys), [s.items, s.perms, keys]);
+  // A procedure runs in this chat; from a scheduled run's own session, in the Folder's chat.
   const runIn = async (procedure: string, payload: object) => {
     follow.current = true;
-    await folder.call("run", { procedure, ...payload }, 60000);
-    // From a run's own session: the rows run in the Folder's chat.
-    if (!inFolder && project) router.push(folderHref(project) as any);
+    const here = !s.run;
+    await folder.call("run", { procedure, ...payload, ...(here ? { session_id: id } : {}) }, 60000);
+    if (!here && project) router.push(folderHref(project) as any);
   };
   const answer = s.answer;
   const runLinks: RunLinksApi | null =
-    project?.kind === "routine"
+    procedures.length > 0
       ? {
           state: stateOf,
           run: (link: RunLink) => runIn(link.procedure, { inputs: link.values }),
@@ -393,6 +399,8 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
       renderItem={({ item, index }) =>
         item.kind === "scheduled" ? (
           <ScheduledResult run={item.run} call={folder.call} />
+        ) : item.kind === "step" || item.kind === "wait" ? (
+          <RunMarkView mark={item} chat={id} call={call} />
         ) : index < lastCompaction ? (
           <View style={st.compacted}>
             <BlockView block={item} onFile={openFile} rel={rel} />
@@ -593,6 +601,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
                 panel={qPanel}
                 onPanel={() => setQPanel(!qPanel)}
                 onAll={() => goFolder("queue")}
+                procedures={procedures}
               />
             </View>
           ) : null}
@@ -910,28 +919,8 @@ function EarlierChat({ call, chat }: { call: FolderChat["ctx"]["call"]; chat: Se
   );
 }
 
-/** A transcript row: a block, or a scheduled run's result in a Procedure Folder's chat. */
-type Item = Block | { kind: "scheduled"; key: string; run: Run };
-
-/**
- * The chat's blocks with each scheduled run's result placed where it finished.
- * `partial`: older messages aren't loaded, so runs before the first are left out.
- */
-function withRuns(items: Message[], runs: Run[], partial: boolean): Item[] {
-  const at = (r: Run) => new Date(r.finished ?? r.started).getTime();
-  const first = items[0]?.time?.created ?? 0;
-  const shown = runs.filter((r) => !partial || at(r) >= first).sort((a, b) => at(a) - at(b));
-  const out: Item[] = [];
-  let start = 0;
-  for (const r of shown) {
-    let i = start;
-    while (i < items.length && (items[i].time?.created ?? 0) <= at(r)) i++;
-    out.push(...toBlocks(items.slice(start, i)), { kind: "scheduled", key: `run-${r.id}`, run: r });
-    start = i;
-  }
-  out.push(...toBlocks(items.slice(start)));
-  return out;
-}
+/** A transcript row: a block, a procedure run's step or wait, or an old scheduled run's result. */
+type Item = Block | RunMark | { kind: "scheduled"; key: string; run: Run };
 
 const FOLD = "run-transcript";
 

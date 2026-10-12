@@ -130,14 +130,17 @@ defmodule BeamcodeWeb.AppJSON do
       parent_id: r.parent_id,
       ticket: r.ticket,
       # What each output holds, by count (the lists stay on the server).
-      outputs: Map.new(r.outputs || %{}, fn {k, v} -> {k, if(is_list(v), do: length(v), else: 1)} end)
+      outputs:
+        Map.new(r.outputs || %{}, fn {k, v} -> {k, if(is_list(v), do: length(v), else: 1)} end)
     }
   end
 
   # A step of a run, as the chat shows it; its reply is cut to what a card needs.
   defp run_step(s) do
     s
-    |> Map.take(~w(name status session_id model effort session loops error started finished children results))
+    |> Map.take(
+      ~w(name status session_id model effort session loops error started finished children results)
+    )
     |> Map.put("text", s["text"] && String.slice(s["text"], 0, 4000))
   end
 
@@ -149,7 +152,8 @@ defmodule BeamcodeWeb.AppJSON do
     %{
       name: p.name,
       description: p.description,
-      inputs: Enum.map(p.inputs, &Map.take(&1, [:name, :type, :default, :options, :multi, :currency])),
+      inputs:
+        Enum.map(p.inputs, &Map.take(&1, [:name, :type, :default, :options, :multi, :currency])),
       key: p.key,
       source: p.source,
       path: p.path,
@@ -167,8 +171,11 @@ defmodule BeamcodeWeb.AppJSON do
           },
       steps:
         Enum.map(p.steps, fn st ->
-          Map.take(st, ~w(name kind prompt model effort session wait uses hand_over offers skill run
-                          for_each returns on_fail queue title call params confirm)a)
+          Map.take(
+            st,
+            ~w(name kind prompt model effort session wait uses hand_over offers skill run
+                          for_each returns on_fail queue title call params confirm)a
+          )
           |> Map.put(:on_changes, st.on_changes)
           |> Map.put(:model_label, Beamcode.Procedures.model_label(st.model))
         end),

@@ -19,8 +19,9 @@ const opensAs: Record<ViewKind, string> = {
 };
 
 // The session's messages: your messages as bubbles, replies as text, the
-// model's thinking folded away, and tool calls folded into one "Ran N steps"
-// row between them that opens to each call's input and output.
+// model's thinking folded away, and tool calls folded into one "11 actions"
+// row between them that opens to each call's input and output ("steps" are a
+// procedure's steps only).
 
 /** A pasted image: inline (`uri`), or too big to come along and loaded on tap. */
 export type Img = { uri: string | null; messageId: string; index: number };
@@ -298,7 +299,8 @@ export function BlockView({
         <View style={st.steps}>
           <Tap onPress={() => setOpen(!open)} style={st.stepsHead}>
             <Text style={st.stepsText} numberOfLines={1}>
-              {live ? "Running" : "Ran"} {block.tools.length} step{block.tools.length === 1 ? "" : "s"}
+              {block.tools.length} action{block.tools.length === 1 ? "" : "s"}
+              {live ? " · running" : ""}
               {span(block.from, block.to)}
               {failed ? " · some failed" : ""} · {names}
             </Text>

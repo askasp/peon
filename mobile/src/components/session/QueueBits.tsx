@@ -1,6 +1,7 @@
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { Tap } from "../ui";
 import { TreeCard, type QueueAct } from "../project/QueueTab";
+import type { Procedure } from "@/lib/procedures";
 import { nextTask, sortTree, taskState } from "@/lib/queue";
 import { color, font } from "@/lib/theme";
 import type { QueueTree } from "@/lib/types";
@@ -130,6 +131,7 @@ export function QueueStrip({
   panel,
   onPanel,
   onAll,
+  procedures,
 }: {
   tree: QueueTree;
   act: QueueAct;
@@ -139,6 +141,7 @@ export function QueueStrip({
   panel: boolean;
   onPanel: () => void;
   onAll: () => void;
+  procedures?: Procedure[];
 }) {
   const { running, needs, ready, blocked } = sortTree(tree);
   const live = running.length + needs.length + ready.length + blocked.length;
@@ -146,7 +149,15 @@ export function QueueStrip({
   if (!live)
     return panel ? (
       <View style={st.stripWrap}>
-        <TreeCard tree={tree} act={act} folder={folder} canEdit={canEdit} inChat focusAdd />
+        <TreeCard
+          tree={tree}
+          act={act}
+          folder={folder}
+          canEdit={canEdit}
+          inChat
+          focusAdd
+          procedures={procedures}
+        />
       </View>
     ) : null;
   const next = nextTask(tree);
@@ -163,7 +174,7 @@ export function QueueStrip({
     <View style={st.stripWrap}>
       {panel ? (
         <ScrollView style={st.panel} contentContainerStyle={{ paddingBottom: 2 }}>
-          <TreeCard tree={tree} act={act} folder={folder} canEdit={canEdit} inChat />
+          <TreeCard tree={tree} act={act} folder={folder} canEdit={canEdit} inChat procedures={procedures} />
         </ScrollView>
       ) : null}
       <View style={st.strip}>

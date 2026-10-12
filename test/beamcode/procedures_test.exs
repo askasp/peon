@@ -126,7 +126,10 @@ defmodule Beamcode.ProceduresTest do
       assert Enum.map(p.inputs, & &1.name) == ["charge", "amount", "name"]
       assert %{type: "money", currency: "NOK"} = Enum.at(p.inputs, 1)
 
-      assert [%{kind: "call", call: "stripe.refunds.create", confirm: "Refund {amount} NOK" <> _} = s] =
+      assert [
+               %{kind: "call", call: "stripe.refunds.create", confirm: "Refund {amount} NOK" <> _} =
+                 s
+             ] =
                p.steps
 
       assert s.params == %{
@@ -143,7 +146,10 @@ defmodule Beamcode.ProceduresTest do
       assert [read, decide, post] = p.steps
       assert %{kind: "prompt", model: "haiku", effort: "low", uses: ["front"]} = read
       assert read.prompt =~ "Read support mail since {since}."
-      assert %{session: "fresh", hand_over: ["Read", "refund-policy.md"], returns: "approved"} = decide
+
+      assert %{session: "fresh", hand_over: ["Read", "refund-policy.md"], returns: "approved"} =
+               decide
+
       assert decide.uses == ["stripe"]
       assert %{session: "same", offers: "refund"} = post
     end
@@ -163,7 +169,10 @@ defmodule Beamcode.ProceduresTest do
       assert [rec, find, refund, report] = p.steps
       assert %{kind: "run", run: "stripe-reconcile", on_fail: "continue"} = rec
       assert %{kind: "run", run: "email-refunds", on_fail: "stop"} = find
-      assert %{for_each: "email-refunds.approved", wait: true, confirm: "Send {count}" <> _} = refund
+
+      assert %{for_each: "email-refunds.approved", wait: true, confirm: "Send {count}" <> _} =
+               refund
+
       assert %{kind: "prompt", prompt: "Post a short summary" <> _} = report
     end
 
@@ -205,7 +214,11 @@ defmodule Beamcode.ProceduresTest do
   test "model names resolve to the newest match, effort to its variant" do
     models = [
       %{"id" => "claude-opus-4-1", "providerID" => "anthropic"},
-      %{"id" => "claude-opus-5-5", "providerID" => "anthropic", "variants" => [%{"id" => "high"}]},
+      %{
+        "id" => "claude-opus-5-5",
+        "providerID" => "anthropic",
+        "variants" => [%{"id" => "high"}]
+      },
       %{"id" => "gpt-5-codex", "providerID" => "openai"}
     ]
 
@@ -214,6 +227,10 @@ defmodule Beamcode.ProceduresTest do
 
     assert %{"id" => "gpt-5-codex"} = Procedures.resolve_model("gpt-5-codex", "high", models)
     assert Procedures.resolve_model("nope", nil, models) == nil
+
+    # A short name prefers the default model's provider.
+    local = models ++ [%{"id" => "claude-opus-4-9", "providerID" => "local"}]
+    assert %{"providerID" => "local"} = Procedures.resolve_model("opus", nil, local, "local")
     assert Procedures.model_label("gpt-5-codex") == "GPT-5 Codex"
     assert Procedures.model_label("opus") == "Opus"
   end
@@ -250,7 +267,12 @@ defmodule Beamcode.ProceduresTest do
     end
 
     test "without a run prompt: /name and the values, key first, extras last" do
-      values = %{"name" => "Ola  Nordmann", "amount" => "299", "charge" => "ch_1", "currency" => "NOK"}
+      values = %{
+        "name" => "Ola  Nordmann",
+        "amount" => "299",
+        "charge" => "ch_1",
+        "currency" => "NOK"
+      }
 
       assert Procedures.prompt(@legacy_refund, values) ==
                "/refund charge: ch_1, amount: 299, name: Ola Nordmann, currency: NOK"
@@ -288,7 +310,11 @@ defmodule Beamcode.ProceduresTest do
         case conn.request_path do
           "/api/skill" ->
             data(conn, [
-              %{"name" => "refund", "description" => "Refund one charge", "path" => @dir <> "/.opencode/skill/refund/SKILL.md"},
+              %{
+                "name" => "refund",
+                "description" => "Refund one charge",
+                "path" => @dir <> "/.opencode/skill/refund/SKILL.md"
+              },
               %{"name" => "shared", "path" => "/srv/routines/.opencode/skill/shared/SKILL.md"}
             ])
 
@@ -297,7 +323,8 @@ defmodule Beamcode.ProceduresTest do
             prefix = Path.join(dir, path) <> "/"
 
             entries =
-              for {file, _} <- files, String.starts_with?(file, prefix),
+              for {file, _} <- files,
+                  String.starts_with?(file, prefix),
                   do: %{"path" => String.replace_prefix(file, dir <> "/", ""), "type" => "file"}
 
             data(conn, entries)
@@ -311,36 +338,137 @@ defmodule Beamcode.ProceduresTest do
       end)
     end
 
-    defp folder(kind \\ "routine"), do: %Project{name: "amino-maintenance", kind: kind, directory: @dir}
+    defp folder(kind \\ "routine"),
+      do: %Project{name: "amino-maintenance", kind: kind, directory: @dir}
 
     test "the Folder's files, its legacy skills, and global ones it doesn't replace" do
       stub(%{
-        @dir <> "/.peon/procedures/email-refunds.md" => @email_refunds,
-        @dir <> "/procedures.json" => ~s({"refund": {"key": "charge", "inputs": {"charge": {}}}}),
-        @setup <> "/procedures/email-refunds.md" => "---\nname: email-refunds\n---\nOld.",
-        @setup <> "/procedures/explain.md" => "Explain the code."
+        (@dir <> "/.peon/procedures/email-refunds.md") => @email_refunds,
+        (@dir <> "/procedures.json") =>
+          ~s({"refund": {"key": "charge", "inputs": {"charge": {}}}}),
+        (@setup <> "/procedures/email-refunds.md") => "---\nname: email-refunds\n---\nOld.",
+        (@setup <> "/procedures/explain.md") => "Explain the code."
       })
 
       assert [own, explain, refund] = Procedures.list(folder())
-      assert %{name: "email-refunds", source: "folder", overrides: true, path: ".peon/procedures/email-refunds.md"} = own
+
+      assert %{
+               name: "email-refunds",
+               source: "folder",
+               overrides: true,
+               path: ".peon/procedures/email-refunds.md"
+             } = own
+
       assert %{name: "explain", source: "global"} = explain
-      assert %{name: "refund", source: "legacy", key: "charge", steps: [%{skill: "refund"}]} = refund
+
+      assert %{name: "refund", source: "legacy", key: "charge", steps: [%{skill: "refund"}]} =
+               refund
+
       assert Procedures.error(folder()) == nil
     end
 
     test "a code Folder lists its files and the global ones, not its skills" do
-      stub(%{@setup <> "/procedures/explain.md" => "Explain the code."})
+      stub(%{(@setup <> "/procedures/explain.md") => "Explain the code."})
       assert [%{name: "explain"}] = Procedures.list(folder("code"))
     end
 
     test "a broken file is reported, the rest still listed" do
       stub(%{
-        @dir <> "/.peon/procedures/bad.md" => "---\nname: [oops\n---\n",
-        @dir <> "/.peon/procedures/ok.md" => "Do it."
+        (@dir <> "/.peon/procedures/bad.md") => "---\nname: [oops\n---\n",
+        (@dir <> "/.peon/procedures/ok.md") => "Do it."
       })
 
       assert ["ok", "refund"] = Enum.map(Procedures.list(folder()), & &1.name)
       assert Procedures.error(folder()) =~ ".peon/procedures/bad.md"
+    end
+  end
+
+  describe "edit/3" do
+    setup do
+      files = start_supervised!({Agent, fn -> %{".peon/procedures/refund.md" => @refund} end})
+
+      setup_stub(fn conn ->
+        conn = Plug.Conn.fetch_query_params(conn)
+
+        case {conn.method, conn.request_path} do
+          {"GET", "/api/fs/list"} ->
+            path = conn.query_params["path"]
+
+            data(
+              conn,
+              for(
+                f <- Agent.get(files, &Map.keys/1),
+                Path.dirname(f) == path,
+                do: %{"path" => f, "type" => "file"}
+              )
+            )
+
+          {"GET", "/api/fs/read/" <> file} ->
+            case Agent.get(files, & &1[file]) do
+              nil -> Plug.Conn.send_resp(conn, 404, "")
+              body -> Plug.Conn.send_resp(conn, 200, body)
+            end
+
+          {"POST", "/api/experimental/fs/write"} ->
+            {:ok, body, conn} = Plug.Conn.read_body(conn)
+            Agent.update(files, &Map.put(&1, conn.query_params["path"], body))
+            data(conn, %{})
+
+          _ ->
+            data(conn, [])
+        end
+      end)
+
+      %{files: files, project: %Project{name: "ops", kind: "chat", directory: "/srv/ops"}}
+    end
+
+    defp file(files), do: Agent.get(files, & &1[".peon/procedures/refund.md"])
+
+    test "a second step moves the settings under steps:, and back", %{
+      files: files,
+      project: project
+    } do
+      assert :ok = Procedures.edit(project, "refund", %{"op" => "add_step"})
+      {:ok, p} = Procedures.parse(file(files))
+
+      assert [
+               %{name: "Step 1", kind: "call", call: "stripe.refunds.create"},
+               %{name: "Step 2", kind: "prompt"}
+             ] = p.steps
+
+      assert file(files) =~ "## Step 2\nSay what this step does."
+      assert file(files) =~ "name: refund\ndescription:"
+
+      assert :ok =
+               Procedures.edit(project, "refund", %{
+                 "op" => "step",
+                 "index" => 1,
+                 "attrs" => %{
+                   "prompt" => "Tell {name}.",
+                   "model" => "haiku",
+                   "session" => "fresh",
+                   "wait" => true
+                 }
+               })
+
+      {:ok, p} = Procedures.parse(file(files))
+
+      assert %{prompt: "Tell {name}.", model: "haiku", session: "fresh", wait: true} =
+               Enum.at(p.steps, 1)
+
+      assert :ok = Procedures.edit(project, "refund", %{"op" => "remove_step", "index" => 0})
+      {:ok, p} = Procedures.parse(file(files))
+      assert [%{name: "Step 2", kind: "prompt", prompt: "Tell {name}."}] = p.steps
+
+      assert {:error, "A procedure needs a step."} =
+               Procedures.edit(project, "refund", %{"op" => "remove_step", "index" => 0})
+    end
+
+    test "a call becomes a prompt", %{files: files, project: project} do
+      assert :ok = Procedures.edit(project, "refund", %{"op" => "use_prompt", "index" => 0})
+      {:ok, p} = Procedures.parse(file(files))
+      assert [%{kind: "prompt", call: nil, prompt: "Do it with the inputs above."}] = p.steps
+      refute file(files) =~ "params"
     end
   end
 end

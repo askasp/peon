@@ -10,6 +10,9 @@ export type TaskState = "running" | "needs" | "ready" | "blocked" | "done";
 
 export function taskState(t: Ticket, tree: QueueTree): TaskState {
   if (t.status === "closed") return "done";
+  // A procedure run says where it is; between steps the chat is idle for a moment.
+  if (t.status === "in_progress" && t.run?.status === "waiting") return "needs";
+  if (t.status === "in_progress" && t.run?.status === "running") return "running";
   if (t.status === "in_progress") return tree.chat?.status === "running" ? "running" : "needs";
   return t.blocked_by?.length ? "blocked" : "ready";
 }

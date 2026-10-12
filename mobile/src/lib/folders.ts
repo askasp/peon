@@ -12,7 +12,7 @@ export const kindLabel: Record<Kind, string> = {
   design: "design",
   dataset: "data",
   home: "you",
-  routine: "procedure",
+  routine: "ops",
   system: "system",
 };
 
@@ -24,7 +24,7 @@ export const templateName: Record<Kind, string> = {
   design: "Design",
   dataset: "Dataset",
   home: "Home",
-  routine: "Procedure",
+  routine: "Operations",
   system: "System",
 };
 
@@ -34,7 +34,7 @@ export const templates: { kind: Kind; label: string; detail: string; opens: stri
   { kind: "document", label: "Document", detail: "docs/ and a writing skill", opens: "Chat" },
   { kind: "design", label: "Design", detail: "designs/ and an HTML design skill", opens: "Chat" },
   { kind: "dataset", label: "Dataset", detail: "data.sqlite, a schema skill and app/", opens: "Chat" },
-  { kind: "routine", label: "Procedure", detail: "related procedures, run as /name", opens: "Chat" },
+  { kind: "routine", label: "Operations", detail: "procedures only, through connectors", opens: "Chat" },
 ];
 
 /** A Folder name from free text: lowercase words joined by dashes. */
@@ -71,7 +71,7 @@ export const filters: { key: string; label: string; kinds: Kind[] | null }[] = [
   { key: "design", label: "Design", kinds: ["design"] },
   { key: "doc", label: "Doc", kinds: ["document"] },
   { key: "data", label: "Data", kinds: ["dataset"] },
-  { key: "routine", label: "Procedure", kinds: ["routine"] },
+  { key: "routine", label: "Operations", kinds: ["routine"] },
 ];
 
 /** The user's Home (private, so only ever their own), and every other Folder (system last), filtered by a chip. */
@@ -92,7 +92,7 @@ export const folderHref = (p: Pick<Project, "id" | "kind">) =>
 /**
  * Folders with one working copy of their files, so one continuous chat beside
  * them (Code chats each get a worktree; Chat and Home hold unrelated talks).
- * A Procedure Folder's chat is where its procedures run.
+ * An Operations Folder's chat is where its procedures run.
  */
 export const singleChat = (kind: Kind) =>
   kind === "document" || kind === "design" || kind === "dataset" || kind === "routine";

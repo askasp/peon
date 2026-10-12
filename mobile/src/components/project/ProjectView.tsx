@@ -67,24 +67,28 @@ export function ProjectView({
   const p = (project?.id === Number(id) ? project : null) ?? ch.reply?.project ?? stored;
   useCurrent(p?.id);
   const routine = p?.kind === "routine";
-  // Design, Document, Dataset and Procedure Folders are one chat beside their files.
+  // Design, Document, Dataset and Operations Folders are one chat beside their files.
   const single = p ? singleChat(p.kind) : false;
-  // A Procedure Folder's procedures, as joined and when the chat may have added one.
+  // The procedures it can run, as joined and when the chat may have added one.
   const [reloaded, setProcedures] = useState<{ list: Procedure[]; error: string | null } | null>(null);
   const procedures = reloaded?.list ?? ch.reply?.procedures ?? [];
   const proceduresError = reloaded ? reloaded.error : (ch.reply?.procedures_error ?? null);
   const call = ch.call;
   const reloadProcedures = useCallback(() => {
-    if (!routine) return;
-    call<{ procedures: Procedure[]; error: string | null }>("procedures", {}, 30000)
+    call<{ procedures: Procedure[]; error: string | null }>("procedures", { fresh: true }, 30000)
       .then((r) => setProcedures({ list: r.procedures, error: r.error }))
       .catch(() => {});
-  }, [call, routine]);
+  }, [call]);
+  // Operations and Code Folders always have the tab; others once they have their own procedure.
+  const proceduresTab =
+    routine || p?.kind === "code" || procedures.some((x) => x.source === "folder")
+      ? [{ value: "procedures" as Tab, label: "Procedures" }]
+      : [];
   // Other schedules are under Settings.
   const tabs: { value: Tab; label: string }[] = single
     ? [
         { value: "chat", label: "Chat" },
-        ...(routine ? [{ value: "procedures" as Tab, label: "Procedures" }] : []),
+        ...proceduresTab,
         { value: "files", label: "Files" },
         { value: "settings", label: "Settings" },
       ]
@@ -93,6 +97,7 @@ export function ProjectView({
         { value: "files", label: "Files" },
         // Code Folders queue tasks by worktree; the others keep one list.
         p?.kind === "code" ? { value: "queue", label: "Queue" } : { value: "tasks", label: "Tasks" },
+        ...proceduresTab,
         { value: "settings", label: "Settings" },
       ];
   const [from, fromSection] = legacy[initialTab ?? ""] ?? [initialTab as Tab | undefined];
@@ -204,7 +209,7 @@ export function ProjectView({
               {sub}
             </Text>
             <View style={{ flex: 1 }} />
-            {routine ? (
+            {proceduresTab.length ? (
               <Tap
                 onPress={() => setTab(tab === "procedures" ? "chat" : "procedures")}
                 style={st.settingsButton}
@@ -343,6 +348,8 @@ export function ProjectView({
         <QueueTab ctx={ctx} />
       ) : tab === "tasks" ? (
         <TasksTab ctx={ctx} />
+      ) : tab === "procedures" ? (
+        <ProceduresTab ctx={ctx} />
       ) : (
         settingsView(ctx)
       )}

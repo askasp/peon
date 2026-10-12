@@ -152,7 +152,9 @@ defmodule Beamcode.Procedures do
   def notes(project) do
     case Opencode.list_dir(project.directory, ".peon") do
       {:ok, entries} when is_list(entries) ->
-        for e <- entries, e["type"] == "file", String.ends_with?(e["path"] || "", ".md"),
+        for e <- entries,
+            e["type"] == "file",
+            String.ends_with?(e["path"] || "", ".md"),
             do: Path.basename(e["path"])
 
       _ ->
@@ -168,7 +170,12 @@ defmodule Beamcode.Procedures do
   def warnings(list) do
     by_name = Map.new(list, &{&1.name, &1})
 
-    for p <- list, p.schedule, s <- p.steps, s.run, child = by_name[s.run], child && child.schedule,
+    for p <- list,
+        p.schedule,
+        s <- p.steps,
+        s.run,
+        child = by_name[s.run],
+        child && child.schedule,
         reduce: %{} do
       acc ->
         text = "#{child.name} has its own schedule too, so it runs twice."
@@ -431,19 +438,31 @@ defmodule Beamcode.Procedures do
   the top of the file; adding a second moves them under `steps:`.
   """
   def edit(project, name, edit) do
-    with %{source: "folder", path: path} <- find(project, name) || {:error, "No procedure called #{name}."},
+    with %{source: "folder", path: path} <-
+           find(project, name) || {:error, "No procedure called #{name}."},
          {:ok, text} <- Opencode.read_file(project.directory, path),
          {:ok, parsed} <- parse(text, name),
          {:ok, steps} <- apply_edit(file_steps(parsed), edit),
-         {:ok, _} <- Opencode.write_file(project.directory, path, render_steps(parsed.front, steps)) do
+         {:ok, _} <-
+           Opencode.write_file(project.directory, path, render_steps(parsed.front, steps)) do
       changed(project)
       :ok
     else
-      %{source: "global"} -> {:error, "This one is global: change it in the setup Folder's procedures."}
-      %{source: "legacy"} -> {:error, "This one is a skill from before procedure files. Ask the chat to move it to #{@dir}."}
-      {:error, :enoent} -> {:error, "Its file is gone."}
-      {:error, reason} when is_binary(reason) -> {:error, reason}
-      {:error, reason} -> {:error, inspect(reason)}
+      %{source: "global"} ->
+        {:error, "This one is global: change it in the setup Folder's procedures."}
+
+      %{source: "legacy"} ->
+        {:error,
+         "This one is a skill from before procedure files. Ask the chat to move it to #{@dir}."}
+
+      {:error, :enoent} ->
+        {:error, "Its file is gone."}
+
+      {:error, reason} when is_binary(reason) ->
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, inspect(reason)}
     end
   end
 
@@ -482,7 +501,9 @@ defmodule Beamcode.Procedures do
     # The first step gets a name once there are two.
     steps =
       Enum.with_index(steps, 1)
-      |> Enum.map(fn {{settings, prompt}, n} -> {Map.put_new(settings, "name", "Step #{n}"), prompt} end)
+      |> Enum.map(fn {{settings, prompt}, n} ->
+        {Map.put_new(settings, "name", "Step #{n}"), prompt}
+      end)
 
     {:ok, steps ++ [{%{"name" => "Step #{length(steps) + 1}"}, "Say what this step does."}]}
   end
@@ -509,12 +530,15 @@ defmodule Beamcode.Procedures do
   # The file again: one step at the top (no `steps:`), more under `steps:`
   # with a "## Name" section each.
   defp render_steps(front, [{settings, prompt}]) when not is_map_key(settings, "name") do
-    front = front |> Map.drop(["steps" | @step_keys -- ["name"]]) |> Map.merge(settings) |> order(front)
+    front =
+      front |> Map.drop(["steps" | @step_keys -- ["name"]]) |> Map.merge(settings) |> order(front)
+
     render(front, prompt)
   end
 
   defp render_steps(front, steps) do
-    list = for {settings, _} <- steps, do: Map.put(Map.drop(settings, [:order]), :order, @step_keys)
+    list =
+      for {settings, _} <- steps, do: Map.put(Map.drop(settings, [:order]), :order, @step_keys)
 
     body =
       for {settings, prompt} <- steps, prompt not in [nil, ""] do
@@ -684,9 +708,14 @@ defmodule Beamcode.Procedures do
     values = Map.merge(defaults(procedure), values || %{})
 
     case procedure do
-      %{source: "legacy", run: nil} -> String.trim("/#{procedure.name} " <> pairs(procedure, values))
-      %{source: "legacy", run: run} -> fill(run, values)
-      _ -> step_text(procedure, hd(procedure.steps), values)
+      %{source: "legacy", run: nil} ->
+        String.trim("/#{procedure.name} " <> pairs(procedure, values))
+
+      %{source: "legacy", run: run} ->
+        fill(run, values)
+
+      _ ->
+        step_text(procedure, hd(procedure.steps), values)
     end
   end
 
@@ -763,7 +792,10 @@ defmodule Beamcode.Procedures do
 
   @doc "Whether a procedure is more than one prompt sent as a message."
   def multi_step?(%{source: "legacy"}), do: false
-  def multi_step?(%{steps: [%{kind: "prompt"} = s]}), do: s.session == "fresh" or s.wait or s.model != nil
+
+  def multi_step?(%{steps: [%{kind: "prompt"} = s]}),
+    do: s.session == "fresh" or s.wait or s.model != nil
+
   def multi_step?(_), do: true
 
   @doc "`/` completion: the Folder's procedures, with their inputs."
@@ -914,18 +946,24 @@ defmodule Beamcode.Procedures do
 
   @doc """
   The OpenCode model a step names: `provider/id`, an id, or a short name like
-  `opus` (its newest match). Effort becomes the model's variant when it has
-  one. Returns `%{"id", "providerID", ["variant"]}` or nil.
+  `opus` (its newest match, from `prefer`'s provider first: the one the
+  Folder's default model comes from). Effort becomes the model's variant when
+  it has one. Returns `%{"id", "providerID", ["variant"]}` or nil.
   """
-  def resolve_model(nil, _effort, _models), do: nil
+  def resolve_model(name, effort, models, prefer \\ nil)
+  def resolve_model(nil, _effort, _models, _prefer), do: nil
 
-  def resolve_model(name, effort, models) do
+  def resolve_model(name, effort, models, prefer) do
     name = String.downcase(name)
 
     found =
       case String.split(name, "/", parts: 2) do
         [provider, id] ->
-          Enum.find(models, &(String.downcase(&1["providerID"] || "") == provider and String.downcase(&1["id"] || "") == id))
+          Enum.find(
+            models,
+            &(String.downcase(&1["providerID"] || "") == provider and
+                String.downcase(&1["id"] || "") == id)
+          )
 
         [short] ->
           Enum.find(models, &(String.downcase(&1["id"] || "") == short)) ||
@@ -934,7 +972,7 @@ defmodule Beamcode.Procedures do
               m["enabled"] != false and m["status"] != "deprecated" and
                 String.contains?(String.downcase("#{m["id"]} #{m["name"]}"), short)
             end)
-            |> Enum.sort_by(&(&1["id"] || ""), :desc)
+            |> Enum.sort_by(&{&1["providerID"] == prefer, &1["id"] || ""}, :desc)
             |> List.first()
       end
 

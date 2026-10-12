@@ -64,6 +64,45 @@ export type Run = {
   summary: string | null;
   started: string;
   finished: string | null;
+  /** How it started: slash, button, schedule, queue, chain (null: a run from before procedures). */
+  trigger?: string | null;
+  /** The step it's at, and what each step did. */
+  step?: number;
+  steps?: RunStep[];
+  /** What it asks of a person while status is "waiting". */
+  waiting?: RunWaiting | null;
+  /** The run whose step started this one. */
+  parent_id?: number | null;
+  ticket?: string | null;
+  /** Each output's item count. */
+  outputs?: Record<string, number>;
+};
+
+export type RunStep = {
+  name: string;
+  status: "pending" | "running" | "waiting" | "done" | "partial" | "failed" | "skipped" | string;
+  session_id?: string;
+  model?: string | null;
+  effort?: string | null;
+  session?: "same" | "fresh";
+  loops?: number;
+  error?: string;
+  text?: string | null;
+  started?: string;
+  finished?: string;
+  /** A `run:` step: the runs it started, and how each ended. */
+  children?: number[];
+  results?: { id?: number; status: string; summary?: string | null; error?: string | null }[];
+};
+
+export type RunWaiting = {
+  step: number;
+  /** before: about to act (confirm); after: read what the step did; changes: review still asks for changes. */
+  kind: "before" | "after" | "changes";
+  text: string;
+  items?: Record<string, any>[] | null;
+  next?: string | null;
+  back?: string | null;
 };
 
 export type InboxItem =
@@ -230,6 +269,16 @@ export type Ticket = {
   /** In a queue (`queue` request): open deps that hold it back, and whether it was paused. */
   blocked_by?: string[];
   paused?: boolean;
+  /** The procedure it runs through (else the Folder's Queue default), and its latest run. */
+  procedure?: string | null;
+  run?: {
+    id: number;
+    procedure: string;
+    status: string;
+    step: number;
+    waiting: string | null;
+    steps: { name: string; status: string; model?: string | null }[];
+  } | null;
 };
 
 /** One tree's tasks in a Code Folder's queue: main, or a chat's worktree (`ref` is the chat id). */

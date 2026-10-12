@@ -196,6 +196,8 @@ defmodule Beamcode.Connectors do
           if is_map(args["body"]), do: Keyword.put(o, :json, args["body"]), else: o
         end)
         |> add_headers(args["headers"])
+        # Tests point calls at a Req.Test stub.
+        |> Keyword.merge(Application.get_env(:beamcode, :connector_req_options, []))
 
       case request_with_retry(c, opts, 3) do
         {:ok, %Req.Response{status: status, body: body}} ->

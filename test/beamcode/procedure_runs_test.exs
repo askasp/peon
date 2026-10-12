@@ -109,6 +109,36 @@ defmodule Beamcode.ProcedureRunsTest do
   Post a summary.
   """
 
+  @pay """
+  ---
+  name: pay
+  key: charge
+  inputs:
+    charge: { type: text }
+    amount: { type: money, currency: NOK }
+  call: stripe.refunds.create
+  params:
+    charge: "{charge}"
+    amount: "{amount.minor}"
+    idempotency_key: "refund-{charge}"
+  ---
+  """
+
+  @nuke """
+  ---
+  name: nuke
+  call: stripe.charges.delete
+  params:
+    charge: ch_1
+  ---
+  """
+
+  @stripe ~s({"name": "stripe", "baseUrl": "https://api.stripe.test",
+    "auth": {"type": "bearer", "secret": "STRIPE_KEY"},
+    "tools": {"refunds_create": ["POST", "/v1/refunds", "ask", "Refund a charge"],
+              "charges_delete": ["DELETE", "/v1/charges/{charge}", "deny"]},
+    "projects": ["amino-maintenance"]})
+
   @models [
     %{"id" => "claude-haiku-5-5", "providerID" => "anthropic"},
     %{"id" => "claude-opus-5-5", "providerID" => "anthropic", "variants" => [%{"id" => "high"}]},
@@ -135,7 +165,10 @@ defmodule Beamcode.ProcedureRunsTest do
       ".peon/procedures/finder.md" => @finder,
       ".peon/procedures/refund.md" => @refund,
       ".peon/procedures/monday-ops.md" => @chain,
-      ".peon/refund-policy.md" => "Refund double charges."
+      ".peon/refund-policy.md" => "Refund double charges.",
+      ".peon/procedures/pay.md" => @pay,
+      ".peon/procedures/nuke.md" => @nuke,
+      "connectors/stripe.json" => @stripe
     }
 
     setup_stub(fn conn ->
@@ -143,7 +176,9 @@ defmodule Beamcode.ProcedureRunsTest do
 
       case {conn.method, String.split(conn.request_path, "/", trim: true)} do
         {"GET", ["api", "session"]} ->
-          data(conn, [%{"id" => "chat", "title" => "chat", "time" => %{"created" => 1, "updated" => 1}}])
+          data(conn, [
+            %{"id" => "chat", "title" => "chat", "time" => %{"created" => 1, "updated" => 1}}
+          ])
 
         {"POST", ["api", "session"]} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
@@ -155,6 +190,9 @@ defmodule Beamcode.ProcedureRunsTest do
             end)
 
           data(conn, %{"id" => id})
+
+        {"GET", ["api", "session", "chat"]} ->
+          data(conn, %{"id" => "chat", "model" => %{"id" => "qwen", "providerID" => "local"}})
 
         {"POST", ["api", "session", sid, "prompt"]} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
@@ -168,20 +206,27 @@ defmodule Beamcode.ProcedureRunsTest do
 
         {"GET", ["api", "session", sid, "message"]} ->
           text = Agent.get(oc, &Map.get(&1.replies, sid, ""))
-          data(conn, [%{"type" => "assistant", "content" => [%{"type" => "text", "text" => text}]}])
+
+          data(conn, [
+            %{"type" => "assistant", "content" => [%{"type" => "text", "text" => text}]}
+          ])
 
         {"GET", ["api", "model"]} ->
           data(conn, @models)
 
         # A shared skill, so the Folder's own (none) are known at once.
         {"GET", ["api", "skill"]} ->
-          data(conn, [%{"name" => "shared", "path" => "/srv/routines/.opencode/skill/shared/SKILL.md"}])
+          data(conn, [
+            %{"name" => "shared", "path" => "/srv/routines/.opencode/skill/shared/SKILL.md"}
+          ])
 
         {"GET", ["api", "fs", "list"]} ->
           path = conn.query_params["path"]
 
           entries =
-            for {file, _} <- files, Path.dirname(file) == path, do: %{"path" => file, "type" => "file"}
+            for {file, _} <- files,
+                Path.dirname(file) == path,
+                do: %{"path" => file, "type" => "file"}
 
           data(conn, entries)
 
@@ -199,11 +244,17 @@ defmodule Beamcode.ProcedureRunsTest do
     %{user: user, folder: folder, oc: oc}
   end
 
-  defp reply(oc, sid, text), do: Agent.update(oc, &%{&1 | replies: Map.put(&1.replies, sid, text)})
+  defp reply(oc, sid, text),
+    do: Agent.update(oc, &%{&1 | replies: Map.put(&1.replies, sid, text)})
+
   defp last_prompt(oc), do: Agent.get(oc, &List.last(&1.prompts))
   defp reload(run), do: Repo.get!(Run, run.id)
 
-  test "steps switch models, fresh ones get a hand-over, outputs are kept", %{user: user, folder: folder, oc: oc} do
+  test "steps switch models, fresh ones get a hand-over, outputs are kept", %{
+    user: user,
+    folder: folder,
+    oc: oc
+  } do
     {:ok, run} = Runs.start(folder, user, "email-refunds", %{}, trigger: "slash")
     assert run.session_id == "chat"
 
@@ -227,7 +278,12 @@ defmodule Beamcode.ProcedureRunsTest do
     assert text =~ "### refund-policy.md\n\nRefund double charges."
     assert text =~ "```peon-output"
 
-    reply(oc, "s2", ~s(Approved.\n```peon-output\n{"approved": [{"charge": "ch_1", "amount": 299, "name": "Ola"}]}\n```))
+    reply(
+      oc,
+      "s2",
+      ~s(Approved.\n```peon-output\n{"approved": [{"charge": "ch_1", "amount": 299, "name": "Ola"}]}\n```)
+    )
+
     Runs.session_idle("s2", :ok)
 
     # Post: in the chat itself, switched to Sonnet, offering /refund buttons.
@@ -240,6 +296,14 @@ defmodule Beamcode.ProcedureRunsTest do
 
     run = reload(run)
     assert run.status == "done"
+
+    # The chat gets its own model back.
+    assert [
+             {"chat", %{"id" => "claude-sonnet-5-5"}},
+             {"chat", %{"id" => "qwen", "providerID" => "local"}}
+           ] =
+             Agent.get(oc, & &1.models)
+
     assert run.outputs["approved"] == [%{"charge" => "ch_1", "amount" => 299, "name" => "Ola"}]
     assert run.summary == "1 × Send refund · 299 NOK"
     assert Enum.map(run.steps, & &1["status"]) == ["done", "done", "done"]
@@ -248,12 +312,18 @@ defmodule Beamcode.ProcedureRunsTest do
   test "waits for you, goes back with a note, and loops a review at most max times",
        %{user: user, folder: folder, oc: oc} do
     {:ok, run} = Runs.start(folder, user, "ship", %{"task" => "refund status"})
-    assert {"chat", "/ship · Plan (step 1 of 4)\n\nInputs: task: refund status\n\nPlan refund status."} =
+
+    assert {"chat",
+            "/ship · Plan (step 1 of 4)\n\nInputs: task: refund status\n\nPlan refund status."} =
              last_prompt(oc)
 
     Runs.session_idle("chat", :ok)
     run = reload(run)
-    assert %{status: "waiting", waiting: %{"kind" => "after", "next" => "Build", "back" => "Plan"}} = run
+
+    assert %{
+             status: "waiting",
+             waiting: %{"kind" => "after", "next" => "Build", "back" => "Plan"}
+           } = run
 
     # Typing at the wait: Plan again, with the note.
     {:ok, _} = Runs.back(run, "Smaller, please.")
@@ -293,15 +363,26 @@ defmodule Beamcode.ProcedureRunsTest do
 
     # Find runs finder as a child run, in its own session under the chat.
     assert [{"s1", %{"parentID" => "chat"}}] = Agent.get(oc, & &1.created)
-    assert [%{procedure: "finder", parent_id: parent, trigger: "chain"}] = Repo.all(from r in Run, where: r.parent_id == ^run.id)
+
+    assert [%{procedure: "finder", parent_id: parent, trigger: "chain"}] =
+             Repo.all(from r in Run, where: r.parent_id == ^run.id)
+
     assert parent == run.id
 
-    items = ~s([{"charge": "ch_1", "amount": 299, "currency": "NOK"}, {"charge": "ch_2", "amount": 99, "currency": "NOK"}])
+    items =
+      ~s([{"charge": "ch_1", "amount": 299, "currency": "NOK"}, {"charge": "ch_2", "amount": 99, "currency": "NOK"}])
+
     reply(oc, "s1", "Two.\n```peon-output\n{\"approved\": #{items}}\n```")
     Runs.session_idle("s1", :ok)
 
     run = reload(run)
-    assert %{status: "waiting", seen: false, waiting: %{"kind" => "before", "text" => "Send 2 refunds · 398 NOK?"}} = run
+
+    assert %{
+             status: "waiting",
+             seen: false,
+             waiting: %{"kind" => "before", "text" => "Send 2 refunds · 398 NOK?"}
+           } = run
+
     assert length(run.waiting["items"]) == 2
 
     # Pick one: refund runs once, for ch_1, with no offer buttons inside a chain.
@@ -316,7 +397,12 @@ defmodule Beamcode.ProcedureRunsTest do
 
     run = reload(run)
     assert run.status == "done"
-    assert [%{"status" => "done"}, %{"status" => "done", "text" => "1 run"}, %{"status" => "done"}] = run.steps
+
+    assert [
+             %{"status" => "done"},
+             %{"status" => "done", "text" => "1 run"},
+             %{"status" => "done"}
+           ] = run.steps
   end
 
   test "a failed child stops the chain", %{user: user, folder: folder} do
@@ -324,5 +410,58 @@ defmodule Beamcode.ProcedureRunsTest do
     Runs.session_idle("s1", :failed)
 
     assert %{status: "failed", error: "Find: finder failed: " <> _} = reload(run)
+  end
+
+  describe "a connector call step" do
+    setup %{user: user} do
+      {:ok, _} =
+        Beamcode.Projects.insert_project(
+          %{name: "setup", kind: "system", directory: "/srv/setup", scope: "team"},
+          nil
+        )
+
+      {:ok, _} = Beamcode.Vault.put("STRIPE_KEY", "sk_test", user)
+      calls = start_supervised!({Agent, fn -> [] end}, id: :calls)
+      before = Application.get_env(:beamcode, :connector_req_options)
+      Application.put_env(:beamcode, :connector_req_options, plug: {Req.Test, :stripe})
+      on_exit(fn -> Application.put_env(:beamcode, :connector_req_options, before || []) end)
+
+      Req.Test.stub(:stripe, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        key = Plug.Conn.get_req_header(conn, "idempotency-key")
+        Agent.update(calls, &(&1 ++ [{conn.method, conn.request_path, Jason.decode!(body), key}]))
+        Req.Test.json(conn, %{"id" => "re_1", "status" => "succeeded"})
+      end)
+
+      %{calls: calls}
+    end
+
+    test "asks first (the tool is ask), then calls with no model", %{
+      user: user,
+      folder: folder,
+      oc: oc,
+      calls: calls
+    } do
+      {:ok, run} = Runs.start(folder, user, "pay", %{"charge" => "ch_1", "amount" => "299"})
+      assert %{status: "waiting", waiting: %{"kind" => "before"}} = run
+      assert Agent.get(calls, & &1) == []
+
+      {:ok, done} = Runs.continue(run)
+
+      assert [
+               {"POST", "/v1/refunds", %{"charge" => "ch_1", "amount" => "29900"},
+                ["refund-ch_1"]}
+             ] = Agent.get(calls, & &1)
+
+      assert %{status: "done", summary: "succeeded · re_1"} = done
+      # No model, no message.
+      assert Agent.get(oc, & &1.prompts) == []
+    end
+
+    test "a denied tool is never called", %{user: user, folder: folder, calls: calls} do
+      {:ok, run} = Runs.start(folder, user, "nuke", %{})
+      assert %{status: "failed", error: "nuke: stripe · charges.delete is denied."} = run
+      assert Agent.get(calls, & &1) == []
+    end
   end
 end

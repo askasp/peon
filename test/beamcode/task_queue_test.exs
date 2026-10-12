@@ -61,7 +61,13 @@ defmodule Beamcode.TaskQueueTest do
 
           case File.ls(full) do
             {:ok, names} ->
-              data(conn, for(n <- names, do: %{"path" => Path.join(Path.relative_to(full, at), n), "type" => "file"}))
+              data(
+                conn,
+                for(
+                  n <- names,
+                  do: %{"path" => Path.join(Path.relative_to(full, at), n), "type" => "file"}
+                )
+              )
 
             _ ->
               Plug.Conn.send_resp(conn, 404, "")

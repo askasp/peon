@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
-import { Icon } from "../Icon";
-import { ErrorLine, Tap, Toggle } from "../ui";
-import { ask, usePeon } from "@/lib/peon";
+import { Sheet } from "../Sheet";
+import { Button, ErrorLine, Tap } from "../ui";
+import { ProcedureDetail } from "./ProcedureDetail";
 import { useLoad } from "@/lib/useLoad";
+import { useWide } from "@/lib/useWide";
 import { ago } from "@/lib/time";
+import { singleChat } from "@/lib/folders";
 import { color, font } from "@/lib/theme";
-import type { Procedure, ProcedureInput } from "@/lib/procedures";
+import { starts, type Procedure, type ProcedureInput } from "@/lib/procedures";
 import type { Run, Schedule } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
@@ -20,131 +22,224 @@ export function scheduleProcedure(s: Schedule, procedures: Procedure[]) {
 }
 
 /**
- * A Procedure Folder's procedures (P6): one card each, with its inputs and
- * schedule. Run sends it into the Folder's chat and opens the chat.
+ * A Folder's procedures (U1, U2): one row each with how it starts, its steps
+ * and its last run; a row opens its steps (U3, U4). Below, the notes a step
+ * can be handed and New procedure.
  */
-export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan: () => void }) {
-  const schedulesChanged = usePeon((s) => s.schedulesChanged);
-  const { data: scheds } = useLoad(
-    () => ctx.call<{ schedules: Schedule[] }>("schedules", {}, 60000).then((r) => r.schedules),
-    [schedulesChanged],
+export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => void }) {
+  const wide = useWide();
+  const [open, setOpen] = useState<string | null>(null);
+  const [drafting, setDrafting] = useState(false);
+  const { data: notes } = useLoad(
+    () => ctx.call<{ notes: string[] }>("procedures", {}, 30000).then((r) => r.notes ?? []),
+    [ctx.project.id],
   );
   const { data: runs } = useLoad(() => ctx.call<{ runs: Run[] }>("runs").then((r) => r.runs), [ctx.changed]);
-  const scheduled = (runs ?? []).filter((r) => r.schedule_key !== "manual").slice(0, 8);
+  const single = singleChat(ctx.project.kind);
+
+  // Where a started run shows: the Folder's chat, or the new chat it made.
+  const ran = (sessionId: string | null | undefined) => {
+    if (single) onRan?.();
+    else if (sessionId) router.push(`/session/${sessionId}`);
+  };
+
+  const shown = ctx.procedures.find((p) => p.name === open);
+  if (shown)
+    return (
+      <ProcedureDetail
+        ctx={ctx}
+        procedure={shown}
+        runs={(runs ?? []).filter((r) => r.procedure === shown.name)}
+        onBack={() => setOpen(null)}
+        onOpen={setOpen}
+        onRan={ran}
+      />
+    );
 
   return (
-    <ScrollView contentContainerStyle={st.body}>
+    <ScrollView contentContainerStyle={[st.body, wide && { paddingHorizontal: 28 }]}>
       <ErrorLine message={ctx.proceduresError} />
-      {ctx.procedures.map((p) => (
-        <ProcedureCard
-          key={p.name}
-          ctx={ctx}
-          procedure={p}
-          schedules={(scheds ?? []).filter((s) => scheduleProcedure(s, ctx.procedures) === p.name)}
-          onRan={onRan}
-        />
-      ))}
-      <Text style={st.hint}>
-        {ctx.procedures.length
-          ? "To add a procedure, say “add a procedure that…” in the chat."
-          : "No procedures yet. Say “add a procedure that…” in the chat."}
-      </Text>
+      {ctx.procedures.length ? (
+        <View>
+          {wide ? (
+            <View style={[st.row, st.headRow]}>
+              <Text style={[st.head, st.colName]}>Procedure</Text>
+              <Text style={[st.head, st.colStarts]}>Starts</Text>
+              <Text style={[st.head, st.colSteps]}>Steps</Text>
+              <Text style={[st.head, st.colLast]}>Last run</Text>
+            </View>
+          ) : null}
+          {ctx.procedures.map((p) => (
+            <ProcedureRow
+              key={p.name}
+              p={p}
+              all={ctx.procedures}
+              wide={wide}
+              onPress={() => setOpen(p.name)}
+            />
+          ))}
+        </View>
+      ) : (
+        <Text style={st.empty}>
+          No procedures yet. A procedure is a file in .peon/procedures/; New procedure drafts one with you in
+          the chat.
+        </Text>
+      )}
 
-      {scheduled.length ? <Text style={st.heading}>Scheduled runs</Text> : null}
-      <View>
-        {scheduled.map((r) => (
-          <Tap
-            key={r.id}
-            kb="row"
-            onPress={() => r.session_id && router.push(`/session/${r.session_id}`)}
-            style={st.run}
-          >
-            <Text style={st.runText} numberOfLines={1}>
-              /{r.procedure ?? r.schedule_key}
-              <Text style={{ color: r.status === "failed" ? color.red : color.muted }}>
-                {" · "}
-                {r.status === "running" ? "running" : r.error || r.summary || r.status}
-              </Text>
-            </Text>
-            <Text style={st.runWhen}>{ago(r.started, true)}</Text>
-          </Tap>
+      <View style={st.foot}>
+        {notes?.length ? <Text style={st.footLabel}>Folder notes</Text> : null}
+        {(notes ?? []).map((n) => (
+          <Text key={n} style={st.note}>
+            {n}
+          </Text>
         ))}
+        <View style={{ flex: 1 }} />
+        {ctx.canEdit ? (
+          <Tap onPress={() => setDrafting(true)} hitSlop={8} testID="new-procedure">
+            <Text style={st.link}>New procedure</Text>
+          </Tap>
+        ) : null}
       </View>
+
+      <NewProcedureSheet
+        visible={drafting}
+        onClose={() => setDrafting(false)}
+        onDraft={async (description) => {
+          const r = await ctx.call<{ session_id: string }>("draft_procedure", { description }, 60000);
+          setDrafting(false);
+          ran(r.session_id);
+        }}
+      />
     </ScrollView>
   );
 }
 
-function ProcedureCard({
-  ctx,
-  procedure: p,
-  schedules,
-  onRan,
+function ProcedureRow({
+  p,
+  all,
+  wide,
+  onPress,
 }: {
-  ctx: ProjectCtx;
-  procedure: Procedure;
-  schedules: Schedule[];
-  onRan: () => void;
+  p: Procedure;
+  all: Procedure[];
+  wide: boolean;
+  onPress: () => void;
 }) {
-  const [values, setValues] = useState<Values>(() =>
-    Object.fromEntries(p.inputs.map((i) => [i.name, i.default])),
+  const chips = starts(p, all);
+  const steps = p.steps?.length ?? 1;
+  const last = lastLine(p.last ?? null);
+  const startChips = (
+    <View style={st.chips}>
+      {chips.map((c) => (
+        <Text key={c.label} style={[st.chip, chipStyle[c.kind]]}>
+          {c.label}
+        </Text>
+      ))}
+    </View>
   );
+  return (
+    <Tap kb="row" onPress={onPress} style={[st.row, !wide && st.rowPhone]} testID={`procedure-${p.name}`}>
+      {wide ? (
+        <>
+          <Text style={[st.name, st.colName]} numberOfLines={1}>
+            {p.name}
+          </Text>
+          <View style={st.colStarts}>{startChips}</View>
+          <Text style={[st.cell, st.colSteps]}>{steps}</Text>
+          <Text style={[st.lastText, st.colLast, last.tint && { color: last.tint }]} numberOfLines={1}>
+            {last.text}
+          </Text>
+        </>
+      ) : (
+        <View style={{ flex: 1, gap: 6 }}>
+          <View style={{ flexDirection: "row", alignItems: "baseline", gap: 8 }}>
+            <Text style={st.name} numberOfLines={1}>
+              {p.name}
+            </Text>
+            <Text style={st.lastText}>
+              {steps} step{steps === 1 ? "" : "s"}
+            </Text>
+          </View>
+          {startChips}
+          {last.text ? (
+            <Text style={[st.lastText, last.tint && { color: last.tint }]} numberOfLines={1}>
+              {last.text}
+            </Text>
+          ) : null}
+        </View>
+      )}
+    </Tap>
+  );
+}
+
+/** "Mon · 3 to send", "am-5c11 · needs you", "10:12 · refunded". */
+export function lastLine(run: Run | null): { text: string; tint?: string } {
+  if (!run) return { text: "" };
+  const when = ago(run.finished ?? run.started, true);
+  if (run.status === "waiting") return { text: `${run.ticket ?? when} · needs you`, tint: color.needs };
+  if (run.status === "running") return { text: `${run.ticket ?? when} · running`, tint: color.accentText };
+  if (run.status === "failed") return { text: `${when} · ${run.error ?? "failed"}`, tint: color.red };
+  return { text: [when, run.summary].filter(Boolean).join(" · ") };
+}
+
+const chipStyle = StyleSheet.create({
+  slash: { backgroundColor: color.field, fontFamily: font.mono },
+  schedule: { backgroundColor: "#14262a", color: color.teal },
+  button: { borderWidth: 1, borderColor: "#2c2c34", color: color.textSoft },
+  chain: { borderWidth: 1, borderColor: "#2c2c34", color: color.textSoft },
+  queue: { backgroundColor: color.accentWash, color: color.accentText },
+});
+
+/** New procedure: say what it does; the chat drafts the file with you. */
+function NewProcedureSheet({
+  visible,
+  onClose,
+  onDraft,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onDraft: (description: string) => Promise<void>;
+}) {
+  const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [paused, setPaused] = useState<Record<string, boolean>>({});
-  const sched = schedules[0];
-
-  async function run() {
+  async function draft() {
     setBusy(true);
     setError(null);
     try {
-      await ctx.call("run", { procedure: p.name, inputs: values }, 60000);
-      onRan();
+      await onDraft(text);
+      setText("");
     } catch (e: any) {
       setError(e.message);
     }
     setBusy(false);
   }
-
-  async function pause(s: Schedule, on: boolean) {
-    setPaused((v) => ({ ...v, [s.key]: !on }));
-    try {
-      await ask("pause_schedule", { project_id: ctx.project.id, key: s.key, paused: !on });
-    } catch (e: any) {
-      setError(e.message);
-      setPaused((v) => ({ ...v, [s.key]: s.paused }));
-    }
-  }
-
   return (
-    <View style={st.card} testID={`procedure-${p.name}`}>
-      <View style={st.cardTop}>
-        <Text style={st.name}>/{p.name}</Text>
-        <Tap haptic onPress={run} disabled={busy} style={st.run1} testID={`run-${p.name}`}>
-          <Icon name="play" size={9} color={color.bg} />
-          <Text style={st.runLabel}>{busy ? "Starting…" : "Run"}</Text>
-        </Tap>
+    <Sheet visible={visible} onClose={onClose} title="New procedure">
+      <View style={{ gap: 12 }}>
+        <Text style={st.desc}>
+          Say what it should do. The chat writes the file with you, and asks what it needs.
+        </Text>
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          multiline
+          placeholder="Every Monday, read support mail and list who should get a refund"
+          placeholderTextColor={color.faint}
+          style={st.area}
+          testID="new-procedure-text"
+        />
+        <ErrorLine message={error} />
+        <Button
+          label="Draft it"
+          kind="accent"
+          height={46}
+          busy={busy}
+          disabled={!text.trim()}
+          onPress={draft}
+        />
       </View>
-      {p.description ? <Text style={st.desc}>{p.description}</Text> : null}
-      {p.inputs.length ? <InputFields inputs={p.inputs} values={values} onChange={setValues} /> : null}
-      <ErrorLine message={error} />
-      {sched ? (
-        <View style={st.foot}>
-          <Text style={st.footText} numberOfLines={1}>
-            {sched.when}
-            {sched.last?.summary ? ` · last: ${sched.last.summary}` : ""}
-          </Text>
-          <Toggle
-            value={!(paused[sched.key] ?? sched.paused)}
-            onChange={(on) => pause(sched, on)}
-            label={`Run ${p.name} on schedule`}
-          />
-        </View>
-      ) : p.key ? (
-        <View style={st.foot}>
-          <Text style={st.footText}>One run per {p.key} · no schedule</Text>
-        </View>
-      ) : null}
-    </View>
+    </Sheet>
   );
 }
 
@@ -170,7 +265,10 @@ export function InputFields({
     <View style={{ gap: 8 }}>
       {inputs.map((input) => (
         <View key={input.name} style={st.input}>
-          <Text style={st.inputName}>{input.name}</Text>
+          <Text style={st.inputName}>
+            {input.name}
+            {input.currency ? ` · ${input.currency}` : ""}
+          </Text>
           {input.options.length ? (
             <View style={st.options}>
               {input.options.map((o) => {
@@ -187,6 +285,7 @@ export function InputFields({
             <TextInput
               value={String(values[input.name] ?? "")}
               onChangeText={(t) => onChange({ ...values, [input.name]: t })}
+              placeholder={input.default === "last_run" ? "since the last run" : undefined}
               style={st.field}
               placeholderTextColor={color.faint}
               testID={`input-${input.name}`}
@@ -199,29 +298,61 @@ export function InputFields({
 }
 
 const st = StyleSheet.create({
-  body: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 40, gap: 10, maxWidth: 760, width: "100%" },
-  card: {
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    borderRadius: 12,
-    backgroundColor: "#17171c",
-    borderWidth: 1,
-    borderColor: color.divider,
-  },
-  cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
-  name: { fontFamily: font.mono, fontSize: 14, color: color.text },
-  run1: {
+  body: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 40, gap: 16, maxWidth: 900, width: "100%" },
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 8,
-    backgroundColor: color.textStrong,
+    gap: 14,
+    paddingVertical: 11,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1c1c21",
   },
-  runLabel: { fontSize: 13, fontWeight: "600", color: color.bg },
+  rowPhone: { alignItems: "flex-start" },
+  headRow: { paddingTop: 0, paddingBottom: 8, borderBottomColor: color.divider },
+  head: { fontSize: 12, color: color.faint },
+  colName: { width: 150 },
+  colStarts: { flex: 1, minWidth: 0 },
+  colSteps: { width: 50 },
+  colLast: { width: 190 },
+  name: { fontFamily: font.mono, fontSize: 13, color: color.text, flexShrink: 1 },
+  cell: { fontSize: 14, color: color.textSoft },
+  lastText: { fontSize: 13, color: color.muted },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 5 },
+  chip: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 5,
+    overflow: "hidden",
+    fontSize: 12,
+    color: color.text,
+  },
+  empty: { fontSize: 13, lineHeight: 19, color: color.muted },
+  foot: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 10 },
+  footLabel: { fontSize: 13, color: color.faint },
+  note: {
+    fontFamily: font.mono,
+    fontSize: 12,
+    color: color.textSoft,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 5,
+    borderWidth: 1,
+    borderColor: "#2c2c34",
+  },
+  link: { fontSize: 13, color: color.accentText },
   desc: { fontSize: 13, lineHeight: 19, color: color.textDim },
+  area: {
+    minHeight: 90,
+    borderRadius: 10,
+    backgroundColor: color.field,
+    borderWidth: 1,
+    borderColor: color.border,
+    padding: 10,
+    color: color.text,
+    fontSize: 14,
+    textAlignVertical: "top",
+    outlineStyle: "none",
+  } as any,
   input: { gap: 6 },
   inputName: { fontSize: 12, color: color.muted },
   options: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
@@ -239,36 +370,4 @@ const st = StyleSheet.create({
     fontSize: 14,
     outlineStyle: "none",
   } as any,
-  foot: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 10,
-    paddingTop: 8,
-    borderTopWidth: 1,
-    borderTopColor: color.divider,
-  },
-  footText: { flex: 1, fontSize: 12, color: color.muted },
-  hint: {
-    padding: 12,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderStyle: "dashed",
-    borderColor: "#2c2c34",
-    fontSize: 13,
-    lineHeight: 19,
-    color: color.muted,
-  },
-  heading: { fontSize: 12, color: color.muted, marginTop: 4 },
-  run: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    gap: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 2,
-    borderBottomWidth: 1,
-    borderBottomColor: color.hairline,
-  },
-  runText: { flex: 1, fontSize: 13, color: color.text },
-  runWhen: { fontSize: 13, color: color.muted },
 });

@@ -230,7 +230,9 @@ defmodule BeamcodeWeb.SessionChannel do
       slash =
         if socket.assigns.project.kind == "routine",
           do: procedures,
-          else: procedures ++ Enum.reject(Sessions.slash_items(dir, 2), &MapSet.member?(names, &1.name))
+          else:
+            procedures ++
+              Enum.reject(Sessions.slash_items(dir, 2), &MapSet.member?(names, &1.name))
 
       {:ok, %{agents: agents, models: models, default: default, slash: slash}}
     end)

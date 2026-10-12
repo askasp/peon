@@ -246,7 +246,10 @@ defmodule BeamcodeWeb.ProjectChannel do
       end
 
     opts =
-      [trigger: if(params["trigger"] in ["slash", "button"], do: params["trigger"], else: "button")] ++
+      [
+        trigger:
+          if(params["trigger"] in ["slash", "button"], do: params["trigger"], else: "button")
+      ] ++
         if(is_binary(params["session_id"]) and params["session_id"] != "",
           do: [session_id: params["session_id"]],
           else: []
@@ -264,8 +267,14 @@ defmodule BeamcodeWeb.ProjectChannel do
       when action in ["continue", "skip", "back", "stop"] do
     %{project: project, user: user} = socket.assigns
 
-    with %{} = run <- Enum.find(Schedules.project_runs(project.id, 200), &(to_string(&1.id) == to_string(id))),
-         true <- (run.scope == "team" or run.owner_id == user.id) and ProjectTools.can_edit?(project, user) do
+    with %{} = run <-
+           Enum.find(
+             Schedules.project_runs(project.id, 200),
+             &(to_string(&1.id) == to_string(id))
+           ),
+         true <-
+           (run.scope == "team" or run.owner_id == user.id) and
+             ProjectTools.can_edit?(project, user) do
       ChannelTasks.reply_async(socket, fn ->
         result =
           case action do
@@ -357,7 +366,9 @@ defmodule BeamcodeWeb.ProjectChannel do
       procedure = if is_binary(params["procedure"]), do: params["procedure"]
 
       with {:ok, ids} <-
-             TaskQueue.add(project, user, ref, titles, params["chain"] == true, procedure: procedure),
+             TaskQueue.add(project, user, ref, titles, params["chain"] == true,
+               procedure: procedure
+             ),
            do: {:ok, %{ids: ids}}
     end)
   end

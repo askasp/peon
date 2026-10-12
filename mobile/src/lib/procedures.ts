@@ -1,10 +1,43 @@
-// Procedures in a Procedure Folder, and how one's result starts the next:
-// run-links ([Send refund](run:refund?charge=ch_1&amount=299)) become buttons,
-// and each row's outcome comes from the transcript (see Beamcode.Routines).
+// Procedures (.peon/procedures/<name>.md, see Beamcode.Procedures) and how
+// one's result starts the next: run-links ([Send refund](run:refund?charge=ch_1&amount=299))
+// become buttons, and each row's outcome comes from the transcript.
 
-import type { Message, Perm } from "./types";
+import type { Message, Perm, Run } from "./types";
 
-export type ProcedureInput = { name: string; default: string | string[]; options: string[]; multi: boolean };
+export type ProcedureInput = {
+  name: string;
+  default: string | string[];
+  options: string[];
+  multi: boolean;
+  type?: string;
+  currency?: string | null;
+};
+
+export type ProcedureStep = {
+  name: string;
+  /** prompt: a message to a model; run: other procedures; queue: tickets; call: a connector, no model; wait: only waits. */
+  kind: "prompt" | "run" | "queue" | "call" | "wait";
+  prompt: string | null;
+  model: string | null;
+  model_label: string | null;
+  effort: string | null;
+  session: "same" | "fresh";
+  wait: boolean;
+  uses: string[];
+  hand_over: string[];
+  offers: string | null;
+  skill: string | null;
+  run: string | null;
+  for_each: string | null;
+  returns: string | null;
+  on_fail: "stop" | "continue";
+  queue: string | null;
+  title: string | null;
+  call: string | null;
+  params: Record<string, string>;
+  confirm: string | null;
+  on_changes: { back_to: string | null; max: number } | null;
+};
 
 export type Procedure = {
   name: string;
@@ -12,7 +45,43 @@ export type Procedure = {
   inputs: ProcedureInput[];
   /** The input that identifies what it acts on (a charge id), so a row can't run twice. */
   key: string | null;
+  /** folder: its own file; global: from setup, in every Folder; legacy: a skill from before files. */
+  source?: "folder" | "global" | "legacy";
+  path?: string | null;
+  /** A Folder file that replaces a global one with its name. */
+  overrides?: boolean;
+  /** "default": what the Queue runs a task through. */
+  queue?: string | null;
+  outputs?: Record<string, string[]>;
+  schedule?: {
+    at: string;
+    tz: string | null;
+    when: string | null;
+    next: string | null;
+    paused: boolean;
+  } | null;
+  steps?: ProcedureStep[];
+  last?: Run | null;
+  warnings?: string[];
 };
+
+/** How a procedure gets started, for the Starts column: /name, its schedule, buttons, the Queue, chains. */
+export function starts(p: Procedure, all: Procedure[]) {
+  const out: { kind: "slash" | "schedule" | "button" | "queue" | "chain"; label: string }[] = [];
+  out.push({ kind: "slash", label: `/${p.name}` });
+  if (p.schedule)
+    out.push({ kind: "schedule", label: p.schedule.paused ? "Paused" : (p.schedule.when ?? p.schedule.at) });
+  for (const o of all) {
+    if (o.name === p.name) continue;
+    for (const s of o.steps ?? []) {
+      if (s.offers === p.name) out.push({ kind: "button", label: `Button in ${o.name}` });
+      if (s.run === p.name) out.push({ kind: "chain", label: `Run by ${o.name}` });
+      if (s.queue === p.name) out.push({ kind: "queue", label: `Queued by ${o.name}` });
+    }
+  }
+  if (p.queue === "default") out.unshift({ kind: "queue", label: "Queue default" });
+  return out.filter((x, i) => out.findIndex((y) => y.label === x.label) === i);
+}
 
 export type RunLink = { procedure: string; label: string; values: Record<string, string> };
 

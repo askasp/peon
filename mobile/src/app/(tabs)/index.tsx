@@ -179,6 +179,8 @@ function InboxCard({ item }: { item: InboxItem }) {
 
   const run = item.run;
   const failed = run.status === "failed";
+  // A procedure run that waits for you (a batch to confirm, a step to read).
+  const waiting = run.status === "waiting";
   return (
     <Tap
       kb="row"
@@ -187,14 +189,22 @@ function InboxCard({ item }: { item: InboxItem }) {
     >
       <Card>
         <View style={st.cardHead}>
-          <KindTile glyph={failed ? "✕" : "✓"} tint={failed ? color.red : color.teal} bg={color.divider} />
-          <Text style={[st.kind, { color: failed ? color.red : color.teal }]}>
-            {failed ? "Run failed" : "Run finished"}
+          <KindTile
+            glyph={failed ? "✕" : waiting ? "?" : "✓"}
+            tint={failed ? color.red : waiting ? color.needs : color.teal}
+            bg={color.divider}
+          />
+          <Text style={[st.kind, { color: failed ? color.red : waiting ? color.needs : color.teal }]}>
+            {failed ? "Run failed" : waiting ? `${run.procedure} needs you` : "Run finished"}
           </Text>
           <Source name={item.project.name} detail={ago(run.finished ?? run.started)} />
         </View>
         <Text style={st.cardText}>
-          {run.error || run.summary || `${run.schedule_key} ran for ${duration(run.started, run.finished)}.`}
+          {waiting
+            ? run.waiting?.text
+            : run.error ||
+              run.summary ||
+              `${run.schedule_key} ran for ${duration(run.started, run.finished)}.`}
         </Text>
         <ErrorLine message={error} />
         <View style={st.actions}>

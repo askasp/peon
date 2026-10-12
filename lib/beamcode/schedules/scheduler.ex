@@ -102,7 +102,8 @@ defmodule Beamcode.Schedules.Scheduler do
     |> Repo.one()
   end
 
-  defp going?(project, p), do: match?(%{status: s} when s in ["running", "waiting"], last_scheduled(project, p))
+  defp going?(project, p),
+    do: match?(%{status: s} when s in ["running", "waiting"], last_scheduled(project, p))
 
   # Whether the latest slot in the last week came and went with no run.
   @doc false

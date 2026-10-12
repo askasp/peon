@@ -17,7 +17,9 @@ defmodule Beamcode.Procedures.Yaml do
       |> String.replace("\r\n", "\n")
       |> String.split("\n")
       |> Enum.with_index(1)
-      |> Enum.reject(fn {l, _} -> String.trim(l) == "" or String.starts_with?(String.trim(l), "#") end)
+      |> Enum.reject(fn {l, _} ->
+        String.trim(l) == "" or String.starts_with?(String.trim(l), "#")
+      end)
       |> Enum.map(fn {l, n} ->
         content = String.trim_leading(l)
         {String.length(l) - String.length(content), String.trim_trailing(content), n}
@@ -101,7 +103,8 @@ defmodule Beamcode.Procedures.Yaml do
   defp list_item?(content), do: content == "-" or String.starts_with?(content, "- ")
 
   defp map_line?(text) do
-    not String.starts_with?(text, ["{", "[", "\"", "'"]) and Regex.match?(~r/^[^\s:][^:]*:(\s|$)/, text)
+    not String.starts_with?(text, ["{", "[", "\"", "'"]) and
+      Regex.match?(~r/^[^\s:][^:]*:(\s|$)/, text)
   end
 
   defp split_key(content, n) do
@@ -229,7 +232,10 @@ defmodule Beamcode.Procedures.Yaml do
 
   defp keys(map) do
     order = Map.get(map, :order, [])
-    rest = map |> Map.keys() |> Enum.filter(&is_binary/1) |> Enum.reject(&(&1 in order)) |> Enum.sort()
+
+    rest =
+      map |> Map.keys() |> Enum.filter(&is_binary/1) |> Enum.reject(&(&1 in order)) |> Enum.sort()
+
     Enum.filter(order, &Map.has_key?(map, &1)) ++ rest
   end
 
@@ -270,15 +276,23 @@ defmodule Beamcode.Procedures.Yaml do
   # A value on the key's own line: a scalar, or a short flow map or list.
   defp inline(v) when is_map(v) do
     if Enum.all?(keys(v), &flat?(v[&1])) do
-      text = "{ " <> Enum.map_join(keys(v), ", ", &"#{plain_key(&1)}: #{scalar_text(v[&1], :flow)}") <> " }"
-      if String.length(text) <= 60, do: {:ok, if(text == "{  }", do: "{}", else: text)}, else: :block
+      text =
+        "{ " <>
+          Enum.map_join(keys(v), ", ", &"#{plain_key(&1)}: #{scalar_text(v[&1], :flow)}") <> " }"
+
+      if String.length(text) <= 60,
+        do: {:ok, if(text == "{  }", do: "{}", else: text)},
+        else: :block
     else
       :block
     end
   end
 
   defp inline(v) when is_list(v) do
-    if Enum.all?(v, &(flat?(&1) or (is_map(&1) and Enum.all?(keys(&1), fn k -> flat?(&1[k]) end)))) do
+    if Enum.all?(
+         v,
+         &(flat?(&1) or (is_map(&1) and Enum.all?(keys(&1), fn k -> flat?(&1[k]) end)))
+       ) do
       text = "[" <> Enum.map_join(v, ", ", &flow_item/1) <> "]"
       if String.length(text) <= 60, do: {:ok, text}, else: :block
     else
@@ -310,7 +324,8 @@ defmodule Beamcode.Procedures.Yaml do
     special = if ctx == :flow, do: ~r/[,\[\]\{\}]|: |\s#|:$/, else: ~r/: |\s#|:$/
 
     if v == "" or scalar(v) != v or String.trim(v) != v or String.contains?(v, "\n") or
-         String.starts_with?(v, ~w({ [ ] } & * # ? | - < > = ! % @ ` " ' ,)) or Regex.match?(special, v),
+         String.starts_with?(v, ~w({ [ ] } & * # ? | - < > = ! % @ ` " ' ,)) or
+         Regex.match?(special, v),
        do: Jason.encode!(v),
        else: v
   end
