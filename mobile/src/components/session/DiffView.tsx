@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 import { color, font } from "@/lib/theme";
 import type { DiffFile } from "@/lib/types";
@@ -26,6 +27,57 @@ function lines(patch: string): Line[] {
     }
   }
   return out;
+}
+
+type Run = { kind: Line["kind"]; numbers: string; text: string };
+
+// Lines of one kind in a row as one block: a few big Texts draw much faster
+// than three elements per line.
+function runs(lines: Line[]): Run[] {
+  const out: Run[] = [];
+  let kind: Line["kind"] | null = null;
+  let numbers: string[] = [];
+  let text: string[] = [];
+  const flush = () => {
+    if (kind) out.push({ kind, numbers: numbers.join("\n"), text: text.join("\n") });
+    numbers = [];
+    text = [];
+  };
+  for (const l of lines) {
+    if (l.kind !== kind) {
+      flush();
+      kind = l.kind;
+    }
+    numbers.push(l.n == null ? "" : String(l.n));
+    text.push(l.kind === "@" ? l.text : `${l.kind === " " ? " " : l.kind} ${l.text}`);
+  }
+  flush();
+  return out;
+}
+
+function Patch({ patch, hidden }: { patch: string; hidden?: number }) {
+  const parsed = useMemo(() => {
+    const ls = lines(patch);
+    const widest = ls.reduce((w, l) => Math.max(w, l.n == null ? 0 : String(l.n).length), 0);
+    return { runs: runs(ls), width: Math.max(26, widest * 7.5) };
+  }, [patch]);
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.patch}>
+      <View style={{ minWidth: "100%" }}>
+        {parsed.runs.map((r, i) => (
+          <View key={i} style={[st.line, { backgroundColor: look[r.kind].bg }]}>
+            <Text style={[st.n, { width: parsed.width, color: look[r.kind].n }]}>{r.numbers}</Text>
+            <Text style={[st.code, { color: look[r.kind].fg }]}>{r.text}</Text>
+          </View>
+        ))}
+        {hidden ? (
+          <Text style={st.hidden}>
+            … {hidden} more line{hidden === 1 ? "" : "s"} not shown
+          </Text>
+        ) : null}
+      </View>
+    </ScrollView>
+  );
 }
 
 const look = {
@@ -59,20 +111,7 @@ export function DiffView({ files }: { files: DiffFile[] }) {
               <Text style={{ color: color.red }}>−{f.deletions ?? 0}</Text>
             </Text>
           </View>
-          {f.patch ? (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={st.patch}>
-              <View style={{ minWidth: "100%" }}>
-                {lines(f.patch).map((l, i) => (
-                  <View key={i} style={[st.line, { backgroundColor: look[l.kind].bg }]}>
-                    <Text style={[st.n, { color: look[l.kind].n }]}>{l.n ?? ""}</Text>
-                    <Text style={[st.code, { color: look[l.kind].fg }]}>
-                      {l.kind === "@" ? l.text : `${l.kind === " " ? " " : l.kind} ${l.text}`}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            </ScrollView>
-          ) : null}
+          {f.patch ? <Patch patch={f.patch} hidden={f.hidden} /> : null}
         </View>
       ))}
     </View>
@@ -99,4 +138,5 @@ const st = StyleSheet.create({
   line: { flexDirection: "row", gap: 10, paddingHorizontal: 14 },
   n: { width: 26, textAlign: "right", fontSize: 11.5, lineHeight: 19.5, fontFamily: font.mono },
   code: { fontSize: 11.5, lineHeight: 19.5, fontFamily: font.mono },
+  hidden: { fontSize: 11.5, fontFamily: font.mono, color: color.faint, paddingHorizontal: 14, paddingTop: 6 },
 });

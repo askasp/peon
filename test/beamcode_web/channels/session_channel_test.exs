@@ -63,7 +63,13 @@ defmodule BeamcodeWeb.SessionChannelTest do
                   "file" => "lib/app.ex",
                   "additions" => 3,
                   "deletions" => 1,
-                  "patch" => "@@ -1 +1 @@"
+                  # Whole file as context, as OpenCode sends it.
+                  "patch" =>
+                    "@@ -1,40 +1,40 @@\n" <>
+                      Enum.map_join(1..40, "\n", fn
+                        20 -> "-old\n+new"
+                        i -> " line #{i}"
+                      end)
                 }
               ])
 
@@ -103,6 +109,13 @@ defmodule BeamcodeWeb.SessionChannelTest do
            }
 
     assert [%{"file" => "lib/app.ex", "additions" => 3}] = reply.diff
+  end
+
+  test "the diff comes cut to its changes, not whole files", %{socket: socket} do
+    {:ok, reply, _socket} = subscribe_and_join(socket, "session:ses_1", %{})
+    [%{"patch" => patch, "hidden" => 0}] = reply.diff
+    assert ["@@ -17,7 +17,7 @@", " line 17" | _] = String.split(patch, "\n")
+    assert length(String.split(patch, "\n")) == 9
   end
 
   test "joining lists the questions still waiting for an answer", %{socket: socket} do

@@ -23,7 +23,7 @@ defmodule BeamcodeWeb.SessionChannel do
     * `session` `{session}` – renamed, or model/agent switched
     * `run` `{run}` – the routine run this session is, when it starts or finishes
     * `forms` `{forms}` – the questions the agent is waiting on, when they change
-    * `diff` `{files}` – changed files (`file`, `additions`, `deletions`, `patch`), when they change
+    * `diff` `{files}` – changed files (`file`, `additions`, `deletions`, `patch`, `hidden`), when they change
     * `speak` `{text}` – a short line to say: the reply when a turn ends, or a permission ask
   """
   use BeamcodeWeb, :channel
@@ -33,6 +33,8 @@ defmodule BeamcodeWeb.SessionChannel do
   alias BeamcodeWeb.{AppJSON, ChannelTasks}
 
   @refetch_after 120
+  # The diff is big on a big change; while the agent works it's read at most this often.
+  @diff_after 1500
   @decisions ~w(once always reject)
 
   @impl true
@@ -55,6 +57,8 @@ defmodule BeamcodeWeb.SessionChannel do
             record: record,
             sent: %{},
             refetch_ref: nil,
+            diff_ref: nil,
+            diff_again: false,
             speak_next: nil,
             status: Events.status(id),
             diff: [],
@@ -409,10 +413,35 @@ defmodule BeamcodeWeb.SessionChannel do
     if messages.upsert != [] or length(messages.ids) != length(ids_before),
       do: push(socket, "messages", messages)
 
-    diff = load_diff(socket.assigns.session_id)
-    if diff != socket.assigns.diff, do: push(socket, "diff", %{files: diff})
+    {:noreply, socket |> schedule_diff() |> speak()}
+  end
 
-    {:noreply, socket |> assign(diff: diff) |> speak()}
+  # Read off the channel process, so pushes and replies don't wait for it.
+  def handle_info(:load_diff, socket) do
+    channel = self()
+    sid = socket.assigns.session_id
+
+    Task.start(fn ->
+      diff =
+        try do
+          load_diff(sid)
+        rescue
+          _ -> :error
+        end
+
+      send(channel, {:diff, diff})
+    end)
+
+    {:noreply, assign(socket, diff_ref: :loading, diff_again: false)}
+  end
+
+  def handle_info({:diff, :error}, socket),
+    do: {:noreply, assign(socket, diff_ref: nil)}
+
+  def handle_info({:diff, diff}, socket) do
+    if diff != socket.assigns.diff, do: push(socket, "diff", %{files: diff})
+    socket = assign(socket, diff: diff, diff_ref: nil)
+    {:noreply, if(socket.assigns.diff_again, do: schedule_diff(socket), else: socket)}
   end
 
   # The session's project made private or removed: close for those who can't see it now.
@@ -470,11 +499,23 @@ defmodule BeamcodeWeb.SessionChannel do
     end
   end
 
+  # Each patch cut to its changes (OpenCode sends whole files), with `hidden`
+  # lines left out past the cap.
   defp load_diff(sid) do
     case Opencode.diff(sid) do
       {:ok, files} when is_list(files) ->
-        for f <- files,
-            do: Map.take(f, ["file", "additions", "deletions", "patch", "status"])
+        for f <- files do
+          f = Map.take(f, ["file", "additions", "deletions", "patch", "status"])
+
+          case f["patch"] do
+            patch when is_binary(patch) ->
+              {patch, hidden} = Beamcode.Patch.trim(patch)
+              Map.merge(f, %{"patch" => patch, "hidden" => hidden})
+
+            _ ->
+              f
+          end
+        end
 
       _ ->
         []
@@ -485,6 +526,15 @@ defmodule BeamcodeWeb.SessionChannel do
     do: assign(socket, refetch_ref: Process.send_after(self(), :refetch, @refetch_after))
 
   defp schedule_refetch(socket), do: socket
+
+  # While a read is out, one more follows it, so the last change is never missed.
+  defp schedule_diff(%{assigns: %{diff_ref: nil}} = socket),
+    do: assign(socket, diff_ref: Process.send_after(self(), :load_diff, @diff_after))
+
+  defp schedule_diff(%{assigns: %{diff_ref: :loading}} = socket),
+    do: assign(socket, diff_again: true)
+
+  defp schedule_diff(socket), do: socket
 
   # Pushes the status when it changed, or always with `force` (permissions moved).
   defp push_status(socket, force) do

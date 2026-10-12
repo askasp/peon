@@ -137,8 +137,11 @@ export type DiffFile = {
   file: string;
   additions: number;
   deletions: number;
+  /** Cut to the changes and a few lines around them. */
   patch?: string;
   status?: string;
+  /** Patch lines left out past the server's cap. */
+  hidden?: number;
 };
 
 /** A model to pick; `variants` are how hard it can think ("low", "high", …). */
