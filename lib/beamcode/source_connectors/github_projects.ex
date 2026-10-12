@@ -388,11 +388,27 @@ defmodule Beamcode.SourceConnectors.GithubProjects do
     req = Beamcode.SourceConnector.req(url: @url, auth: {:bearer, token})
 
     case Req.post(req, json: %{query: query, variables: variables}) do
-      {:ok, %{status: 200, body: %{"errors" => [e | _]}}} -> {:error, "GitHub: #{e["message"]}"}
+      {:ok, %{status: 200, body: %{"errors" => [e | _]}}} -> {:error, github_error(e["message"])}
       {:ok, %{status: 200, body: %{"data" => data}}} -> {:ok, data}
       {:ok, %{status: 401}} -> {:error, "GitHub didn't accept the token. Connect again."}
       {:ok, %{status: s, body: b}} -> {:error, "GitHub answered #{s}: #{message(b)}"}
       {:error, e} -> {:error, "GitHub: #{Exception.message(e)}"}
+    end
+  end
+
+  # Turn GitHub's terse GraphQL errors into what to do about them. The common
+  # one: a token that can't read Projects because it lacks the scope.
+  defp github_error(message) do
+    low = String.downcase(message || "")
+
+    if String.contains?(low, "required scopes") or String.contains?(low, "read:project") or
+         String.contains?(low, "resource not accessible") or
+         String.contains?(low, "not accessible by") or
+         String.contains?(low, "insufficient") do
+      "The GitHub token can't read Projects. Give it the read:project scope (a classic token) " <>
+        "or Projects: Read (a fine-grained token), then reconnect. GitHub said: #{message || "forbidden"}"
+    else
+      "GitHub: #{message || "unknown error"}"
     end
   end
 

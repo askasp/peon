@@ -376,6 +376,32 @@ defmodule Beamcode.SourceSyncTest do
     assert [%{error: "GitHub Projects isn't connected" <> _}] = DataSources.list(project)
   end
 
+  test "a token without the project scope gets an honest error", %{project: _project} do
+    # The account check still works; only listing projects is refused.
+    Req.Test.stub(Beamcode.SourceConnector, fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      %{"query" => query} = Jason.decode!(body)
+
+      if String.contains?(query, "projectsV2") do
+        Req.Test.json(conn, %{
+          "errors" => [
+            %{
+              "message" =>
+                "Your token has not been granted the required scopes to execute this query. " <>
+                  "The 'projectsV2' field requires one of the following scopes: ['read:project']"
+            }
+          ]
+        })
+      else
+        Req.Test.json(conn, %{"data" => %{"viewer" => %{"login" => "aksel"}}})
+      end
+    end)
+
+    assert {:error, message} = DataSources.choices("github.projects")
+    assert message =~ "read:project scope"
+    assert message =~ "GitHub said:"
+  end
+
   test "the agent acts through the gateway tools, with the same levels", %{project: project} do
     :ok = DataSources.refresh(project, "github")
     assert [%{name: "source_act"}, %{name: "source_sync"}] = SourceTools.mcp_tools(project)

@@ -21,6 +21,14 @@ const tokenHint: Record<string, string> = {
   front: "A Front API token (Settings → Developers → API tokens)",
 };
 
+// Connectors whose pick can be typed by hand, and the shape to type. GitHub
+// only lists your own projects and the orgs you belong to, so a project the
+// token can still read (an org you're just a collaborator on, or one past the
+// first page) has to be named.
+const manualHint: Record<string, string> = {
+  "github.projects": "owner/12",
+};
+
 /**
  * Where a Dataset's rows come from: None (they live only here) or a connected
  * service, then which project or inbox. A service that isn't connected yet
@@ -41,6 +49,7 @@ export function SourcePicker({
   const [choices, setChoices] = useState<Record<string, { account: string; choices: Choice[] }>>({});
   const [loading, setLoading] = useState<string | null>(null);
   const [token, setToken] = useState("");
+  const [manual, setManual] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,8 +88,16 @@ export function SourcePicker({
   function pick(c: Connector) {
     setOpen(c.id);
     setError(null);
+    // Keep a typed project if this service is already the pick; otherwise start blank.
+    setManual(value?.connector === c.id && !value.pending ? value.choice : "");
     if (value?.connector !== c.id) onChange({ connector: c.id, choice: "", label: "", pending: true });
     if (c.connected && !choices[c.id]) load(c.id);
+  }
+
+  // A project or inbox named instead of listed (GitHub: owner/12).
+  function takeManual(c: Connector) {
+    const choice = manual.trim();
+    if (choice) onChange({ connector: c.id, choice, label: choice });
   }
 
   return (
@@ -148,7 +165,7 @@ export function SourcePicker({
               ) : null}
               {isOpen && got ? (
                 <View style={st.inner}>
-                  {got.choices.length === 0 ? (
+                  {got.choices.length === 0 && !manualHint[c.id] ? (
                     <Text style={st.sub}>Nothing to sync here yet.</Text>
                   ) : (
                     got.choices.map((x) => {
@@ -157,7 +174,10 @@ export function SourcePicker({
                         <Tap
                           key={x.id || "all"}
                           testID={`choice-${x.id || "all"}`}
-                          onPress={() => onChange({ connector: c.id, choice: x.id, label: x.label })}
+                          onPress={() => {
+                            setManual("");
+                            onChange({ connector: c.id, choice: x.id, label: x.label });
+                          }}
                           style={[st.choice, on && st.choiceOn]}
                         >
                           <View style={{ flex: 1 }}>
@@ -173,6 +193,38 @@ export function SourcePicker({
                       );
                     })
                   )}
+                </View>
+              ) : null}
+              {isOpen && c.connected && manualHint[c.id] ? (
+                <View style={st.inner}>
+                  <Text style={st.sub}>
+                    {got && got.choices.length
+                      ? "Don't see it? "
+                      : "None listed — the token may not cover it. "}
+                    Type the project as {manualHint[c.id]}.
+                  </Text>
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <TextInput
+                      testID="source-manual"
+                      value={manual}
+                      onChangeText={setManual}
+                      placeholder={manualHint[c.id]}
+                      placeholderTextColor={color.faint}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onSubmitEditing={() => takeManual(c)}
+                      style={st.input}
+                    />
+                    <Tap
+                      testID="source-manual-use"
+                      haptic
+                      disabled={!manual.trim()}
+                      onPress={() => takeManual(c)}
+                      style={[st.connect, !manual.trim() && { opacity: 0.4 }]}
+                    >
+                      <Text style={st.connectText}>Use</Text>
+                    </Tap>
+                  </View>
                 </View>
               ) : null}
             </View>
