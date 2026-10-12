@@ -20,7 +20,8 @@ export type IconName =
   | "send"
   | "keyboard"
   | "close"
-  | "lock";
+  | "lock"
+  | "branch";
 
 type Props = { name: IconName; size?: number; color?: string; strokeWidth?: number };
 
@@ -34,6 +35,15 @@ export function Icon({ name, size = 24, color = "currentColor", strokeWidth }: P
   };
 
   switch (name) {
+    case "branch":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Circle cx={6} cy={5} r={2} {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+          <Circle cx={6} cy={19} r={2} {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+          <Circle cx={18} cy={7} r={2} {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+          <Path d="M6 7v10M18 9c0 5-12 3-12 8" {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+        </Svg>
+      );
     case "lock":
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">

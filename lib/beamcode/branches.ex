@@ -97,8 +97,12 @@ defmodule Beamcode.Branches do
     |> Enum.find_value(fn block ->
       lines = String.split(block, "\n", trim: true)
 
-      if "branch refs/heads/" <> branch in lines,
-        do: Enum.find_value(lines, &match?("worktree " <> _, &1) && String.trim_leading(&1, "worktree "))
+      if ("branch refs/heads/" <> branch) in lines,
+        do:
+          Enum.find_value(
+            lines,
+            &(match?("worktree " <> _, &1) && String.trim_leading(&1, "worktree "))
+          )
     end)
   end
 

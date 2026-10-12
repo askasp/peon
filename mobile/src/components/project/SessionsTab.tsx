@@ -4,6 +4,7 @@ import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Badge, Dot, Empty, ErrorLine, kbProps, Loading, Tap } from "../ui";
 import { Icon } from "../Icon";
+import { PickSheet } from "../Sheet";
 import { ask } from "@/lib/peon";
 import { useLoad } from "@/lib/useLoad";
 import { ago } from "@/lib/time";
@@ -24,6 +25,12 @@ function dayLabel(ms: number | null): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
 }
 
+type Branch = { name: string; worktree: string | null; remote: boolean; updated: number };
+
+// Where a new chat starts: a fresh worktree, the Folder itself, or a branch's worktree.
+const NEW = "\u0000new";
+const MAIN = "\u0000main";
+
 type Row = { kind: "day"; key: string; label: string } | { kind: "session"; key: string; s: SessionSummary };
 
 /** A Folder's chats, newest first by day, under a box that starts a new one. */
@@ -33,6 +40,24 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
   const [text, setText] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Code Folders: null follows the header's "New worktree" switch.
+  const code = ctx.project.kind === "code";
+  const [picked, setWhere] = useState<string | null>(null);
+  const where = picked ?? (ctx.project.always_worktree ? NEW : MAIN);
+  const [picking, setPicking] = useState(false);
+  const [branches, setBranches] = useState<Branch[] | null>(null);
+  const main = ctx.project.default_branch ?? "main";
+  function openPicker() {
+    setPicking(true);
+    ctx
+      .call<{ branches: Branch[] }>("branches", {}, 60000)
+      .then((r) => setBranches(r.branches))
+      .catch((e) => {
+        setBranches([]);
+        setError(e.message);
+      });
+  }
+  const whereLabel = where === NEW ? "New worktree" : where === MAIN ? main : where;
   const { data, error: loadError } = useLoad(
     () => ctx.call<{ sessions: SessionSummary[] }>("sessions").then((r) => r.sessions),
     [ctx.changed],
@@ -53,8 +78,13 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
     try {
       const { session_id } = await ask<{ session_id: string }>(
         "new_session",
-        { project_id: ctx.project.id, text },
-        60000,
+        {
+          project_id: ctx.project.id,
+          text,
+          ...(!code ? {} : where === NEW || where === MAIN ? { worktree: where === NEW } : { branch: where }),
+        },
+        // Checking a branch out in a new worktree can take a while.
+        120000,
       );
       setText("");
       router.push(`/session/${session_id}`);
@@ -85,6 +115,21 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
               returnKeyType="send"
               {...kbProps("search")}
             />
+            {code ? (
+              <Tap
+                testID="start-where"
+                onPress={openPicker}
+                disabled={starting}
+                style={st.where}
+                aria-label="Where the chat starts"
+              >
+                <Icon name="branch" size={13} color={where === NEW ? color.accentText : color.textDim} />
+                <Text style={st.whereText} numberOfLines={1}>
+                  {whereLabel}
+                </Text>
+                <Text style={st.whereCaret}>▾</Text>
+              </Tap>
+            ) : null}
             {text.trim() ? (
               <Tap testID="new-session" onPress={newSession} disabled={starting} style={st.send}>
                 <Icon name="send" size={14} color={color.accentInk} />
@@ -96,6 +141,34 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
         </View>
       ) : null}
       <ErrorLine message={error ?? loadError} />
+      <PickSheet
+        visible={picking}
+        title="Start the chat on"
+        items={[
+          { key: NEW, label: "New worktree", detail: `from ${main}`, active: where === NEW },
+          { key: MAIN, label: main, detail: "the Folder itself, no worktree", active: where === MAIN },
+          ...(branches ?? []).map((b) => ({
+            key: b.name,
+            label: b.name,
+            detail: [
+              b.worktree
+                ? `open worktree ${b.worktree}`
+                : b.remote
+                  ? "remote · new worktree"
+                  : "new worktree",
+              ago(b.updated, true),
+            ].join(" · "),
+            active: where === b.name,
+          })),
+          ...(branches == null ? [{ key: "\u0000loading", label: "Loading branches…" }] : []),
+        ]}
+        onClose={() => setPicking(false)}
+        onPick={(k) => {
+          if (k === "\u0000loading") return;
+          setPicking(false);
+          setWhere(k);
+        }}
+      />
       <FlatList
         data={rows}
         keyExtractor={(r) => r.key}
@@ -175,6 +248,18 @@ const st = StyleSheet.create({
     paddingRight: 6,
   },
   plus: { fontSize: 16, color: color.accentText },
+  where: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    maxWidth: 240,
+    height: 30,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: color.field,
+  },
+  whereText: { flexShrink: 1, fontSize: 12.5, color: color.textSoft },
+  whereCaret: { fontSize: 10, color: color.muted },
   hint: { fontSize: 12, color: "#5d5d66", paddingRight: 6 },
   startInput: { flex: 1, height: 42, color: color.text, fontSize: 14, outlineStyle: "none" } as any,
   send: {

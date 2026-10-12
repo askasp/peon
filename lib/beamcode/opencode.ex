@@ -302,6 +302,6 @@ defmodule Beamcode.Opencode do
       |> Map.new()
       |> Map.put(:projectID, oc_project_id)
 
-    request(:post, "/api/worktree", json: body)
+    request(:post, "/api/worktree", json: body) |> data()
   end
 end
