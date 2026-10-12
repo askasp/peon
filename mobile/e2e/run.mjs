@@ -94,9 +94,16 @@ const idle = (page, timeout = 180000) =>
     timeout,
   );
 
+// The web sends on Enter (there is no send button); the phone keeps its button.
+async function sendMessage(page) {
+  const button = page.locator('[data-testid="send"]').locator("visible=true");
+  if (await button.count()) await button.first().click();
+  else await visible(page, '[data-testid="reply"]').first().press("Enter");
+}
+
 async function sendInSession(page, text) {
   await visible(page, '[data-testid="reply"]').first().fill(text);
-  await visible(page, '[data-testid="send"]').first().click();
+  await sendMessage(page);
 }
 
 // ── Desktop: every feature ────────────────────────────────────────────────
@@ -296,7 +303,7 @@ async function desktop() {
 
   await step("session: send the image, it shows in the transcript", async () => {
     await visible(page, '[data-testid="reply"]').first().fill("What colour is this image? One word.");
-    await visible(page, '[data-testid="send"]').first().click();
+    await sendMessage(page);
     await waitFor(
       async () => (await byText(page, "What colour is this image? One word.").count()) > 0,
       "not sent",

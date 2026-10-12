@@ -224,34 +224,27 @@ export function SessionComposer(p: Props) {
     </Tap>
   ) : null;
 
-  const addButton = (inline: boolean) => (
-    <Tap
-      style={inline ? st.side : [st.round, { backgroundColor: color.field }]}
-      onPress={attach}
-      testID="attach"
-      aria-label="Add a file"
-    >
-      <Text style={inline ? st.sidePlus : st.plus}>+</Text>
+  // The + sits inside the box, on both the web and the phone.
+  const addButton = (
+    <Tap style={st.side} onPress={attach} testID="attach" aria-label="Add a file">
+      <Text style={st.sidePlus}>+</Text>
     </Tap>
   );
 
-  const sendButton = (inline: boolean) => (
+  // Only the phone shows a send button; the web sends on Enter.
+  const sendButton = (
     <Tap
       haptic
-      style={
-        inline
-          ? [st.side, canSend ? st.sideGo : { backgroundColor: color.raised }]
-          : [st.round, canSend ? st.go : { backgroundColor: color.raised }]
-      }
+      style={[st.side, canSend ? st.sideGo : { backgroundColor: color.raised }]}
       onPress={() => send(draft)}
       disabled={sending || !canSend}
       testID="send"
       aria-label="Send"
     >
       {sending ? (
-        <ActivityIndicator size="small" color={inline ? color.textDim : color.accentInk} />
+        <ActivityIndicator size="small" color={color.textDim} />
       ) : (
-        <Icon name="send" size={inline ? 16 : 18} color={canSend ? color.accentInk : color.faint} />
+        <Icon name="send" size={16} color={canSend ? color.accentInk : color.faint} />
       )}
     </Tap>
   );
@@ -295,23 +288,12 @@ export function SessionComposer(p: Props) {
       ) : null}
 
       <View style={st.row}>
-        {wide ? (
-          <>
-            {addButton(false)}
-            <View style={st.pill}>
-              {field}
-              {mic}
-            </View>
-            {sendButton(false)}
-          </>
-        ) : (
-          <View style={[st.pill, st.pillFull]}>
-            {addButton(true)}
-            {field}
-            {mic}
-            {sendButton(true)}
-          </View>
-        )}
+        <View style={[st.pill, st.pillFull]}>
+          {addButton}
+          {field}
+          {mic}
+          {wide ? null : sendButton}
+        </View>
       </View>
 
       <View style={[st.chips, !wide && st.rowIn]}>
@@ -439,8 +421,7 @@ const st = StyleSheet.create({
     fontSize: 15,
     outlineStyle: "none",
   } as any,
-  round: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
-  // Phone: the + and send live inside the box, small, so it fills the width.
+  // The + and send live inside the box, small, so it fills the width.
   pillFull: { paddingLeft: 5 },
   side: {
     width: 32,
@@ -452,8 +433,6 @@ const st = StyleSheet.create({
   },
   sidePlus: { fontSize: 20, color: color.textDim, marginTop: -1 },
   sideGo: { backgroundColor: color.accent },
-  go: { backgroundColor: color.accent },
-  plus: { fontSize: 22, color: color.textDim, marginTop: -2 },
   chips: { flexDirection: "row", gap: 6, paddingLeft: 52, alignItems: "center" },
   chip: { paddingHorizontal: 8, height: 24, borderRadius: 6, justifyContent: "center", maxWidth: 220 },
   chipText: { fontSize: 12, color: color.muted },
