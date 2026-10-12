@@ -11,6 +11,12 @@ defmodule BeamcodeWeb.ProjectChannel do
     * `tickets` → `{tickets}`: the Folder's `tk` tasks. `ticket_create`
       `{params}` queues one, `ticket_status` `{id, status}` moves it, and
       `ticket_note` `{id, text}` adds progress; each replies with `{tickets}`
+    * `queue` `{view?}` → `{queue}`: a Code Folder's tasks by tree (see
+      `Beamcode.TaskQueue.board/3`; `view` is a chat whose tree to list even
+      when empty). `queue_add` `{ref, titles, chain?}`, `queue_start`,
+      `queue_pause`, `queue_cancel`, `queue_done`, `queue_delete` `{ref, id}`, `queue_edit`
+      `{ref, id, params}`, `queue_dep` `{ref, id, dep, on}` and `queue_auto`
+      `{on}` each reply with `{queue}` (and `ids` / `session_id`)
     * `run` `{inputs?}` → `{session_id}` (routines)
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
@@ -51,6 +57,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     Routines,
     Schedules,
     Sessions,
+    TaskQueue,
     Tickets,
     Vault,
     Worktrees
@@ -205,6 +212,83 @@ defmodule BeamcodeWeb.ProjectChannel do
   def handle_in("ticket_note", %{"id" => id, "text" => text}, socket)
       when is_binary(id) and is_binary(text) do
     ticket_edit(socket, &Tickets.note(&1, id, text))
+  end
+
+  ## Queue (tk tasks by worktree, Code Folders)
+
+  def handle_in("queue", params, socket) do
+    %{project: project, user: user} = socket.assigns
+    ChannelTasks.reply_async(socket, fn -> queue_reply(project, user, params, %{}) end)
+  end
+
+  def handle_in("queue_add", %{"ref" => ref, "titles" => titles} = params, socket)
+      when is_binary(ref) and is_list(titles) do
+    queue_edit(socket, params, fn project, user ->
+      with {:ok, ids} <- TaskQueue.add(project, user, ref, titles, params["chain"] == true),
+           do: {:ok, %{ids: ids}}
+    end)
+  end
+
+  def handle_in("queue_start", %{"ref" => ref, "id" => id} = params, socket)
+      when is_binary(ref) and is_binary(id) do
+    queue_edit(socket, params, fn project, user ->
+      with {:ok, sid} <- TaskQueue.start(project, user, ref, id), do: {:ok, %{session_id: sid}}
+    end)
+  end
+
+  def handle_in("queue_pause", %{"ref" => ref, "id" => id} = params, socket)
+      when is_binary(ref) and is_binary(id),
+      do: queue_edit(socket, params, &TaskQueue.pause(&1, &2, ref, id))
+
+  def handle_in("queue_done", %{"ref" => ref, "id" => id} = params, socket)
+      when is_binary(ref) and is_binary(id),
+      do: queue_edit(socket, params, &TaskQueue.done(&1, &2, ref, id))
+
+  def handle_in("queue_cancel", %{"ref" => ref, "id" => id} = params, socket)
+      when is_binary(ref) and is_binary(id),
+      do: queue_edit(socket, params, &TaskQueue.cancel(&1, &2, ref, id))
+
+  def handle_in("queue_delete", %{"ref" => ref, "id" => id} = params, socket)
+      when is_binary(ref) and is_binary(id) do
+    queue_edit(socket, params, fn project, user ->
+      with {:ok, tree} <- TaskQueue.tree(project, user, ref), do: Tickets.delete(tree, id)
+    end)
+  end
+
+  def handle_in("queue_edit", %{"ref" => ref, "id" => id, "params" => attrs} = params, socket)
+      when is_binary(ref) and is_binary(id) and is_map(attrs) do
+    attrs = Map.take(attrs, ["title", "body", "priority"])
+
+    queue_edit(socket, params, fn project, user ->
+      with {:ok, tree} <- TaskQueue.tree(project, user, ref), do: Tickets.edit(tree, id, attrs)
+    end)
+  end
+
+  def handle_in(
+        "queue_dep",
+        %{"ref" => ref, "id" => id, "dep" => dep, "on" => on} = params,
+        socket
+      )
+      when is_binary(ref) and is_binary(id) and is_binary(dep) and is_boolean(on) do
+    queue_edit(socket, params, fn project, user ->
+      with {:ok, tree} <- TaskQueue.tree(project, user, ref), do: Tickets.dep(tree, id, dep, on)
+    end)
+  end
+
+  def handle_in("queue_auto", %{"on" => on} = params, socket) when is_boolean(on) do
+    %{project: project, user: user} = socket.assigns
+
+    case ProjectTools.update_settings(project, %{"queue_auto" => on}, user) do
+      {:ok, project, _msg} ->
+        socket = assign(socket, project: project)
+        ChannelTasks.reply_async(socket, fn -> queue_reply(project, user, params, %{}) end)
+
+      {_, _project, msg} ->
+        {:reply, {:error, %{message: msg}}, socket}
+
+      {:error, msg} ->
+        {:reply, {:error, %{message: msg}}, socket}
+    end
   end
 
   ## Skills and files
@@ -531,7 +615,8 @@ defmodule BeamcodeWeb.ProjectChannel do
   end
 
   def handle_in("save_settings", %{"params" => params}, socket) when is_map(params) do
-    params = Map.take(params, ["scope", "always_worktree", "protect_default_branch"])
+    params =
+      Map.take(params, ["scope", "always_worktree", "protect_default_branch", "queue_auto"])
 
     case ProjectTools.update_settings(socket.assigns.project, params, socket.assigns.user) do
       {result, project, msg} when result in [:ok, :reverted] ->
@@ -727,6 +812,34 @@ defmodule BeamcodeWeb.ProjectChannel do
         case fun.(project) do
           {:error, reason} -> error(reason)
           _ -> ticket_reply(project)
+        end
+      else
+        error("Only the folder's owner can change its tasks.")
+      end
+    end)
+  end
+
+  defp queue_reply(project, user, params, extra) do
+    view = if is_binary(params["view"]), do: params["view"]
+
+    case TaskQueue.board(project, user, ref: view) do
+      {:ok, board} -> {:ok, Map.put(extra, :queue, board)}
+      {:error, reason} -> error(reason)
+    end
+  end
+
+  # A change to the Folder's queue (owners and admins), replying with the new
+  # queue. `fun` gets the project and user: `:ok`, `{:ok, extra}` or an error.
+  defp queue_edit(socket, params, fun) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      if ProjectTools.can_edit?(project, user) do
+        case fun.(project, user) do
+          :ok -> queue_reply(project, user, params, %{})
+          {:ok, extra} when is_map(extra) -> queue_reply(project, user, params, extra)
+          {:error, reason} -> error(reason)
+          other -> error(inspect(other))
         end
       else
         error("Only the folder's owner can change its tasks.")

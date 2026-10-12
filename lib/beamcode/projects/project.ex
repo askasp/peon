@@ -22,6 +22,8 @@ defmodule Beamcode.Projects.Project do
     # No pushes to main/master/default_branch (see Beamcode.BranchGuard).
     field :protect_default_branch, :boolean, default: false
     field :default_branch, :string
+    # Code Folders: a worktree starts its next ready task when one finishes.
+    field :queue_auto, :boolean, default: true
     belongs_to :owner, Beamcode.Accounts.User
     timestamps(type: :utc_datetime)
   end
@@ -53,7 +55,7 @@ defmodule Beamcode.Projects.Project do
 
   def settings_changeset(project, attrs) do
     project
-    |> cast(attrs, [:scope, :always_worktree, :protect_default_branch])
+    |> cast(attrs, [:scope, :always_worktree, :protect_default_branch, :queue_auto])
     |> validate_inclusion(:scope, @scopes)
   end
 

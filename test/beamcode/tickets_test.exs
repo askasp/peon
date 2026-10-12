@@ -32,6 +32,7 @@ defmodule Beamcode.TicketsTest do
 
   setup %{tmp_dir: dir} do
     commands = start_supervised!({Agent, fn -> [] end})
+    output = start_supervised!({Agent, fn -> "tkt-9\n" end}, id: :output)
 
     setup_stub(fn conn ->
       case {conn.method, conn.request_path} do
@@ -54,13 +55,14 @@ defmodule Beamcode.TicketsTest do
           data(conn, %{"status" => "exited", "exit" => 0})
 
         {"GET", "/api/shell/sh1/output"} ->
-          data(conn, %{"output" => "tkt-9\n"})
+          data(conn, %{"output" => Agent.get(output, & &1)})
       end
     end)
 
     %{
       project: project_fixture(%{name: "tk", kind: "code", directory: dir}, nil),
-      commands: commands
+      commands: commands,
+      output: output
     }
   end
 
@@ -98,5 +100,44 @@ defmodule Beamcode.TicketsTest do
     assert {:error, _} = Tickets.set_status(project, "tkt-9", "sideways")
     assert {:error, _} = Tickets.note(project, "tkt-9", "   ")
     assert {:error, _} = Tickets.set_status(project, "../etc", "open")
+  end
+
+  test "reads every tree's tasks in one shell call", %{project: project, output: output} do
+    other =
+      String.replace(@ticket, "tkt-1", "tkt-2")
+      |> String.replace("status: open", "status: closed")
+
+    Agent.update(output, fn _ ->
+      "\x1eD /main\n\x1eD /wt/brave\n\x1eF\n" <> other <> "\x1eF\n" <> @ticket
+    end)
+
+    assert %{"/main" => [], "/wt/brave" => [a, b]} =
+             Tickets.list_trees(project, ["/main", "/wt/brave"])
+
+    assert {a["id"], b["id"]} == {"tkt-1", "tkt-2"}
+  end
+
+  test "rewrites title, body, priority and the paused tag, keeping notes" do
+    assert {:ok, next} =
+             Tickets.rewrite(@ticket, %{
+               "title" => "Ship it now",
+               "body" => "New body.",
+               "priority" => 0,
+               "paused" => true
+             })
+
+    t = Tickets.parse(next)
+    assert t["title"] == "Ship it now"
+    assert t["body"] == "New body."
+    assert t["priority"] == 0
+    assert t["tags"] == ["ui", "api", "paused"]
+    assert t["notes"] == [%{"at" => "2026-01-03T00:00:00Z", "text" => "First note"}]
+    assert t["id"] == "tkt-1"
+
+    assert {:ok, again} = Tickets.rewrite(next, %{"paused" => false})
+    assert Tickets.parse(again)["tags"] == ["ui", "api"]
+
+    assert {:error, _} = Tickets.rewrite(@ticket, %{"title" => " "})
+    assert {:error, _} = Tickets.rewrite(@ticket, %{"priority" => 9})
   end
 end

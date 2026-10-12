@@ -103,6 +103,175 @@ defmodule Beamcode.Tickets do
     end
   end
 
+  @doc """
+  The tasks in each folder of `dirs` (a Folder's main and its worktrees), read
+  in one shell call: `%{dir => [ticket]}`, each list sorted like `list/1`.
+  """
+  def list_trees(_project, []), do: %{}
+
+  def list_trees(%Project{} = project, dirs) do
+    script =
+      Enum.map_join(dirs, "\n", fn d ->
+        "printf '\\036D %s\\n' #{q(d)}; " <>
+          "for f in #{q(d)}/#{@dir}/*.md; do [ -f \"$f\" ] && printf '\\036F\\n' && cat \"$f\"; done"
+      end)
+
+    case Opencode.run_shell(project.directory, script <> "\ntrue", 30_000) do
+      {:ok, 0, out} -> parse_trees(out)
+      _ -> %{}
+    end
+  end
+
+  defp parse_trees(out) do
+    out
+    |> String.split("\x1eD ", trim: true)
+    |> Map.new(fn chunk ->
+      [dir | files] = String.split(chunk, "\x1eF\n")
+
+      tickets =
+        files
+        |> Enum.map(&parse/1)
+        |> Enum.filter(& &1["id"])
+        |> Enum.sort_by(&{-rank(&1["status"]), &1["priority"], &1["created"]})
+
+      {String.trim(dir), tickets}
+    end)
+  end
+
+  @doc "Makes task `id` wait on `dep` (`on: true`) or stop waiting on it."
+  def dep(%Project{} = project, id, dep, on) when is_binary(id) and is_binary(dep) do
+    with :ok <- valid_id(id), :ok <- valid_id(dep) do
+      cmd = if on, do: "dep", else: "undep"
+      tk(project, "#{cmd} #{q(id)} #{q(dep)}")
+    end
+  end
+
+  @doc "Deletes task `id`'s file."
+  def delete(%Project{} = project, id) when is_binary(id) do
+    with :ok <- valid_id(id) do
+      case Opencode.run_shell(project.directory, "rm -f #{q(path(id))}", 30_000) do
+        {:ok, 0, _} -> :ok
+        {:ok, _, out} -> {:error, String.trim(out)}
+        error -> error
+      end
+    end
+  end
+
+  @doc "Task `id`'s file as it is, to move it to another tree with `put/3`."
+  def raw(%Project{} = project, id) when is_binary(id) do
+    with :ok <- valid_id(id), do: Opencode.read_file(project.directory, path(id))
+  end
+
+  @doc "Writes a task file read with `raw/2`."
+  def put(%Project{} = project, id, raw) when is_binary(id) and is_binary(raw) do
+    with :ok <- valid_id(id),
+         {:ok, _} <- Opencode.write_file(project.directory, path(id), raw),
+         do: :ok
+  end
+
+  @doc """
+  Changes task `id`'s file: `title`, `body` (the text above `## Notes`),
+  `priority` (0-4) and `paused` (a `paused` tag) where given. `tk` has no
+  command for these, so the file is rewritten; everything else stays.
+  """
+  def edit(%Project{} = project, id, attrs) when is_binary(id) and is_map(attrs) do
+    with :ok <- valid_id(id),
+         {:ok, raw} <- Opencode.read_file(project.directory, path(id)),
+         {:ok, next} <- rewrite(raw, attrs) do
+      if next == raw, do: :ok, else: put(project, id, next)
+    end
+  end
+
+  @doc false
+  def rewrite(raw, attrs) do
+    raw = String.replace(raw, "\r\n", "\n")
+    {front, rest} = split_front(raw)
+    title = attrs |> Map.get("title") |> trimmed()
+    body = attrs |> Map.get("body") |> then(&(&1 && String.trim(to_string(&1))))
+
+    cond do
+      Map.has_key?(attrs, "title") and title in [nil, ""] ->
+        {:error, "Give the task a title."}
+
+      Map.has_key?(attrs, "priority") and attrs["priority"] not in [0, 1, 2, 3, 4] ->
+        {:error, "Priority is 0 (highest) to 4."}
+
+      true ->
+        front =
+          front
+          |> put_front("priority", attrs["priority"])
+          |> put_paused(attrs["paused"])
+
+        rest = rest |> put_title(title) |> put_body(body)
+        {:ok, "---\n" <> front <> "\n---\n" <> rest}
+    end
+  end
+
+  defp trimmed(nil), do: nil
+  defp trimmed(v), do: v |> to_string() |> String.trim()
+
+  defp put_front(front, _key, nil), do: front
+
+  defp put_front(front, key, value) do
+    line = "#{key}: #{value}"
+    lines = String.split(front, "\n")
+
+    if Enum.any?(lines, &String.starts_with?(&1, key <> ":")),
+      do:
+        Enum.map_join(lines, "\n", &if(String.starts_with?(&1, key <> ":"), do: line, else: &1)),
+      else: front <> "\n" <> line
+  end
+
+  defp put_paused(front, nil), do: front
+
+  defp put_paused(front, paused) do
+    tags = front |> parse_front() |> Map.get("tags", [])
+    tags = if is_list(tags), do: tags, else: []
+    tags = if paused, do: Enum.uniq(tags ++ ["paused"]), else: tags -- ["paused"]
+    put_front(front, "tags", "[" <> Enum.join(tags, ", ") <> "]")
+  end
+
+  defp put_title(rest, nil), do: rest
+
+  defp put_title(rest, title) do
+    if Regex.match?(~r/^# .*$/m, rest),
+      do: Regex.replace(~r/^# .*$/m, rest, "# " <> title, global: false),
+      else: "# " <> title <> "\n\n" <> rest
+  end
+
+  # The body sits between the `# Title` line and the first `## ` section.
+  defp put_body(rest, nil), do: rest
+
+  defp put_body(rest, body) do
+    {head, tail} =
+      case Regex.split(~r/^## /m, rest, parts: 2) do
+        [head, tail] -> {head, "## " <> tail}
+        [head] -> {head, ""}
+      end
+
+    title_line =
+      head |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "# ")) || ""
+
+    pre =
+      head |> String.split("\n") |> Enum.take_while(&(not String.starts_with?(&1, "# ")))
+
+    head =
+      Enum.join(pre, "\n") <>
+        title_line <> "\n\n" <> if(body == "", do: "", else: body <> "\n\n")
+
+    String.trim_leading(head, "\n") <> tail
+  end
+
+  defp path(id), do: @dir <> "/" <> id <> ".md"
+
+  defp tk(project, args) do
+    case Opencode.run_shell(project.directory, "tk " <> args, 30_000) do
+      {:ok, 0, _} -> :ok
+      {:ok, _, out} -> {:error, String.trim(out)}
+      error -> error
+    end
+  end
+
   defp valid_id(id) do
     if Regex.match?(~r/^[\w][\w.-]*$/, id) and not String.contains?(id, ".."),
       do: :ok,
@@ -111,7 +280,8 @@ defmodule Beamcode.Tickets do
 
   ## Parsing: frontmatter plus `# Title`, body and `## Notes`
 
-  defp parse(body) do
+  @doc "A ticket file's frontmatter, title, body and notes."
+  def parse(body) do
     body = String.replace(body, "\r\n", "\n")
     {front, rest} = split_front(body)
     attrs = parse_front(front)
@@ -124,7 +294,7 @@ defmodule Beamcode.Tickets do
       "type" => attrs["type"] || "task",
       "priority" => attrs["priority"] || 2,
       "assignee" => attrs["assignee"],
-      "tags" => attrs["tags"] || [],
+      "tags" => List.wrap(attrs["tags"] || []),
       "deps" => attrs["deps"] || [],
       "created" => attrs["created"],
       "body" => text,
