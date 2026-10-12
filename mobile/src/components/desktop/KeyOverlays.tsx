@@ -10,6 +10,7 @@ const WHICH: [string, [string, string][]][] = [
     "Navigate",
     [
       ["1–9", "Sidebar item"],
+      ["a–z", "Lettered row, tab or box"],
       ["n p", "Next / previous ↻"],
       ["l", "Last place"],
       ["w", "Switch to…"],
@@ -20,7 +21,7 @@ const WHICH: [string, [string, string][]][] = [
   [
     "Act",
     [
-      ["c", "New session"],
+      ["c", "New chat"],
       ["r", "Run procedure"],
       [",", "Rename session"],
     ],
@@ -52,6 +53,19 @@ export function KeyOverlays() {
 
   return (
     <>
+      {kb.mode === "prefix"
+        ? kb.hints.map((h) =>
+            h.label.startsWith(kb.typed) ? (
+              <View key={h.label} style={[st.badge, { left: h.x, top: h.y }]} pointerEvents="none">
+                <Text style={st.badgeText}>
+                  <Text style={{ opacity: 0.45 }}>{kb.typed}</Text>
+                  {h.label.slice(kb.typed.length)}
+                </Text>
+              </View>
+            ) : null,
+          )
+        : null}
+
       {kb.which && kb.mode === "prefix" ? (
         <View style={st.which} pointerEvents="none">
           {WHICH.map(([title, rows]) => (
@@ -182,6 +196,17 @@ const st = StyleSheet.create({
     backgroundColor: color.card,
     zIndex: 90,
   },
+  badge: {
+    position: "absolute",
+    zIndex: 95,
+    paddingHorizontal: 5,
+    borderRadius: 4,
+    backgroundColor: color.accent,
+    shadowColor: "#000",
+    shadowOpacity: 0.4,
+    shadowRadius: 4,
+  },
+  badgeText: { fontSize: 11, fontWeight: "700", fontFamily: font.mono, color: color.accentInk },
   whichTitle: {
     fontSize: 11,
     color: color.faint,

@@ -30,8 +30,22 @@ type KbState = {
   zoom: boolean;
   /** Keycast: the last keys pressed, shown in a corner when turned on. */
   cast: string[];
+  /** Letters on the page's rows, tabs and text boxes while the prefix is armed. */
+  hints: Hint[];
+  /** The first letter of a two-letter hint, once typed. */
+  typed: string;
 };
-let kb: KbState = { mode: null, which: false, help: false, toast: null, zoom: false, cast: [] };
+export type Hint = { label: string; x: number; y: number };
+let kb: KbState = {
+  mode: null,
+  which: false,
+  help: false,
+  toast: null,
+  zoom: false,
+  cast: [],
+  hints: [],
+  typed: "",
+};
 const listeners = new Set<() => void>();
 const setKb = (patch: Partial<KbState>) => {
   kb = { ...kb, ...patch };
@@ -360,7 +374,12 @@ function openGlobal(keys: Keys, key: string) {
 }
 
 async function newSession() {
-  // On a project page its own button, so its "New worktree" toggle applies.
+  // On a folder page its "New chat" box, so its branch picker applies.
+  const box = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="start-chat"]')).find(
+    (el) => el.offsetParent !== null,
+  );
+  if (box) return box.focus();
+  // Elsewhere a page's own button, so its "New worktree" toggle applies.
   const button = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="new-session"]')).find(
     (el) => el.offsetParent !== null,
   );
@@ -396,23 +415,106 @@ function runSessionAction(action: string) {
   if (!emit(SESSION_COMMANDS[action])) toast("Open a session first");
 }
 
+// ── Hints ─────────────────────────────────────────────────────────────────
+// While the prefix is armed every row, tab and text box in view shows a letter
+// (the sidebar shows numbers); pressing it opens the row or focuses the box.
+// Letters that are prefix commands, or <leader> keys, are never hints.
+
+const HINT_TARGETS =
+  '[data-kb="row"], [data-kb="tab"], [data-kb="search"], input:not([type="hidden"]), textarea';
+const COMMAND_KEYS = new Set("nplwigcrzo");
+let hintEls: HTMLElement[] = [];
+
+function hintLetters(keys: Keys): string[] {
+  const leader = new Set(
+    Object.values(keys.binds).flatMap((b) =>
+      parse(b)
+        .filter((c) => c.leader)
+        .map((c) => c.key),
+    ),
+  );
+  return [..."sdfjehtyuqvxbakm"].filter((k) => !COMMAND_KEYS.has(k) && !leader.has(k));
+}
+
+// In view and not covered (a row scrolled under a header doesn't count).
+function inView(el: HTMLElement): boolean {
+  if (el.offsetParent === null || el.closest('[aria-disabled="true"]')) return false;
+  const r = el.getBoundingClientRect();
+  if (!r.width || r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) return false;
+  const top = Math.max(r.top, 0);
+  const bottom = Math.min(r.bottom, innerHeight);
+  const hit = document.elementFromPoint(
+    Math.min(Math.max(r.left + Math.min(r.width / 2, 24), 0), innerWidth - 1),
+    (top + bottom) / 2,
+  );
+  return !!hit && (hit === el || el.contains(hit));
+}
+
+function showHints(keys: Keys) {
+  const letters = hintLetters(keys);
+  const found = Array.from(document.querySelectorAll<HTMLElement>(HINT_TARGETS)).filter(inView);
+  // Each element once (a row may hold a text box), top to bottom, left to right.
+  hintEls = found
+    .filter((el) => !found.some((o) => o !== el && o.contains(el) && o.matches("input, textarea")))
+    .slice(0, letters.length * letters.length);
+  const rects = new Map(hintEls.map((el) => [el, el.getBoundingClientRect()]));
+  hintEls.sort((a, b) => rects.get(a)!.top - rects.get(b)!.top || rects.get(a)!.left - rects.get(b)!.left);
+  const n = letters.length;
+  const label = (i: number) =>
+    hintEls.length <= n ? letters[i] : letters[Math.floor(i / n)] + letters[i % n];
+  setKb({
+    typed: "",
+    hints: hintEls.map((el, i) => {
+      const r = rects.get(el)!;
+      // On the top-left corner, so the label underneath stays readable.
+      return { label: label(i), x: Math.max(r.left - 8, 2), y: Math.max(r.top - 7, 2) };
+    }),
+  });
+}
+
+function openHint(el: HTMLElement) {
+  if (el.matches("input, textarea")) el.focus();
+  else el.click();
+}
+
+/** A hint letter: opens it, or waits for the second letter. False when no hint starts so. */
+function hintKey(keys: Keys, k: string): boolean {
+  const typed = kb.typed + k;
+  const i = kb.hints.findIndex((h) => h.label === typed);
+  if (i >= 0) {
+    const el = hintEls[i];
+    disarm();
+    openHint(el);
+    return true;
+  }
+  if (!kb.hints.some((h) => h.label.startsWith(typed))) return false;
+  setKb({ typed });
+  arm(keys, "prefix", false);
+  return true;
+}
+
 // ── Key handling ──────────────────────────────────────────────────────────
 
 const REPEATABLE = ["n", "p", "[", "]"];
 const timers: { which?: ReturnType<typeof setTimeout>; reset?: ReturnType<typeof setTimeout> } = {};
 
-function arm(keys: Keys, mode: KbState["mode"] = "prefix") {
+function arm(keys: Keys, mode: KbState["mode"] = "prefix", fresh = true) {
   clearTimeout(timers.which);
   clearTimeout(timers.reset);
-  setKb({ mode, which: false });
-  if (mode === "prefix") timers.which = setTimeout(() => setKb({ which: true }), keys.prefs.which_key_delay);
-  timers.reset = setTimeout(disarm, mode === "repeat" ? 600 : 3000);
+  if (fresh) setKb({ mode, which: false, hints: [], typed: "" });
+  if (mode === "prefix") {
+    if (fresh) showHints(keys);
+    timers.which = setTimeout(() => setKb({ which: true }), keys.prefs.which_key_delay);
+  }
+  // Long enough to find a letter among the hints.
+  timers.reset = setTimeout(disarm, mode === "repeat" ? 600 : mode === "prefix" ? 6000 : 3000);
 }
 
 function disarm() {
   clearTimeout(timers.which);
   clearTimeout(timers.reset);
-  setKb({ mode: null, which: false });
+  hintEls = [];
+  setKb({ mode: null, which: false, hints: [], typed: "" });
 }
 
 function prefixKey(keys: Keys, e: KeyboardEvent) {
@@ -435,6 +537,9 @@ function prefixKey(keys: Keys, e: KeyboardEvent) {
   const action = sessionAction(keys, e, true, false);
   if (action) return once(() => runSessionAction(action));
   if (/^[1-9]$/.test(k)) return once(() => openIdx(Number(k) - 1));
+  if (kb.hints.length && /^[a-z]$/.test(k) && !COMMAND_KEYS.has(k) && hintKey(keys, k)) return;
+  const typed = kb.typed;
+  if (typed) return once(() => toast(`No hint ${typed}${k}`));
 
   switch (k) {
     case "n":

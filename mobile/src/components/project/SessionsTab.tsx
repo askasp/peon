@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FlatList, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Badge, Dot, Empty, ErrorLine, kbProps, Loading, Tap } from "../ui";
 import { Icon } from "../Icon";
 import { PickSheet } from "../Sheet";
+import { Completions, useCompletions } from "../Completions";
 import { ask } from "@/lib/peon";
 import { useLoad } from "@/lib/useLoad";
 import { ago } from "@/lib/time";
 import { color } from "@/lib/theme";
 import { useWide } from "@/lib/useWide";
-import type { SessionSummary } from "@/lib/types";
+import type { SessionOptions, SessionSummary } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
 function dayLabel(ms: number | null): string {
@@ -58,6 +59,23 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
       });
   }
   const whereLabel = where === NEW ? "New worktree" : where === MAIN ? main : where;
+  // `/` completes from the Folder's skills and commands, fetched when the box is focused.
+  const input = useRef<TextInput>(null);
+  const [slash, setSlash] = useState<{ project: number; items: SessionOptions["slash"] } | null>(null);
+  function loadSlash() {
+    const project = ctx.project.id;
+    if (slash?.project === project) return;
+    ctx
+      .call<{ slash: SessionOptions["slash"] }>("slash", {}, 30000)
+      .then((r) => setSlash({ project, items: r.slash }))
+      .catch(() => {});
+  }
+  const { items, pick, setPick, complete, onKey } = useCompletions({
+    draft: text,
+    setDraft: setText,
+    slash: slash?.project === ctx.project.id ? slash.items : null,
+    input,
+  });
   const { data, error: loadError } = useLoad(
     () => ctx.call<{ sessions: SessionSummary[] }>("sessions").then((r) => r.sessions),
     [ctx.changed],
@@ -104,9 +122,16 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
           <View style={st.start}>
             <Text style={st.plus}>+</Text>
             <TextInput
+              ref={input}
               testID="start-chat"
               value={text}
-              onChangeText={setText}
+              onChangeText={(v) => {
+                setText(v);
+                setPick(0);
+              }}
+              onFocus={loadSlash}
+              // Arrows move through the `/` list, Tab or Enter completes; the next Enter starts.
+              onKeyPress={onKey}
               placeholder={`New chat in ${name}`}
               placeholderTextColor={color.muted}
               style={st.startInput}
@@ -137,6 +162,7 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
             ) : (
               <Text style={st.hint}>{starting ? "Starting…" : "Enter to start"}</Text>
             )}
+            <Completions items={items} pick={pick} onPick={complete} style={st.completions} />
           </View>
         </View>
       ) : null}
@@ -232,7 +258,8 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
 
 const st = StyleSheet.create({
   tools: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 18, paddingBottom: 6 },
-  toolsWide: { paddingHorizontal: 32, paddingTop: 8, maxWidth: 868 },
+  // Above the list, so the `/` list can cover it.
+  toolsWide: { paddingHorizontal: 32, paddingTop: 8, maxWidth: 868, zIndex: 10 },
   listWide: { paddingHorizontal: 32, maxWidth: 868 },
   start: {
     flex: 1,
@@ -248,6 +275,7 @@ const st = StyleSheet.create({
     paddingRight: 6,
   },
   plus: { fontSize: 16, color: color.accentText },
+  completions: { top: "100%", left: 0, right: 0, marginTop: 6 },
   where: {
     flexDirection: "row",
     alignItems: "center",

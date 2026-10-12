@@ -11,6 +11,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     * `run` `{inputs?}` → `{session_id}` (routines)
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
+    * `slash` → `{slash}`: skills and commands for `/` completion (`Sessions.slash_items/2`)
     * `branches` → `{branches}`: git branches a new chat can continue (`Beamcode.Branches`)
     * `trees` → `{trees}`: the chats with a worktree that has changes
       (`[%{ref, title, worktree, changed}]`, see `Beamcode.Worktrees`)
@@ -185,6 +186,15 @@ defmodule BeamcodeWeb.ProjectChannel do
         for {name, path} <- ProjectTools.skill_files(project), do: %{name: name, path: path}
 
       {:ok, %{files: [%{name: "AGENTS.md", path: "AGENTS.md"} | skills]}}
+    end)
+  end
+
+  # The Folder's skills and commands, for `/` completion in the new-chat box.
+  def handle_in("slash", _params, socket) do
+    project = socket.assigns.project
+
+    ChannelTasks.reply_async(socket, fn ->
+      {:ok, %{slash: Sessions.slash_items(project.directory, 2)}}
     end)
   end
 

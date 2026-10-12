@@ -96,6 +96,23 @@ defmodule BeamcodeWeb.ProjectChannelTest do
     assert_reply ref, :error, %{message: "That file can't be saved here."}
   end
 
+  test "slash lists the Folder's skills and commands", %{user: user, app: app} do
+    setup_stub(fn conn ->
+      case conn.request_path do
+        "/api/skill" -> data(conn, [%{"id" => "hello", "description" => "Says hello"}])
+        "/api/command" -> data(conn, [%{"name" => "review", "description" => "Review"}])
+        _ -> data(conn, [])
+      end
+    end)
+
+    {:ok, _, socket} = join_as(user, app)
+    ref = push(socket, "slash", %{})
+
+    assert_reply ref, :ok, %{
+      slash: [%{name: "hello", kind: "skill"}, %{name: "review", kind: "command"}]
+    }
+  end
+
   test "files: list a subfolder and open a file, never outside the folder", %{
     user: user,
     app: app,

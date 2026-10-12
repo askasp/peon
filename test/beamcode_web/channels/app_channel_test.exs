@@ -77,6 +77,30 @@ defmodule BeamcodeWeb.AppChannelTest do
     assert Projects.session_record("ses_new").project_id == app.id
   end
 
+  test "new_session runs a /skill first message as that skill", %{socket: socket, app: app} do
+    test = self()
+
+    setup_stub(fn conn ->
+      case {conn.method, conn.request_path} do
+        {"POST", "/api/session"} ->
+          data(conn, %{"id" => "ses_new", "location" => %{"directory" => "/srv/app"}})
+
+        {"GET", "/api/skill"} ->
+          data(conn, [%{"id" => "hello", "description" => "Says hello"}])
+
+        {"POST", "/api/session/ses_new/prompt"} ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test, {:prompt, Jason.decode!(body)})
+          data(conn, %{})
+      end
+    end)
+
+    {_, socket} = join(socket)
+    ref = push(socket, "new_session", %{"project_id" => app.id, "text" => "/hello fix it"})
+    assert_reply ref, :ok, %{session_id: "ses_new"}
+    assert_received {:prompt, %{"text" => "fix it", "skills" => [%{"id" => "hello"}]}}
+  end
+
   test "permission replies only for sessions the user can see", %{
     socket: socket,
     app: app,

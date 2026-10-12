@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { Icon } from "../Icon";
 import { PickSheet } from "../Sheet";
+import { Completions, useCompletions } from "../Completions";
 import { Tap } from "../ui";
 import { useCommand } from "@/lib/commands";
 import { bindingMatches } from "@/lib/keys";
@@ -21,8 +22,6 @@ import { viewFor, viewInfo } from "@/lib/folders";
 import { useDictation, useVoiceSettings } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 import type { SessionOptions } from "@/lib/types";
-
-type Completion = { key: string; label: string; detail?: string | null; insert: string };
 
 type Props = {
   busy: boolean;
@@ -46,15 +45,6 @@ type Props = {
   keepAttached?: boolean;
 };
 
-// What the cursor is completing: "/name" at the start, or the "@path" being typed.
-function completing(draft: string): { kind: "slash" | "file"; query: string } | null {
-  const slash = /^\/([\w.-]*)$/.exec(draft);
-  if (slash) return { kind: "slash", query: slash[1] };
-  const at = /(^|\s)@([^\s]*)$/.exec(draft);
-  if (at) return { kind: "file", query: at[2] };
-  return null;
-}
-
 /** The reply box: text, `/` and `@` completion, images, agent and model, voice. */
 const withCurrent = (list: string[], current: string) => (list.includes(current) ? list : [current, ...list]);
 
@@ -62,8 +52,6 @@ export function SessionComposer(p: Props) {
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
-  const [found, setFound] = useState<Completion[]>([]);
-  const [pick, setPick] = useState(0);
   const [picker, setPicker] = useState<"agent" | "model" | "thinking" | null>(null);
   const input = useRef<TextInput>(null);
 
@@ -78,48 +66,15 @@ export function SessionComposer(p: Props) {
   const shown = dictation.listening ? join(draft, dictation.transcript) : draft;
   useCommand("session:send", () => send(draft));
   useCommand("session:talk", () => (dictation.listening ? dictation.stop() : dictation.start()));
-  const what = dictation.listening ? null : completing(draft);
-
   // `/` completes from the session's skills and commands, `@` from its folder.
-  const slash: Completion[] =
-    what?.kind === "slash"
-      ? (p.options?.slash ?? [])
-          .filter((i) => i.name.toLowerCase().startsWith(what.query.toLowerCase()))
-          .slice(0, 8)
-          .map((i) => ({
-            key: i.name,
-            label: `/${i.name}`,
-            detail: i.description ?? i.kind,
-            insert: `/${i.name} `,
-          }))
-      : [];
-  const fileQuery = what?.kind === "file" ? what.query : null;
-  useEffect(() => {
-    if (fileQuery == null) return;
-    const t = setTimeout(() => {
-      p.findFiles(fileQuery)
-        .then((r) =>
-          setFound(
-            r.items.slice(0, 8).map((i) => ({
-              key: i.path,
-              label: i.path,
-              detail: i.type === "directory" ? "folder" : null,
-              insert: `@${i.path}${i.type === "directory" ? "/" : " "}`,
-            })),
-          ),
-        )
-        .catch(() => setFound([]));
-    }, 150);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileQuery]);
-  const items = what?.kind === "slash" ? slash : what?.kind === "file" ? found : [];
-
-  function complete(c: Completion) {
-    setDraft(what?.kind === "file" ? draft.replace(/@[^\s]*$/, c.insert) : c.insert);
-    setPick(0);
-    input.current?.focus();
-  }
+  const { items, pick, setPick, complete, onKey } = useCompletions({
+    draft,
+    setDraft,
+    slash: p.options?.slash,
+    findFiles: p.findFiles,
+    input,
+    off: dictation.listening,
+  });
 
   // A file attached from Files: type about it straight away.
   useEffect(() => {
@@ -195,26 +150,7 @@ export function SessionComposer(p: Props) {
 
   return (
     <View style={[st.wrap, { paddingBottom: p.bottomPad }]}>
-      {items.length ? (
-        <View style={st.popover}>
-          {items.map((c, i) => (
-            <Pressable
-              key={c.key}
-              onPress={() => complete(c)}
-              style={(s: any) => [st.option, (i === pick || s.hovered) && { backgroundColor: color.raised }]}
-            >
-              <Text style={st.optionLabel} numberOfLines={1}>
-                {c.label}
-              </Text>
-              {c.detail ? (
-                <Text style={st.optionDetail} numberOfLines={1}>
-                  {c.detail}
-                </Text>
-              ) : null}
-            </Pressable>
-          ))}
-        </View>
-      ) : null}
+      <Completions items={items} pick={pick} onPick={complete} style={st.popover} />
 
       {p.attached ? (
         <View style={st.attachedRow}>
@@ -276,14 +212,8 @@ export function SessionComposer(p: Props) {
             placeholderTextColor={dictation.listening ? color.accentText : color.faint}
             multiline
             onKeyPress={(e: any) => {
-              const k = e.nativeEvent.key;
-              if (items.length && (k === "ArrowDown" || k === "ArrowUp")) {
-                e.preventDefault?.();
-                setPick((i) => (i + (k === "ArrowDown" ? 1 : items.length - 1)) % items.length);
-              } else if (items.length && (k === "Tab" || (k === "Enter" && !e.nativeEvent.shiftKey))) {
-                e.preventDefault?.();
-                complete(items[pick] ?? items[0]);
-              } else if (Platform.OS === "web") {
+              if (onKey(e)) return;
+              if (Platform.OS === "web") {
                 // Desktop: the composer keys from Settings (OpenCode's input_* and agent_cycle).
                 const binds = getState().keys?.binds ?? {};
                 const ev = e.nativeEvent;
@@ -516,27 +446,5 @@ const st = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  popover: {
-    position: "absolute",
-    bottom: "100%",
-    left: 66,
-    right: 14,
-    marginBottom: 6,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: color.border,
-    backgroundColor: color.card,
-    padding: 4,
-    zIndex: 20,
-  },
-  option: {
-    flexDirection: "row",
-    gap: 10,
-    alignItems: "center",
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-  },
-  optionLabel: { fontSize: 13.5, color: color.text, fontFamily: font.mono, flexShrink: 1 },
-  optionDetail: { fontSize: 12, color: color.muted, flex: 1 },
+  popover: { bottom: "100%", left: 66, right: 14, marginBottom: 6 },
 });
