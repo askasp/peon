@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Image, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Frame } from "./Frame";
 import { ErrorLine, Loading, Tap } from "./ui";
@@ -63,38 +63,108 @@ export function Doc({ text }: { text: string }) {
 
 export type Device = "phone" | "desktop" | "both";
 
-/** A design at phone or desktop size (or both), on a dotted canvas. */
+const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
+
+/**
+ * A design at phone or desktop size (or both), on a dotted canvas. It opens
+ * fitted; − / + (or ctrl/⌘ + scroll on the web) zoom it, and it pans by scrolling.
+ */
 export function Canvas({ url, version, mode }: { url: string; version: number; mode: Device }) {
   const [box, setBox] = useState({ w: 0, h: 0 });
+  // null: fit the canvas.
+  const [zoom, setZoom] = useState<number | null>(null);
   const phone = { w: 390, h: 844 };
   const desk = { w: 1280, h: 800 };
   // Both: the desktop takes what's left beside a phone at the same height.
   const fit = (s: { w: number; h: number }, w: number, pad: number) =>
     Math.min(1, (w - 40 - pad) / s.w, (box.h - 40 - pad) / s.h);
-  const phoneScale = fit(phone, mode === "both" ? box.w * 0.32 : box.w, 12);
-  const deskScale = fit(desk, mode === "both" ? box.w - phone.w * phoneScale - 40 : box.w, 18);
+  const phoneFit = fit(phone, mode === "both" ? box.w * 0.32 : box.w, 12);
+  const deskFit = fit(desk, mode === "both" ? box.w - phone.w * phoneFit - 40 : box.w, 18);
+  const phoneScale = zoom ?? phoneFit;
+  const deskScale = zoom ?? deskFit;
+  const shown = mode === "phone" ? phoneScale : deskScale;
+
+  const step = (dir: 1 | -1) => {
+    const next =
+      dir > 0 ? ZOOMS.find((z) => z > shown + 0.001) : [...ZOOMS].reverse().find((z) => z < shown - 0.001);
+    setZoom(next ?? (dir > 0 ? ZOOMS[ZOOMS.length - 1] : ZOOMS[0]));
+  };
+
+  // Web: ctrl/⌘ + wheel (and trackpad pinch) zooms the canvas, not the page.
+  const ref = useRef<View>(null);
+  const shownRef = useRef(shown);
+  useEffect(() => {
+    shownRef.current = shown;
+  }, [shown]);
+  const ready = box.w > 0;
+  useEffect(() => {
+    const el = ref.current as unknown as HTMLElement | null;
+    if (Platform.OS !== "web" || !el?.addEventListener) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      const z = shownRef.current * Math.exp(-e.deltaY * 0.01);
+      setZoom(Math.min(3, Math.max(0.1, z)));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [ready]);
+
   return (
     <View
+      ref={ref}
       style={[st.canvas, Platform.OS === "web" && (st.dots as any)]}
       onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
     >
       {box.w > 0 ? (
-        <View style={st.devices}>
-          {mode !== "phone" ? (
-            <View style={st.desk}>
-              <View style={st.chrome}>
-                <View style={st.light} />
-                <View style={st.light} />
-                <View style={st.light} />
-              </View>
-              <Frame url={url} width={desk.w} height={desk.h} scale={deskScale} version={version} />
+        <ScrollView style={st.pan} contentContainerStyle={{ flexGrow: 1 }}>
+          <ScrollView horizontal contentContainerStyle={[st.panInner, { minWidth: box.w, minHeight: box.h }]}>
+            <View style={st.devices}>
+              {mode !== "phone" ? (
+                <View style={st.desk}>
+                  <View style={st.chrome}>
+                    <View style={st.light} />
+                    <View style={st.light} />
+                    <View style={st.light} />
+                  </View>
+                  <Frame url={url} width={desk.w} height={desk.h} scale={deskScale} version={version} />
+                </View>
+              ) : null}
+              {mode !== "desktop" ? (
+                <View style={st.phone}>
+                  <Frame url={url} width={phone.w} height={phone.h} scale={phoneScale} version={version} />
+                </View>
+              ) : null}
             </View>
-          ) : null}
-          {mode !== "desktop" ? (
-            <View style={st.phone}>
-              <Frame url={url} width={phone.w} height={phone.h} scale={phoneScale} version={version} />
-            </View>
-          ) : null}
+          </ScrollView>
+        </ScrollView>
+      ) : null}
+      {box.w > 0 ? (
+        <View style={st.zoomBar}>
+          <Tap onPress={() => step(-1)} style={st.zoomKey} aria-label="Zoom out" id="canvas-zoom-out">
+            <Text style={st.zoomKeyText}>−</Text>
+          </Tap>
+          <Tap
+            onPress={() => setZoom(zoom === 1 ? null : 1)}
+            style={st.zoomPct}
+            aria-label={zoom === 1 ? "Fit" : "Actual size"}
+            id="canvas-zoom-reset"
+          >
+            <Text style={st.zoomPctText}>{Math.round(shown * 100)}%</Text>
+          </Tap>
+          <Tap onPress={() => step(1)} style={st.zoomKey} aria-label="Zoom in" id="canvas-zoom-in">
+            <Text style={st.zoomKeyText}>+</Text>
+          </Tap>
+          <View style={st.zoomSep} />
+          <Tap
+            onPress={() => setZoom(null)}
+            disabled={zoom == null}
+            style={st.zoomFit}
+            aria-label="Fit to canvas"
+            id="canvas-zoom-fit"
+          >
+            <Text style={[st.zoomFitText, zoom == null && { color: color.faint }]}>Fit</Text>
+          </Tap>
         </View>
       ) : null}
     </View>
@@ -332,7 +402,34 @@ const st = StyleSheet.create({
   segItem: { flex: 1, alignItems: "center", paddingVertical: 6, borderRadius: 8 },
   segOn: { backgroundColor: color.pill },
   segText: { fontSize: 14, color: color.textDim },
-  canvas: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#0c0c0f" },
+  canvas: { flex: 1, backgroundColor: "#0c0c0f" },
+  pan: { flex: 1 },
+  panInner: { flexGrow: 1, alignItems: "center", justifyContent: "center", padding: 20 },
+  zoomBar: {
+    position: "absolute",
+    right: 12,
+    bottom: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 3,
+    borderRadius: 10,
+    backgroundColor: color.card,
+    borderWidth: 1,
+    borderColor: color.border,
+  },
+  zoomKey: { width: 30, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 7 },
+  zoomKeyText: { fontSize: 17, lineHeight: 20, color: color.textSoft },
+  zoomPct: { minWidth: 50, height: 28, alignItems: "center", justifyContent: "center", borderRadius: 7 },
+  zoomPctText: { fontSize: 12, fontVariant: ["tabular-nums"], color: color.text },
+  zoomSep: { width: 1, height: 16, marginHorizontal: 3, backgroundColor: color.divider },
+  zoomFit: {
+    height: 28,
+    paddingHorizontal: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 7,
+  },
+  zoomFitText: { fontSize: 12, color: color.textSoft },
   devices: { flexDirection: "row", alignItems: "center", gap: 24 },
   segSmall: { padding: 2, borderRadius: 7, backgroundColor: color.card },
   segItemSmall: {

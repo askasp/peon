@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel } from "phoenix";
 import { getSocket, request, usePeon } from "./peon";
-import type { DiffFile, Message, Perm, Project, Run, SessionSummary, Status } from "./types";
+import type { DiffFile, Form, Message, Perm, Project, Run, SessionSummary, Status } from "./types";
 import type { Attachment } from "./images";
 
 type Streamed = { text: string; reasoning: string };
@@ -20,6 +20,8 @@ type SessionState = {
   streaming: Record<string, Streamed>;
   status: Status;
   perms: Perm[];
+  /** Questions the agent is waiting on. */
+  forms: Form[];
   run: Run | null;
   diff: DiffFile[];
 };
@@ -35,6 +37,7 @@ const initial: SessionState = {
   streaming: {},
   status: "idle",
   perms: [],
+  forms: [],
   run: null,
   diff: [],
 };
@@ -88,6 +91,7 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
     );
 
     ch.on("status", ({ status, perms }) => setState((s) => ({ ...s, status, perms })));
+    ch.on("forms", ({ forms }) => setState((s) => ({ ...s, forms })));
     ch.on("session", ({ session }) => setState((s) => ({ ...s, session })));
     ch.on("diff", ({ files }) => setState((s) => ({ ...s, diff: files })));
     ch.on("run", ({ run }) => setState((s) => ({ ...s, run })));
@@ -114,6 +118,7 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
           streaming: dropCaughtUp(s.streaming, messages),
           status: r.status,
           perms: r.perms,
+          forms: r.forms ?? [],
           run: r.run,
           diff: r.diff ?? [],
         }));
@@ -184,5 +189,12 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
       });
   }
 
-  return { ...state, items, send, interrupt, answer, call };
+  const reply = useCallback(
+    (formId: string, answer: Record<string, unknown>) =>
+      request(channel.current, "form_reply", { id: formId, answer }),
+    [],
+  );
+  const skip = useCallback((formId: string) => request(channel.current, "form_cancel", { id: formId }), []);
+
+  return { ...state, items, send, interrupt, answer, reply, skip, call };
 }

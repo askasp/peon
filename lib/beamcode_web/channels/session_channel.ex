@@ -3,14 +3,15 @@ defmodule BeamcodeWeb.SessionChannel do
   One session for the app ("session:<id>"), fed by the OpenCode events
   (`Beamcode.Opencode.Events`).
 
-  Join replies `{session, project, messages, status, perms, run, diff}`.
+  Join replies `{session, project, messages, status, perms, forms, run, diff}`.
 
   Requests:
     * `send` `{text, files?}` – files are `[{uri: "data:image/…;base64,…", name}]`
     * `interrupt`, `compact`, `rename` `{title}`, `run_again` → `{session_id}`
     * `permission` `{id, decision}` (once | always | reject)
+    * `form_reply` `{id, answer}` – answers a question the agent asked; `form_cancel` `{id}` skips it
     * `options` → `{agents, models, slash}` for the pickers and `/` completion
-    * `set_model` `{model: "provider/id"}`, `set_agent` `{agent}`
+    * `set_model` `{model: "provider/id", variant?}`, `set_agent` `{agent}`
     * `find_files` `{query}` → `{items}` for `@` completion ("" lists the top folder)
     * `messages` (all of them again)
     * `image` `{message_id, index}` → `{mime, data}`, a pasted image too big to come with its message
@@ -21,6 +22,7 @@ defmodule BeamcodeWeb.SessionChannel do
     * `status` `{status, perms}` – idle | running | waiting, and pending permission requests
     * `session` `{session}` – renamed, or model/agent switched
     * `run` `{run}` – the routine run this session is, when it starts or finishes
+    * `forms` `{forms}` – the questions the agent is waiting on, when they change
     * `diff` `{files}` – changed files (`file`, `additions`, `deletions`, `patch`), when they change
     * `speak` `{text}` – a short line to say: the reply when a turn ends, or a permission ask
   """
@@ -69,6 +71,7 @@ defmodule BeamcodeWeb.SessionChannel do
            messages: messages,
            status: socket.assigns.status,
            perms: perms(id),
+           forms: forms(id),
            run: run(id),
            diff: socket.assigns.diff
          }, socket}
@@ -114,6 +117,29 @@ defmodule BeamcodeWeb.SessionChannel do
     end)
   end
 
+  def handle_in("form_reply", %{"id" => id, "answer" => answer}, socket)
+      when is_binary(id) and is_map(answer) do
+    sid = socket.assigns.session_id
+
+    ChannelTasks.reply_async(socket, fn ->
+      case Opencode.reply_form(sid, id, answer) do
+        {:ok, _} -> {:ok, %{}}
+        {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
+  def handle_in("form_cancel", %{"id" => id}, socket) when is_binary(id) do
+    sid = socket.assigns.session_id
+
+    ChannelTasks.reply_async(socket, fn ->
+      case Opencode.cancel_form(sid, id) do
+        {:ok, _} -> {:ok, %{}}
+        {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
   def handle_in("permission", %{"id" => id, "decision" => decision}, socket)
       when decision in @decisions do
     sid = socket.assigns.session_id
@@ -144,7 +170,7 @@ defmodule BeamcodeWeb.SessionChannel do
             for m <- list,
                 m["enabled"] != false,
                 m["status"] != "deprecated",
-                do: %{name: m["name"], value: "#{m["providerID"]}/#{m["id"]}"}
+                do: model_json(m)
 
           _ ->
             []
@@ -153,8 +179,8 @@ defmodule BeamcodeWeb.SessionChannel do
       # Named, so the chip says which model "no pick" means.
       default =
         case Task.yield(default, 15_000) || Task.shutdown(default) do
-          {:ok, {:ok, %{"providerID" => p, "id" => id} = m}} ->
-            %{name: m["name"] || id, value: "#{p}/#{id}"}
+          {:ok, {:ok, %{"providerID" => _, "id" => id} = m}} ->
+            %{model_json(m) | name: m["name"] || id}
 
           _ ->
             nil
@@ -190,25 +216,31 @@ defmodule BeamcodeWeb.SessionChannel do
     end)
   end
 
-  def handle_in("set_model", %{"model" => value}, socket) when is_binary(value) do
+  def handle_in("set_model", %{"model" => value} = params, socket) when is_binary(value) do
     case String.split(value, "/", parts: 2) do
       [provider, id] ->
         sid = socket.assigns.session_id
+        # How hard the model thinks ("low", "high", …); none is the model's default.
+        model =
+          case params["variant"] do
+            v when is_binary(v) and v != "" ->
+              %{"id" => id, "providerID" => provider, "variant" => v}
+
+            _ ->
+              %{"id" => id, "providerID" => provider}
+          end
 
         ChannelTasks.reply_async(
           socket,
           fn ->
-            case Opencode.switch_model(sid, %{id: id, providerID: provider}) do
+            case Opencode.switch_model(sid, model) do
               {:ok, _} -> {:ok, %{}}
               {:error, reason} -> error(reason)
             end
           end,
           fn
-            {:ok, _} = reply, socket ->
-              {reply, update_session(socket, "model", %{"id" => id, "providerID" => provider})}
-
-            reply, socket ->
-              {reply, socket}
+            {:ok, _} = reply, socket -> {reply, update_session(socket, "model", model)}
+            reply, socket -> {reply, socket}
           end
         )
 
@@ -336,6 +368,23 @@ defmodule BeamcodeWeb.SessionChannel do
     {:noreply, push_status(socket, true)}
   end
 
+  def handle_info({:oc_event, "form." <> kind, data}, socket) do
+    if kind == "created",
+      do: push(socket, "speak", %{text: "A question for you: #{get_in(data, ["form", "title"])}"})
+
+    # Fetched off the channel process, so a slow OpenCode doesn't hold it up.
+    channel = self()
+    sid = socket.assigns.session_id
+    Task.start(fn -> send(channel, {:forms, forms(sid)}) end)
+    # A question waiting makes the session "waiting".
+    {:noreply, push_status(socket, false)}
+  end
+
+  def handle_info({:forms, forms}, socket) do
+    push(socket, "forms", %{forms: forms})
+    {:noreply, socket}
+  end
+
   def handle_info({:oc_event, type, data}, socket) do
     socket =
       case type do
@@ -448,6 +497,16 @@ defmodule BeamcodeWeb.SessionChannel do
     assign(socket, status: status)
   end
 
+  # A model for the pickers, with how hard it can think (OpenCode's variants).
+  defp model_json(m) do
+    %{
+      name: m["name"],
+      value: "#{m["providerID"]}/#{m["id"]}",
+      variants: for(%{"id" => v} <- m["variants"] || [], do: v),
+      variant: get_in(m, ["options", "variant"])
+    }
+  end
+
   defp update_session(socket, key, value) do
     session = Map.put(socket.assigns.session, key, value)
 
@@ -479,6 +538,19 @@ defmodule BeamcodeWeb.SessionChannel do
   end
 
   defp perms(sid), do: Events.pending_for(sid) |> Enum.map(&AppJSON.perm/1)
+
+  # The questions still waiting for an answer.
+  defp forms(sid) do
+    case Opencode.session_forms(sid) do
+      {:ok, list} when is_list(list) ->
+        for f <- list,
+            get_in(f, ["state", "status"]) in [nil, "pending"],
+            do: Map.take(f, ["id", "title", "fields", "metadata"])
+
+      _ ->
+        []
+    end
+  end
 
   defp run(sid) do
     case Schedules.run_for_session(sid) do

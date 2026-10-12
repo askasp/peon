@@ -77,6 +77,24 @@ defmodule BeamcodeWeb.AppJSON do
     }
   end
 
+  def inbox_item(%{type: :question} = item) do
+    fields = List.wrap(item.form["fields"])
+
+    %{
+      type: "question",
+      key: "form-" <> item.form["id"],
+      form: %{
+        id: item.form["id"],
+        session_id: item.form["sessionID"],
+        text: Inbox.question_text(item.form),
+        count: length(fields)
+      },
+      session: %{id: item.session["id"], title: item.session["title"] || "New session"},
+      project: project(item.project),
+      mine: item.mine?
+    }
+  end
+
   def inbox_item(%{type: :run} = item) do
     %{
       type: "run",

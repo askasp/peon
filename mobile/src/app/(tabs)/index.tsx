@@ -156,6 +156,27 @@ function InboxCard({ item }: { item: InboxItem }) {
     );
   }
 
+  if (item.type === "question") {
+    const open = () => router.push(`/session/${item.session.id}`);
+    return (
+      <Tap kb="row" style={st.cardWrap} onPress={open}>
+        <Card needs>
+          <View style={st.cardHead}>
+            <KindTile glyph="?" tint={color.needs} bg={color.needsWash} />
+            <Text style={[st.kind, { color: color.needs }]}>
+              {item.form.count > 1 ? `${item.form.count} questions` : "Question"}
+            </Text>
+            <Source name={item.project.name} detail={item.session.title} />
+          </View>
+          <Text style={st.cardText}>{item.form.text}</Text>
+          <View style={st.actions}>
+            <Button label="Answer" height={44} style={{ flex: 1 }} onPress={open} testID="inbox-answer" />
+          </View>
+        </Card>
+      </Tap>
+    );
+  }
+
   const run = item.run;
   const failed = run.status === "failed";
   return (

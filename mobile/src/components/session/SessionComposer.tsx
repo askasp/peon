@@ -29,11 +29,13 @@ type Props = {
   options: SessionOptions | null;
   agent: string | null;
   model: string | null;
+  /** How hard the model thinks; null is the model's default. */
+  variant: string | null;
   bottomPad: number;
   send: (text: string, files: Attachment[]) => Promise<unknown>;
   findFiles: (query: string) => Promise<{ items: { path: string; type?: string }[] }>;
   setAgent: (agent: string) => Promise<unknown>;
-  setModel: (model: string) => Promise<unknown>;
+  setModel: (model: string, variant?: string | null) => Promise<unknown>;
   onError: (message: string | null) => void;
 };
 
@@ -55,7 +57,7 @@ export function SessionComposer(p: Props) {
   const [sending, setSending] = useState(false);
   const [found, setFound] = useState<Completion[]>([]);
   const [pick, setPick] = useState(0);
-  const [picker, setPicker] = useState<"agent" | "model" | null>(null);
+  const [picker, setPicker] = useState<"agent" | "model" | "thinking" | null>(null);
   const input = useRef<TextInput>(null);
 
   // <leader>m / <leader>a open the pickers from the keyboard.
@@ -168,9 +170,15 @@ export function SessionComposer(p: Props) {
   }
 
   const canSend = (draft.trim() !== "" || files.length > 0) && !dictation.listening;
+  const current = p.model
+    ? p.options?.models.find((m) => m.value === p.model)
+    : (p.options?.models.find((m) => m.value === p.options?.default?.value) ?? p.options?.default);
   const modelName =
-    p.options?.models.find((m) => m.value === p.model)?.name ??
-    (p.model ? p.model.split("/").pop() : (p.options?.default?.name ?? "default model"));
+    current?.name ?? (p.model ? p.model.split("/").pop() : (p.options?.default?.name ?? "default model"));
+  // Only models that can think harder or less get the Thinking chip.
+  const levels = current?.variants ?? [];
+  const thinking = p.variant ?? current?.variant ?? null;
+  const modelValue = p.model ?? current?.value ?? null;
 
   return (
     <View style={[st.wrap, { paddingBottom: p.bottomPad }]}>
@@ -327,6 +335,17 @@ export function SessionComposer(p: Props) {
             {modelName} ⇅
           </Text>
         </Pressable>
+        {levels.length && modelValue ? (
+          <Pressable
+            testID="thinking-chip"
+            onPress={() => setPicker("thinking")}
+            style={(s: any) => [st.chip, s.hovered && { backgroundColor: color.raised }]}
+          >
+            <Text style={st.chipText} numberOfLines={1}>
+              Thinking: {thinking ?? "default"} ⇅
+            </Text>
+          </Pressable>
+        ) : null}
         {dictation.error ? <Text style={[st.chipText, { color: color.red }]}>{dictation.error}</Text> : null}
       </View>
 
@@ -363,7 +382,23 @@ export function SessionComposer(p: Props) {
         onClose={() => setPicker(null)}
         onPick={(m) => {
           setPicker(null);
-          p.setModel(m).catch((e) => p.onError(e.message));
+          // Keep the thinking level when the new model has it too.
+          const next = p.options?.models.find((o) => o.value === m);
+          const keep = p.variant && next?.variants?.includes(p.variant) ? p.variant : null;
+          p.setModel(m, keep).catch((e) => p.onError(e.message));
+        }}
+      />
+      <PickSheet
+        visible={picker === "thinking"}
+        title="Thinking"
+        items={[
+          { key: "", label: "Default", detail: "What the model picks", active: p.variant == null },
+          ...levels.map((v) => ({ key: v, label: v, active: v === p.variant })),
+        ]}
+        onClose={() => setPicker(null)}
+        onPick={(v) => {
+          setPicker(null);
+          if (modelValue) p.setModel(modelValue, v || null).catch((e) => p.onError(e.message));
         }}
       />
     </View>

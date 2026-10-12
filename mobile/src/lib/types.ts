@@ -69,6 +69,15 @@ export type InboxItem =
       project: Project;
       mine: boolean;
     }
+  | {
+      type: "question";
+      key: string;
+      /** `text` is the first question; `count` how many it asks. */
+      form: { id: string; session_id: string; text: string; count: number };
+      session: { id: string; title: string };
+      project: Project;
+      mine: boolean;
+    }
   | { type: "run"; key: string; run: Run; project: Project; mine: boolean };
 
 export type Schedule = {
@@ -132,11 +141,14 @@ export type DiffFile = {
   status?: string;
 };
 
+/** A model to pick; `variants` are how hard it can think ("low", "high", …). */
+export type ModelOption = { name: string; value: string; variants?: string[]; variant?: string | null };
+
 export type SessionOptions = {
   agents: string[];
-  models: { name: string; value: string }[];
+  models: ModelOption[];
   /** The model used when none is picked. */
-  default?: { name: string; value: string } | null;
+  default?: ModelOption | null;
   slash: { name: string; description: string | null; kind: "skill" | "command" }[];
 };
 
@@ -153,3 +165,21 @@ export type Keys = {
   globals: { id: string; name: string; key: string; path: string }[];
   help: { title: string; rows: { keys: string[]; label: string }[] }[];
 };
+
+/** A question the agent asked (OpenCode's forms): fields to fill, then send. */
+export type FormOption = { value: string; label: string; description?: string };
+export type FormField = {
+  key: string;
+  type: "string" | "number" | "integer" | "boolean" | "multiselect" | "external";
+  title?: string;
+  description?: string;
+  required?: boolean;
+  hidden?: boolean;
+  options?: FormOption[];
+  /** Also allow an answer of your own, beside the options. */
+  custom?: boolean;
+  placeholder?: string;
+  default?: any;
+  url?: string;
+};
+export type Form = { id: string; title: string; fields: FormField[] };

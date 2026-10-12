@@ -1,7 +1,8 @@
 defmodule Beamcode.Inbox do
   @moduledoc """
   Everything waiting on a person, filtered to what the user can see:
-  pending permission requests and finished schedule runs.
+  pending permission requests, questions the agent asked, and finished
+  schedule runs.
   `mine` = started by me or a schedule I own; `team` = the rest.
   """
   alias Beamcode.{Projects, Schedules}
@@ -10,30 +11,37 @@ defmodule Beamcode.Inbox do
   def items(user, projects) do
     perms =
       Events.pending_permissions()
-      |> Enum.flat_map(fn perm ->
-        with %{} = session <- Events.session_info(perm["sessionID"]),
-             %{} = project <- Projects.project_for_session(session, projects),
-             record = Projects.session_record(perm["sessionID"]),
-             true <- Projects.session_visible?(record, user) do
-          [
-            %{
-              type: :permission,
-              perm: perm,
-              session: session,
-              project: project,
-              mine?: record != nil and record.user_id == user.id
-            }
-          ]
-        else
-          _ -> []
-        end
-      end)
+      |> Enum.flat_map(&waiting(:permission, :perm, &1, user, projects))
+
+    questions =
+      Events.pending_forms()
+      |> Enum.flat_map(&waiting(:question, :form, &1, user, projects))
 
     runs =
       Schedules.inbox_runs(user, projects)
       |> Enum.map(&%{type: :run, run: &1, project: &1.project, mine?: &1.owner_id == user.id})
 
-    perms ++ runs
+    perms ++ questions ++ runs
+  end
+
+  # A permission request or question, when its session is one the user can see.
+  defp waiting(type, key, item, user, projects) do
+    with %{} = session <- Events.session_info(item["sessionID"]),
+         %{} = project <- Projects.project_for_session(session, projects),
+         record = Projects.session_record(item["sessionID"]),
+         true <- Projects.session_visible?(record, user) do
+      [
+        %{
+          :type => type,
+          key => item,
+          :session => session,
+          :project => project,
+          :mine? => record != nil and record.user_id == user.id
+        }
+      ]
+    else
+      _ -> []
+    end
   end
 
   def count(user, projects), do: length(items(user, projects))
@@ -53,6 +61,15 @@ defmodule Beamcode.Inbox do
   end
 
   def permission_title(%{"action" => action}), do: "Allow #{action}"
+
+  @doc "What a question asks: its first question's text, or the form's title."
+  def question_text(form) do
+    case List.wrap(form["fields"]) do
+      [%{"description" => d} | _] when is_binary(d) and d != "" -> d
+      [%{"title" => t} | _] when is_binary(t) and t != "" -> t
+      _ -> form["title"] || "A question"
+    end
+  end
 
   defp first_resource(p),
     do: p["resources"] |> List.wrap() |> List.first("") |> String.slice(0, 80)

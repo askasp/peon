@@ -5,8 +5,9 @@ defmodule Beamcode.Opencode.Events do
     * `"oc:session:<id>"` – every event for that session, as `{:oc_event, type, data}`
     * `"oc:activity"` – `{:oc_activity, type, data}` for status changes only
 
-  Also tracks which sessions are running and which permission requests are
-  pending, in ETS, so lists and the Inbox can read them without polling.
+  Also tracks which sessions are running and which permission requests and
+  questions (forms) are pending, in ETS, so lists and the Inbox can read them
+  without polling.
   """
   use GenServer
   require Logger
@@ -14,10 +15,11 @@ defmodule Beamcode.Opencode.Events do
 
   @status :oc_session_status
   @perms :oc_pending_permissions
+  @forms :oc_pending_forms
   @info :oc_session_info
   @activity ~w(session.created session.renamed session.deleted session.execution.started
                session.execution.succeeded session.execution.failed session.execution.interrupted
-               permission.asked permission.replied)
+               permission.asked permission.replied form.created form.replied form.cancelled)
 
   @message_changes ~w(session.inbox.delivered session.tool.called session.tool.success
                       session.tool.failed session.tool.error session.text.ended
@@ -41,7 +43,7 @@ defmodule Beamcode.Opencode.Events do
   @doc "Returns :running, :waiting or :idle."
   def status(session_id) do
     cond do
-      pending_for(session_id) != [] -> :waiting
+      pending_for(session_id) != [] or forms_for(session_id) != [] -> :waiting
       :ets.member(@status, session_id) -> :running
       true -> :idle
     end
@@ -63,6 +65,19 @@ defmodule Beamcode.Opencode.Events do
 
   def pending_for(session_id) do
     :ets.match_object(@perms, {:_, %{"sessionID" => session_id}}) |> Enum.map(&elem(&1, 1))
+  rescue
+    ArgumentError -> []
+  end
+
+  @doc "Questions (OpenCode forms) waiting for an answer, each with its `sessionID`."
+  def pending_forms do
+    :ets.tab2list(@forms) |> Enum.map(&elem(&1, 1))
+  rescue
+    ArgumentError -> []
+  end
+
+  def forms_for(session_id) do
+    :ets.match_object(@forms, {:_, %{"sessionID" => session_id}}) |> Enum.map(&elem(&1, 1))
   rescue
     ArgumentError -> []
   end
@@ -95,6 +110,7 @@ defmodule Beamcode.Opencode.Events do
   def init(_) do
     :ets.new(@status, [:named_table, :public, read_concurrency: true])
     :ets.new(@perms, [:named_table, :public, read_concurrency: true])
+    :ets.new(@forms, [:named_table, :public, read_concurrency: true])
     :ets.new(@info, [:named_table, :public, read_concurrency: true])
     send(self(), :connect)
     {:ok, %{task: nil, buffer: "", connected: false}}
@@ -166,6 +182,7 @@ defmodule Beamcode.Opencode.Events do
     # Rebuild running/waiting state from the server, since we may have missed events.
     :ets.delete_all_objects(@status)
     :ets.delete_all_objects(@perms)
+    :ets.delete_all_objects(@forms)
 
     with {:ok, active} when is_map(active) <- Opencode.active_sessions() do
       for {sid, _} <- active do
@@ -173,6 +190,12 @@ defmodule Beamcode.Opencode.Events do
 
         with {:ok, perms} <- Opencode.session_permissions(sid) do
           Enum.each(perms, &:ets.insert(@perms, {&1["id"], &1}))
+        end
+
+        with {:ok, forms} when is_list(forms) <- Opencode.session_forms(sid) do
+          for f <- forms,
+              get_in(f, ["state", "status"]) in [nil, "pending"],
+              do: :ets.insert(@forms, {f["id"], Map.delete(f, "state")})
         end
       end
     end
@@ -208,7 +231,9 @@ defmodule Beamcode.Opencode.Events do
   defp dispatch(%{"type" => type} = event) do
     data = Map.get(event, "data") || %{}
     track(type, data, event)
-    sid = data["sessionID"]
+    # form.created has its session inside the form.
+    sid = data["sessionID"] || get_in(data, ["form", "sessionID"])
+    data = if sid, do: Map.put_new(data, "sessionID", sid), else: data
 
     if sid,
       do: Phoenix.PubSub.broadcast(Beamcode.PubSub, "oc:session:" <> sid, {:oc_event, type, data})
@@ -225,7 +250,14 @@ defmodule Beamcode.Opencode.Events do
   defp track("session.execution." <> _, %{"sessionID" => sid}, _) do
     :ets.delete(@status, sid)
     :ets.match_delete(@perms, {:_, %{"sessionID" => sid}})
+    :ets.match_delete(@forms, {:_, %{"sessionID" => sid}})
   end
+
+  defp track("form.created", %{"form" => %{"id" => id} = form}, _),
+    do: :ets.insert(@forms, {id, form})
+
+  defp track("form." <> kind, %{"id" => id}, _) when kind in ["replied", "cancelled"],
+    do: :ets.delete(@forms, id)
 
   defp track("permission.asked", %{"id" => id} = data, event) do
     :ets.insert(@perms, {id, Map.put(data, "location", event["location"])})

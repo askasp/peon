@@ -39,6 +39,24 @@ defmodule BeamcodeWeb.SessionChannelTest do
             [_id, "message"] ->
               data(conn, @messages)
 
+            [id, "form"] ->
+              data(conn, [
+                %{
+                  "id" => "frm_1",
+                  "sessionID" => id,
+                  "title" => "Questions",
+                  "fields" => [%{"key" => "q0", "type" => "string", "title" => "Pick one"}],
+                  "state" => %{"status" => "pending"}
+                },
+                %{
+                  "id" => "frm_0",
+                  "sessionID" => id,
+                  "title" => "Questions",
+                  "fields" => [],
+                  "state" => %{"status" => "answered", "answer" => %{}}
+                }
+              ])
+
             [_id, "diff"] ->
               data(conn, [
                 %{
@@ -61,6 +79,10 @@ defmodule BeamcodeWeb.SessionChannelTest do
           {:ok, body, conn} = Plug.Conn.read_body(conn)
           send(test, {:post, path, body})
           data(conn, %{})
+
+        {"DELETE", path} ->
+          send(test, {:delete, path})
+          data(conn, %{})
       end
     end)
 
@@ -81,6 +103,54 @@ defmodule BeamcodeWeb.SessionChannelTest do
            }
 
     assert [%{"file" => "lib/app.ex", "additions" => 3}] = reply.diff
+  end
+
+  test "joining lists the questions still waiting for an answer", %{socket: socket} do
+    {:ok, reply, _socket} = subscribe_and_join(socket, "session:ses_1", %{})
+    assert [%{"id" => "frm_1", "fields" => [%{"key" => "q0"}]}] = reply.forms
+  end
+
+  test "a question is answered, or skipped", %{socket: socket} do
+    {:ok, _, socket} = subscribe_and_join(socket, "session:ses_1", %{})
+    ref = push(socket, "form_reply", %{"id" => "frm_1", "answer" => %{"q0" => "Yes"}})
+    assert_reply ref, :ok, %{}
+    assert_received {:post, "/api/session/ses_1/form/frm_1/reply", body}
+    assert Jason.decode!(body) == %{"answer" => %{"q0" => "Yes"}}
+
+    ref = push(socket, "form_cancel", %{"id" => "frm_1"})
+    assert_reply ref, :ok, %{}
+    assert_received {:delete, "/api/session/ses_1/form/frm_1"}
+  end
+
+  test "a new question is pushed to the session", %{socket: socket} do
+    {:ok, _, _socket} = subscribe_and_join(socket, "session:ses_1", %{})
+
+    Phoenix.PubSub.broadcast(
+      Beamcode.PubSub,
+      "oc:session:ses_1",
+      {:oc_event, "form.created", %{"form" => %{"id" => "frm_1", "title" => "Questions"}}}
+    )
+
+    assert_push "forms", %{forms: [%{"id" => "frm_1"}]}
+  end
+
+  test "the model is switched with how hard it thinks", %{socket: socket} do
+    {:ok, _, socket} = subscribe_and_join(socket, "session:ses_1", %{})
+
+    ref =
+      push(socket, "set_model", %{
+        "model" => "opencode-go/deepseek-v4.1-flash",
+        "variant" => "low"
+      })
+
+    assert_reply ref, :ok, %{}
+    assert_received {:post, "/api/session/ses_1/model", body}
+
+    assert Jason.decode!(body)["model"] == %{
+             "id" => "deepseek-v4.1-flash",
+             "providerID" => "opencode-go",
+             "variant" => "low"
+           }
   end
 
   test "someone else's private session can't be joined", %{socket: socket} do

@@ -19,6 +19,7 @@ import { DiffView } from "@/components/session/DiffView";
 import { FileView, treeCall } from "@/components/project/FilesTab";
 import { Letter } from "@/components/desktop/Sidebar";
 import { PermResources } from "@/components/PermResources";
+import { FormCard } from "@/components/session/FormCard";
 import { SessionComposer } from "@/components/session/SessionComposer";
 import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap, UnderlineTabs } from "@/components/ui";
 import { CopyResult, RunProgress } from "@/components/session/RunProgress";
@@ -322,7 +323,15 @@ export default function SessionScreen() {
               onAnswer={(d) => s.answer(p.id, d)}
             />
           ))}
-          {s.status === "running" ? (
+          {s.forms.map((f) => (
+            <FormCard
+              key={f.id}
+              form={f}
+              onSend={(answer) => s.reply(f.id, answer)}
+              onSkip={() => s.skip(f.id)}
+            />
+          ))}
+          {s.status === "running" && s.forms.length === 0 ? (
             <View style={st.working}>
               <ActivityIndicator size="small" color={color.accent} />
               <Text style={st.workingText}>Working…</Text>
@@ -423,6 +432,7 @@ export default function SessionScreen() {
             options={options}
             agent={s.session?.agent ?? null}
             model={modelValue(s.session?.model)}
+            variant={s.session?.model?.variant ?? null}
             bottomPad={keyboard > 0 ? 10 : Math.max(insets.bottom, 10) + 4}
             send={(text, files) => {
               atEnd.current = true;
@@ -430,7 +440,7 @@ export default function SessionScreen() {
             }}
             findFiles={(query) => call("find_files", { query })}
             setAgent={(agent) => call("set_agent", { agent })}
-            setModel={(model) => call("set_model", { model })}
+            setModel={(model, variant) => call("set_model", { model, ...(variant ? { variant } : {}) })}
             onError={setError}
           />
         </View>

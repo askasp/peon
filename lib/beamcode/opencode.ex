@@ -212,6 +212,18 @@ defmodule Beamcode.Opencode do
     )
   end
 
+  ## Forms: questions the agent asks (OpenCode's question tool)
+
+  def session_forms(id), do: request(:get, "/api/session/#{id}/form", []) |> data()
+
+  @doc "`answer` maps each field's key to its value (a string, number, boolean or list of strings)."
+  def reply_form(session_id, form_id, answer) when is_map(answer),
+    do:
+      request(:post, "/api/session/#{session_id}/form/#{form_id}/reply", json: %{answer: answer})
+
+  def cancel_form(session_id, form_id),
+    do: request(:delete, "/api/session/#{session_id}/form/#{form_id}", [])
+
   ## Files, shell, worktrees
 
   def read_file(dir, path) do
