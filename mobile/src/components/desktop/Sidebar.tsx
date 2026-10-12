@@ -3,18 +3,20 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import { router, usePathname } from "expo-router";
 import { Icon } from "../Icon";
 import { Dot, kbProps } from "../ui";
+import { appPath, sidebarItems, useKb } from "@/lib/keys";
 import { signOut, usePeon } from "@/lib/peon";
 import { filters, folderHref, kindLabel, sortFolders, templates } from "@/lib/folders";
-import { color, tileColors } from "@/lib/theme";
+import { color, font, tileColors } from "@/lib/theme";
 import type { Project } from "@/lib/types";
 
-/** A sidebar row: highlights when hovered or current. */
+/** A sidebar row: highlights when hovered or current; `gkey` shows its key while a chord is armed. */
 export function NavRow({
   label,
   href,
   active,
   left,
   right,
+  gkey,
   testID,
 }: {
   label: string;
@@ -22,6 +24,7 @@ export function NavRow({
   active: boolean;
   left?: ReactNode;
   right?: ReactNode;
+  gkey?: string | null;
   testID?: string;
 }) {
   return (
@@ -36,6 +39,7 @@ export function NavRow({
         {label}
       </Text>
       {right}
+      {gkey ? <Text style={st.gkey}>{gkey}</Text> : null}
     </Pressable>
   );
 }
@@ -58,6 +62,15 @@ export function Letter({
       <Text style={[st.letterText, { color: tint.fg, fontSize: size * 0.48 }]}>
         {name.slice(0, 1).toUpperCase()}
       </Text>
+    </View>
+  );
+}
+
+/** The prefix + number that opens a sidebar item, in place of its letter while the prefix is armed. */
+function Num({ n }: { n: number }) {
+  return (
+    <View style={[st.letter, st.num]}>
+      <Text style={st.numText}>{n}</Text>
     </View>
   );
 }
@@ -104,6 +117,8 @@ export function Sidebar() {
   const inbox = usePeon((s) => s.inbox.length);
   const user = usePeon((s) => s.user);
   const connected = usePeon((s) => s.connected);
+  const keys = usePeon((s) => s.keys);
+  const { mode } = useKb();
   const [filter, setFilter] = useState("all");
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const newRow = useRef<View>(null);
@@ -128,6 +143,20 @@ export function Sidebar() {
 
   const { home, folders } = sortFolders(projects, filter);
 
+  // While the prefix is armed, numbers replace the letters (by the unfiltered order the
+  // keys use); in `g` mode each page shows its key, and Inbox its prefix key.
+  const nums = new Map(
+    sidebarItems(projects)
+      .slice(0, 9)
+      .map(({ project }, i) => [project.id, i + 1]),
+  );
+  const gkey = (href: string) =>
+    mode === "g"
+      ? keys?.globals.find((g) => appPath(g.path) === href)?.key
+      : mode === "prefix" && href === "/" && keys?.prefs.keymap === "tmux"
+        ? "i"
+        : null;
+
   const folderRow = (p: Project, label = p.name) => {
     const href = folderHref(p);
     return (
@@ -137,7 +166,13 @@ export function Sidebar() {
         label={label}
         href={href}
         active={path === href || path.startsWith(`${href}/`)}
-        left={<Letter name={label} system={p.kind === "system" || p.kind === "home"} />}
+        left={
+          mode === "prefix" && nums.has(p.id) ? (
+            <Num n={nums.get(p.id)!} />
+          ) : (
+            <Letter name={label} system={p.kind === "system" || p.kind === "home"} />
+          )
+        }
         right={meta(p)}
       />
     );
@@ -184,13 +219,24 @@ export function Sidebar() {
           href="/"
           active={path === "/"}
           right={inbox ? <Text style={st.count}>{inbox}</Text> : null}
+          gkey={gkey("/")}
           testID="side-inbox"
         />
-        <NavRow label="Schedules" href="/schedules" active={path === "/schedules"} />
+        <NavRow
+          label="Schedules"
+          href="/schedules"
+          active={path === "/schedules"}
+          gkey={gkey("/schedules")}
+        />
         {user?.admin ? (
-          <NavRow label="Connectors" href="/connectors" active={path === "/connectors"} />
+          <NavRow
+            label="Connectors"
+            href="/connectors"
+            active={path === "/connectors"}
+            gkey={gkey("/connectors")}
+          />
         ) : null}
-        <NavRow label="Settings" href="/settings" active={path === "/settings"} />
+        <NavRow label="Settings" href="/settings" active={path === "/settings"} gkey={gkey("/settings")} />
       </ScrollView>
       <View style={st.foot}>
         <View style={st.host}>
@@ -273,6 +319,18 @@ const st = StyleSheet.create({
   rowLabel: { flex: 1, fontSize: 14, color: color.textSoft },
   letter: { alignItems: "center", justifyContent: "center" },
   letterText: { fontWeight: "700" },
+  num: { width: 22, height: 22, borderRadius: 6, backgroundColor: color.accent },
+  numText: { fontSize: 11, fontWeight: "700", color: color.accentInk },
+  gkey: {
+    fontSize: 11,
+    fontWeight: "600",
+    fontFamily: font.mono,
+    color: color.accentInk,
+    backgroundColor: color.accent,
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    overflow: "hidden",
+  },
   meta: { fontSize: 11, color: color.faint, maxWidth: 96 },
   metaRow: { flexDirection: "row", alignItems: "center", gap: 4 },
   count: {

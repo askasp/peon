@@ -194,7 +194,7 @@ export function sidebarItems(projects: Project[]): { project: Project; href: str
 }
 
 // Our paths for the server's `g` destinations (LiveView paths).
-const appPath = (path: string) => (path === "/inbox" ? "/" : path);
+export const appPath = (path: string) => (path === "/inbox" ? "/" : path);
 
 let path = "/";
 let lastPath: string | null = null;
