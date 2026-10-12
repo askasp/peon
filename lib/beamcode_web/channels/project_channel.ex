@@ -11,6 +11,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     * `run` `{inputs?}` → `{session_id}` (routines)
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
+    * `branches` → `{branches}`: git branches a new chat can continue (`Beamcode.Branches`)
     * `trees` → `{trees}`: the chats with a worktree that has changes
       (`[%{ref, title, worktree, changed}]`, see `Beamcode.Worktrees`)
     * `list_files` `{path}` → `{path, entries, base}`; `open_file` `{path}` →
@@ -169,6 +170,17 @@ defmodule BeamcodeWeb.ProjectChannel do
         {:ok, %{}}
       else
         false -> {:error, %{message: "That file can't be saved here."}}
+        {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
+  def handle_in("branches", _params, socket) do
+    project = socket.assigns.project
+
+    ChannelTasks.reply_async(socket, fn ->
+      case Beamcode.Branches.list(project) do
+        {:ok, branches} -> {:ok, %{branches: branches}}
         {:error, reason} -> error(reason)
       end
     end)

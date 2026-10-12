@@ -294,6 +294,14 @@ defmodule Beamcode.Opencode do
     end
   end
 
-  def create_worktree(oc_project_id),
-    do: request(:post, "/api/worktree", json: %{projectID: oc_project_id})
+  @doc "A new worktree; `opts`: `:branch` (the ref to check out, detached) and `:name` (its folder)."
+  def create_worktree(oc_project_id, opts \\ []) do
+    body =
+      opts
+      |> Keyword.take([:branch, :name])
+      |> Map.new()
+      |> Map.put(:projectID, oc_project_id)
+
+    request(:post, "/api/worktree", json: body)
+  end
 end

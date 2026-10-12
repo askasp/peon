@@ -5,13 +5,20 @@ defmodule Beamcode.Sessions do
 
   @doc """
   Creates a session in the project's folder, or in a fresh git worktree when
-  `worktree: true` in a Code Folder (other Folders have one tree). Records who
-  started it.
+  `worktree: true` in a Code Folder (other Folders have one tree), or on an
+  existing branch with `branch: "name"` (its worktree, made when it has none).
+  Records who started it.
 
-  opts: :worktree, :scope, :schedule_key, :title, :agent, :model (%{"id", "providerID"})
+  opts: :worktree, :branch, :scope, :schedule_key, :title, :agent, :model (%{"id", "providerID"})
   """
   def start(%Project{} = project, user, opts \\ []) do
-    with {:ok, dir} <- directory(project, Keyword.get(opts, :worktree, false)) do
+    where =
+      case opts[:branch] do
+        b when is_binary(b) and b != "" and project.kind == "code" -> {:branch, b}
+        _ -> Keyword.get(opts, :worktree, false)
+      end
+
+    with {:ok, dir} <- directory(project, where) do
       body =
         %{location: %{directory: dir}}
         |> put_opt(:title, opts[:title])
@@ -106,6 +113,7 @@ defmodule Beamcode.Sessions do
   defp put_opt(map, key, value), do: Map.put(map, key, value)
 
   defp directory(project, false), do: {:ok, project.directory}
+  defp directory(project, {:branch, branch}), do: Beamcode.Branches.directory(project, branch)
 
   defp directory(%Project{kind: kind} = project, true) when kind != "code",
     do: {:ok, project.directory}

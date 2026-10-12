@@ -10,7 +10,8 @@ defmodule BeamcodeWeb.AppChannel do
     * `inbox` → `{items}`
     * `permission` `{session_id, id, decision}` → `{}` (decision: once | always | reject)
     * `dismiss_run` `{id}` → `{}`
-    * `new_session` `{project_id, text?, worktree?}` → `{session_id}`
+    * `new_session` `{project_id, text?, worktree?, branch?}` → `{session_id}`; `branch`
+      continues that branch in its worktree (made when it has none)
     * `routine` `{project_id}` → `{project, runs}`
     * `run_routine` `{project_id}` → `{session_id}`
     * `schedules` → `{schedules}`
@@ -158,7 +159,8 @@ defmodule BeamcodeWeb.AppChannel do
         if is_boolean(params["worktree"]), do: params["worktree"], else: project.always_worktree
 
       ChannelTasks.reply_async(socket, fn ->
-        with {:ok, session} <- Sessions.start(project, user, worktree: worktree),
+        with {:ok, session} <-
+               Sessions.start(project, user, worktree: worktree, branch: params["branch"]),
              {:ok, _} <- send_first(session, project, text) do
           {:ok, %{session_id: session["id"]}}
         else
