@@ -459,33 +459,35 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
           pane && (inFolder ? st.folderChatColumn : st.chatColumn),
         ]}
       >
-        {inFolder ? chatBar : null}
-        {transcript}
-        <ErrorLine message={error} />
-        {note ? <Text style={st.note}>{note}</Text> : null}
-        {s.run?.status === "running" ? (
-          <Text style={st.note}>Anything you send now is queued until the run is done.</Text>
-        ) : null}
-        <SessionComposer
-          queued={s.run?.status === "running"}
-          busy={busy}
-          options={options}
-          agent={s.session?.agent ?? null}
-          model={modelValue(s.session?.model)}
-          variant={s.session?.model?.variant ?? null}
-          bottomPad={keyboard > 0 ? 10 : Math.max(insets.bottom, 10) + 4}
-          send={(text, files) => {
-            follow.current = true;
-            return s.send(text, files);
-          }}
-          findFiles={(query) => call("find_files", { query })}
-          setAgent={(agent) => call("set_agent", { agent })}
-          setModel={(model, variant) => call("set_model", { model, ...(variant ? { variant } : {}) })}
-          onError={setError}
-          attached={attached}
-          keepAttached={wide}
-          onDetach={() => (wide ? setDismissed(viewKey) : inFolder?.onAttach(null))}
-        />
+        <View style={!inFolder && wide ? st.conversationWide : st.conversation}>
+          {inFolder ? chatBar : null}
+          {transcript}
+          <ErrorLine message={error} />
+          {note ? <Text style={st.note}>{note}</Text> : null}
+          {s.run?.status === "running" ? (
+            <Text style={st.note}>Anything you send now is queued until the run is done.</Text>
+          ) : null}
+          <SessionComposer
+            queued={s.run?.status === "running"}
+            busy={busy}
+            options={options}
+            agent={s.session?.agent ?? null}
+            model={modelValue(s.session?.model)}
+            variant={s.session?.model?.variant ?? null}
+            bottomPad={keyboard > 0 ? 10 : Math.max(insets.bottom, 10) + 4}
+            send={(text, files) => {
+              follow.current = true;
+              return s.send(text, files);
+            }}
+            findFiles={(query) => call("find_files", { query })}
+            setAgent={(agent) => call("set_agent", { agent })}
+            setModel={(model, variant) => call("set_model", { model, ...(variant ? { variant } : {}) })}
+            onError={setError}
+            attached={attached}
+            keepAttached={wide}
+            onDetach={() => (wide ? setDismissed(viewKey) : inFolder?.onAttach(null))}
+          />
+        </View>
       </View>
       {/* Desktop, in a Folder: its files beside the chat. */}
       {pane && inFolder ? (
@@ -889,6 +891,10 @@ const st = StyleSheet.create({
     borderLeftColor: color.hairline,
   },
   chatColumn: { flexGrow: 0, flexShrink: 0, flexBasis: 540, width: 540 },
+  conversation: { flex: 1, minWidth: 0 },
+  // A session's own screen fills the content area; keep it as narrow as the
+  // Folder's chat list (SessionsTab) instead of stretching across a wide window.
+  conversationWide: { flex: 1, width: "100%", maxWidth: 868, alignSelf: "center", minWidth: 0 },
   diffPane: { flex: 1, minHeight: 0, backgroundColor: "#0f0f12" },
   diffHead: {
     height: 46,
