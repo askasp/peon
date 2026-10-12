@@ -14,6 +14,9 @@ defmodule BeamcodeWeb.SessionChannel do
     * `set_model` `{model: "provider/id", variant?}`, `set_agent` `{agent}`
     * `find_files` `{query}` → `{items}` for `@` completion ("" lists the top folder)
     * `messages` (all of them again)
+    * `older` `{cursor}` → `{messages, older}`: the page of messages just older
+      than the one on screen, so a chat opens with the newest page and loads
+      earlier ones as you scroll up
     * `image` `{message_id, index}` → `{mime, data}`, a pasted image too big to come with its message
 
   Pushes:
@@ -33,6 +36,9 @@ defmodule BeamcodeWeb.SessionChannel do
   alias BeamcodeWeb.{AppJSON, ChannelTasks}
 
   @refetch_after 120
+  # Messages per page: the chat opens with the newest page, and older ones load
+  # as you scroll up (see the "older" request).
+  @page 30
   # The diff is big on a big change; while the agent works it's read at most this often.
   @diff_after 1500
   @decisions ~w(once always reject)
@@ -66,7 +72,7 @@ defmodule BeamcodeWeb.SessionChannel do
               tasks: %{}
             )
 
-          {messages, socket} = load_messages(socket)
+          {messages, older, socket} = load_messages(socket)
           socket = assign(socket, diff: load_diff(id))
 
           {:ok,
@@ -74,6 +80,7 @@ defmodule BeamcodeWeb.SessionChannel do
              session: session_json(session, project, record),
              project: AppJSON.project(project),
              messages: messages,
+             older: older,
              status: socket.assigns.status,
              perms: perms(id),
              forms: forms(id),
@@ -318,8 +325,29 @@ defmodule BeamcodeWeb.SessionChannel do
   end
 
   def handle_in("messages", _params, socket) do
-    {messages, socket} = load_messages(assign(socket, sent: %{}))
-    {:reply, {:ok, %{messages: messages}}, socket}
+    {messages, older, socket} = load_messages(assign(socket, sent: %{}))
+    {:reply, {:ok, %{messages: messages, older: older}}, socket}
+  end
+
+  # The page just older than `cursor`: the chat loads earlier messages as you
+  # scroll up, instead of fetching the whole history on open.
+  def handle_in("older", %{"cursor" => cursor}, socket) when is_binary(cursor) do
+    sid = socket.assigns.session_id
+
+    ChannelTasks.reply_async(socket, fn ->
+      case Opencode.messages_page(sid, limit: @page, cursor: cursor) do
+        {:ok, %{messages: messages, next: next}} ->
+          messages =
+            messages
+            |> Enum.reject(&(&1["type"] == "idle" and &1["outcome"] == "succeeded"))
+            |> Enum.map(&AppJSON.message/1)
+
+          {:ok, %{messages: messages, older: next}}
+
+        {:error, reason} ->
+          error(reason)
+      end
+    end)
   end
 
   # A pasted image too big to travel with its message (see AppJSON.message/1).
@@ -473,12 +501,13 @@ defmodule BeamcodeWeb.SessionChannel do
 
   ## Helpers
 
-  # Messages oldest first, as the app shows them. With `:changed`, only those
-  # that differ from what was last sent, plus the ids in order.
+  # The newest page of messages, oldest first, as the app shows them. With
+  # `:changed`, only the ones that differ from what was last sent, plus the ids
+  # in order. `:all` also returns the cursor for the page just older (or nil).
   defp load_messages(socket, mode \\ :all) do
     Beamcode.Instrument.span("session:load_messages", %{mode: mode}, fn ->
-      case Opencode.messages(socket.assigns.session_id) do
-        {:ok, messages} ->
+      case Opencode.messages_page(socket.assigns.session_id, limit: @page) do
+        {:ok, %{messages: messages, next: next}} ->
           messages =
             messages
             |> Enum.reject(&(&1["type"] == "idle" and &1["outcome"] == "succeeded"))
@@ -489,7 +518,7 @@ defmodule BeamcodeWeb.SessionChannel do
 
           case mode do
             :all ->
-              {messages, socket}
+              {messages, next, socket}
 
             :changed ->
               upsert = Enum.filter(messages, &(sent[&1["id"]] != :erlang.phash2(&1)))
@@ -497,10 +526,9 @@ defmodule BeamcodeWeb.SessionChannel do
           end
 
         {:error, _reason} ->
-          empty =
-            if mode == :all, do: [], else: %{upsert: [], ids: Map.keys(socket.assigns.sent)}
-
-          {empty, socket}
+          if mode == :all,
+            do: {[], nil, socket},
+            else: {%{upsert: [], ids: Map.keys(socket.assigns.sent)}, socket}
       end
     end)
   end

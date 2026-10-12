@@ -198,3 +198,19 @@ export type FormField = {
   url?: string;
 };
 export type Form = { id: string; title: string; fields: FormField[] };
+
+/** A task a Folder tracks with `tk` (`.tickets/*.md`): its state and progress notes. */
+export type TicketNote = { at: string; text: string };
+export type Ticket = {
+  id: string;
+  title: string;
+  status: "open" | "in_progress" | "closed";
+  type: string;
+  priority: number;
+  assignee?: string | null;
+  tags: string[];
+  deps: string[];
+  created?: string | null;
+  body: string;
+  notes: TicketNote[];
+};

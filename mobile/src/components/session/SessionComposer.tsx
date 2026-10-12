@@ -20,6 +20,7 @@ import { fileToAttachment, pickImage, type Attachment } from "@/lib/images";
 import { attachedText, type Attached } from "@/lib/attach";
 import { viewFor, viewInfo } from "@/lib/folders";
 import { useDictation, useVoiceSettings } from "@/lib/voice";
+import { useWide } from "@/lib/useWide";
 import { color, font } from "@/lib/theme";
 import type { SessionOptions } from "@/lib/types";
 
@@ -148,12 +149,119 @@ export function SessionComposer(p: Props) {
   const thinking = p.variant ?? current?.variant ?? null;
   const modelValue = p.model ?? current?.value ?? null;
 
+  const wide = useWide();
+
+  const field = (
+    <TextInput
+      ref={input}
+      testID="reply"
+      value={shown}
+      onChangeText={(v) => {
+        setDraft(v);
+        setPick(0);
+      }}
+      editable={!dictation.listening}
+      placeholder={
+        dictation.listening
+          ? "Listening…"
+          : p.queued
+            ? "Queue a follow-up…"
+            : p.busy
+              ? "Follow up"
+              : "Message"
+      }
+      placeholderTextColor={dictation.listening ? color.accentText : color.faint}
+      multiline
+      onKeyPress={(e: any) => {
+        if (onKey(e)) return;
+        if (Platform.OS === "web") {
+          // Desktop: the composer keys from Settings (OpenCode's input_* and agent_cycle).
+          const binds = getState().keys?.binds ?? {};
+          const ev = e.nativeEvent;
+          const is = (action: string, fallback: string) => bindingMatches(ev, binds[action] ?? fallback);
+          if (is("input_newline", "shift+return,alt+return,ctrl+j")) {
+            e.preventDefault?.();
+            setDraft((d) => d + "\n");
+          } else if (is("input_submit", "return")) {
+            e.preventDefault?.();
+            send(draft);
+          } else if (
+            is("input_clear", "ctrl+c") &&
+            // Native has no window.getSelection.
+            !(Platform.OS === "web" && window.getSelection()?.toString())
+          ) {
+            e.preventDefault?.();
+            setDraft("");
+          } else if (is("agent_cycle", "tab") || is("agent_cycle_reverse", "shift+tab")) {
+            const agents = p.options?.agents ?? [];
+            if (agents.length) {
+              e.preventDefault?.();
+              const step = is("agent_cycle_reverse", "shift+tab") ? -1 : 1;
+              const i = Math.max(0, agents.indexOf(p.agent ?? "build"));
+              p.setAgent(agents[(i + step + agents.length) % agents.length]).catch((err) =>
+                p.onError(err.message),
+              );
+            }
+          }
+        }
+      }}
+      style={st.input}
+    />
+  );
+
+  const mic = voice.dictation ? (
+    <Tap
+      hitSlop={6}
+      testID="mic"
+      style={[st.mic, dictation.listening && { backgroundColor: color.accentWash }]}
+      onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
+    >
+      <Icon
+        name={dictation.listening ? "stop" : "mic"}
+        size={dictation.listening ? 12 : 16}
+        color={dictation.listening ? color.accentText : color.muted}
+      />
+    </Tap>
+  ) : null;
+
+  const addButton = (inline: boolean) => (
+    <Tap
+      style={inline ? st.side : [st.round, { backgroundColor: color.field }]}
+      onPress={attach}
+      testID="attach"
+      aria-label="Add a file"
+    >
+      <Text style={inline ? st.sidePlus : st.plus}>+</Text>
+    </Tap>
+  );
+
+  const sendButton = (inline: boolean) => (
+    <Tap
+      haptic
+      style={
+        inline
+          ? [st.side, canSend ? st.sideGo : { backgroundColor: color.raised }]
+          : [st.round, canSend ? st.go : { backgroundColor: color.raised }]
+      }
+      onPress={() => send(draft)}
+      disabled={sending || !canSend}
+      testID="send"
+      aria-label="Send"
+    >
+      {sending ? (
+        <ActivityIndicator size="small" color={inline ? color.textDim : color.accentInk} />
+      ) : (
+        <Icon name="send" size={inline ? 16 : 18} color={canSend ? color.accentInk : color.faint} />
+      )}
+    </Tap>
+  );
+
   return (
     <View style={[st.wrap, { paddingBottom: p.bottomPad }]}>
       <Completions items={items} pick={pick} onPick={complete} style={st.popover} />
 
       {p.attached ? (
-        <View style={st.attachedRow}>
+        <View style={[st.attachedRow, !wide && st.rowIn]}>
           <View style={st.attached} testID="attached">
             <View style={st.attachedGlyph}>
               <Text style={st.attachedGlyphText}>{viewInfo[viewFor(p.attached.path)][1]}</Text>
@@ -170,7 +278,7 @@ export function SessionComposer(p: Props) {
       ) : null}
 
       {files.length ? (
-        <View style={st.files}>
+        <View style={[st.files, !wide && st.rowIn]}>
           {files.map((f, i) => (
             <View key={i} style={st.thumbWrap}>
               <Image source={{ uri: f.uri }} style={st.thumb} />
@@ -187,98 +295,26 @@ export function SessionComposer(p: Props) {
       ) : null}
 
       <View style={st.row}>
-        <Tap style={[st.round, { backgroundColor: color.field }]} onPress={attach} testID="attach">
-          <Text style={st.plus}>+</Text>
-        </Tap>
-        <View style={st.pill}>
-          <TextInput
-            ref={input}
-            testID="reply"
-            value={shown}
-            onChangeText={(v) => {
-              setDraft(v);
-              setPick(0);
-            }}
-            editable={!dictation.listening}
-            placeholder={
-              dictation.listening
-                ? "Listening…"
-                : p.queued
-                  ? "Queue a follow-up…"
-                  : p.busy
-                    ? "Follow up"
-                    : "Message"
-            }
-            placeholderTextColor={dictation.listening ? color.accentText : color.faint}
-            multiline
-            onKeyPress={(e: any) => {
-              if (onKey(e)) return;
-              if (Platform.OS === "web") {
-                // Desktop: the composer keys from Settings (OpenCode's input_* and agent_cycle).
-                const binds = getState().keys?.binds ?? {};
-                const ev = e.nativeEvent;
-                const is = (action: string, fallback: string) =>
-                  bindingMatches(ev, binds[action] ?? fallback);
-                if (is("input_newline", "shift+return,alt+return,ctrl+j")) {
-                  e.preventDefault?.();
-                  setDraft((d) => d + "\n");
-                } else if (is("input_submit", "return")) {
-                  e.preventDefault?.();
-                  send(draft);
-                } else if (
-                  is("input_clear", "ctrl+c") &&
-                  // Native has no window.getSelection.
-                  !(Platform.OS === "web" && window.getSelection()?.toString())
-                ) {
-                  e.preventDefault?.();
-                  setDraft("");
-                } else if (is("agent_cycle", "tab") || is("agent_cycle_reverse", "shift+tab")) {
-                  const agents = p.options?.agents ?? [];
-                  if (agents.length) {
-                    e.preventDefault?.();
-                    const step = is("agent_cycle_reverse", "shift+tab") ? -1 : 1;
-                    const i = Math.max(0, agents.indexOf(p.agent ?? "build"));
-                    p.setAgent(agents[(i + step + agents.length) % agents.length]).catch((err) =>
-                      p.onError(err.message),
-                    );
-                  }
-                }
-              }
-            }}
-            style={st.input}
-          />
-          {/* Voice is there, but quiet: a small mic inside the field. */}
-          {voice.dictation ? (
-            <Tap
-              hitSlop={6}
-              testID="mic"
-              style={[st.mic, dictation.listening && { backgroundColor: color.accentWash }]}
-              onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
-            >
-              <Icon
-                name={dictation.listening ? "stop" : "mic"}
-                size={dictation.listening ? 12 : 16}
-                color={dictation.listening ? color.accentText : color.muted}
-              />
-            </Tap>
-          ) : null}
-        </View>
-        <Tap
-          haptic
-          style={[st.round, canSend ? st.go : { backgroundColor: color.raised }]}
-          onPress={() => send(draft)}
-          disabled={sending || !canSend}
-          testID="send"
-        >
-          {sending ? (
-            <ActivityIndicator color={color.accentInk} />
-          ) : (
-            <Icon name="send" size={18} color={canSend ? color.accentInk : color.faint} />
-          )}
-        </Tap>
+        {wide ? (
+          <>
+            {addButton(false)}
+            <View style={st.pill}>
+              {field}
+              {mic}
+            </View>
+            {sendButton(false)}
+          </>
+        ) : (
+          <View style={[st.pill, st.pillFull]}>
+            {addButton(true)}
+            {field}
+            {mic}
+            {sendButton(true)}
+          </View>
+        )}
       </View>
 
-      <View style={st.chips}>
+      <View style={[st.chips, !wide && st.rowIn]}>
         <Pressable
           testID="agent-chip"
           onPress={() => setPicker("agent")}
@@ -404,6 +440,18 @@ const st = StyleSheet.create({
     outlineStyle: "none",
   } as any,
   round: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  // Phone: the + and send live inside the box, small, so it fills the width.
+  pillFull: { paddingLeft: 5 },
+  side: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginBottom: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sidePlus: { fontSize: 20, color: color.textDim, marginTop: -1 },
+  sideGo: { backgroundColor: color.accent },
   go: { backgroundColor: color.accent },
   plus: { fontSize: 22, color: color.textDim, marginTop: -2 },
   chips: { flexDirection: "row", gap: 6, paddingLeft: 52, alignItems: "center" },
@@ -446,5 +494,6 @@ const st = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  rowIn: { paddingLeft: 8 },
   popover: { bottom: "100%", left: 66, right: 14, marginBottom: 6 },
 });

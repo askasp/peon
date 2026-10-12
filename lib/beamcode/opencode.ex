@@ -219,6 +219,29 @@ defmodule Beamcode.Opencode do
     end
   end
 
+  @doc """
+  One page of a session's messages for windowed loading: the newest `limit`
+  messages, oldest first. Pass a previous page's `next` cursor to get the page
+  just older than it. `{:ok, %{messages: [...], next: cursor | nil}}`.
+  """
+  def messages_page(id, opts \\ []) do
+    limit = Keyword.get(opts, :limit, 30)
+
+    params =
+      case Keyword.get(opts, :cursor) do
+        c when is_binary(c) -> [limit: limit, cursor: c]
+        _ -> [limit: limit, order: "desc"]
+      end
+
+    case request(:get, "/api/session/#{id}/message", params: params) do
+      {:ok, %{"data" => messages} = body} when is_list(messages) ->
+        {:ok, %{messages: Enum.reverse(messages), next: get_in(body, ["cursor", "next"])}}
+
+      other ->
+        other
+    end
+  end
+
   def prompt(id, body), do: request(:post, "/api/session/#{id}/prompt", json: body) |> data()
 
   def command(id, body), do: request(:post, "/api/session/#{id}/command", json: body) |> data()

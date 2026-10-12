@@ -83,6 +83,15 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
     if (Platform.OS === "web" && node) node.scrollTop = node.scrollHeight;
     else list.current?.scrollToEnd({ animated: false });
   };
+  // The keyboard opening shrinks the list; keep the end in view. Typing itself
+  // must not scroll (that reads as the chat jittering), so only the keyboard.
+  const toEndRef = useRef(toEnd);
+  useEffect(() => {
+    toEndRef.current = toEnd;
+  });
+  useEffect(() => {
+    toEndRef.current();
+  }, [keyboard]);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<SessionOptions | null>(null);
   const [menu, setMenu] = useState(false);
@@ -317,39 +326,46 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
         height.current = layoutMeasurement.height;
         if (fromEnd <= 40) follow.current = true;
         else if (up) follow.current = false;
+        // Near the top: pull in the page of messages just above.
+        if (contentOffset.y < 160) s.loadOlder();
       }}
       scrollEventThrottle={16}
       onContentSizeChange={toEnd}
-      // The keyboard or a taller composer shrinks the list: keep the end in view.
-      onLayout={toEnd}
       ListHeaderComponent={
-        inFolder?.earlier.length ? (
-          <EarlierChats call={inFolder.ctx.call} chats={inFolder.earlier} />
-        ) : s.run && run ? (
-          <Card style={{ marginBottom: 6 }}>
-            <View style={st.runHead}>
-              <Text style={st.runTitle}>
-                Run · {s.run.schedule_key === "manual" ? "manual" : s.run.schedule_key}
-              </Text>
-              <Text style={{ color: run.tint, fontSize: 13 }}>{run.text}</Text>
+        <>
+          {s.loadingOlder ? (
+            <View style={st.earlierLoad}>
+              <ActivityIndicator size="small" color={color.muted} />
             </View>
-            <Text style={st.runMeta} numberOfLines={2}>
-              {[runWho(s.run, me?.id), inputsLabel(s.run.inputs)].filter(Boolean).join(" · ")}
-            </Text>
-            <View style={st.runActions}>
-              <Tap onPress={() => setFull(!full)} hitSlop={6}>
-                <Text style={{ color: color.accentText, fontSize: 13 }}>
-                  {full ? (runWorking ? "Hide transcript" : "Show the result only") : "Full transcript"}
+          ) : null}
+          {inFolder?.earlier.length ? (
+            <EarlierChats call={inFolder.ctx.call} chats={inFolder.earlier} />
+          ) : s.run && run ? (
+            <Card style={{ marginBottom: 6 }}>
+              <View style={st.runHead}>
+                <Text style={st.runTitle}>
+                  Run · {s.run.schedule_key === "manual" ? "manual" : s.run.schedule_key}
                 </Text>
-              </Tap>
-              {!runWorking ? <CopyResult items={s.items} /> : null}
-            </View>
-            {runWorking && !full ? <RunProgress items={s.items} status={s.status} /> : null}
-            {s.run.status !== "running" ? (
-              <Button label="Run again" kind="secondary" height={34} onPress={runAgain} />
-            ) : null}
-          </Card>
-        ) : null
+                <Text style={{ color: run.tint, fontSize: 13 }}>{run.text}</Text>
+              </View>
+              <Text style={st.runMeta} numberOfLines={2}>
+                {[runWho(s.run, me?.id), inputsLabel(s.run.inputs)].filter(Boolean).join(" · ")}
+              </Text>
+              <View style={st.runActions}>
+                <Tap onPress={() => setFull(!full)} hitSlop={6}>
+                  <Text style={{ color: color.accentText, fontSize: 13 }}>
+                    {full ? (runWorking ? "Hide transcript" : "Show the result only") : "Full transcript"}
+                  </Text>
+                </Tap>
+                {!runWorking ? <CopyResult items={s.items} /> : null}
+              </View>
+              {runWorking && !full ? <RunProgress items={s.items} status={s.status} /> : null}
+              {s.run.status !== "running" ? (
+                <Button label="Run again" kind="secondary" height={34} onPress={runAgain} />
+              ) : null}
+            </Card>
+          ) : null}
+        </>
       }
       ListFooterComponent={
         <View style={{ gap: 12 }}>
@@ -836,6 +852,7 @@ const st = StyleSheet.create({
   menuButton: { paddingHorizontal: 4 },
   menuDots: { fontSize: 22, color: color.text, marginTop: -6 },
   transcript: { padding: 16, paddingBottom: 44, gap: 14 },
+  earlierLoad: { alignItems: "center", paddingVertical: 10 },
   runMeta: { fontSize: 12.5, color: color.muted },
   runHead: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
   runTitle: { fontSize: 14, fontWeight: "600", color: color.text },

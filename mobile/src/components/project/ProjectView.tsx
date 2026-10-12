@@ -12,6 +12,7 @@ import { SessionsTab } from "./SessionsTab";
 import { SettingsTab } from "./SettingsTab";
 import { SessionChat } from "../session/SessionChat";
 import { SkillsTab } from "./SkillsTab";
+import { TasksTab } from "./TasksTab";
 import type { ProjectCtx, RoutineInput } from "./types";
 import { usePeon } from "@/lib/peon";
 import { useChannel } from "@/lib/useChannel";
@@ -23,7 +24,7 @@ import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
 import type { Project, SessionSummary } from "@/lib/types";
 
-type Tab = "chat" | "chats" | "files" | "runs" | "settings";
+type Tab = "chat" | "chats" | "files" | "runs" | "tasks" | "settings";
 type Section = "general" | "skills" | "schedules";
 
 // Old links (?tab=skills) land on the tab that has them now.
@@ -76,6 +77,7 @@ export function ProjectView({
         { value: "chats", label: "Chats" },
         { value: "files", label: "Files" },
         ...(routine ? [{ value: "runs" as Tab, label: "Runs" }] : []),
+        { value: "tasks", label: "Tasks" },
         { value: "settings", label: "Settings" },
       ];
   const [from, fromSection] = legacy[initialTab ?? ""] ?? [initialTab as Tab | undefined];
@@ -320,6 +322,8 @@ export function ProjectView({
         <FilesTab ctx={ctx} />
       ) : tab === "runs" ? (
         <RunsTab ctx={ctx} />
+      ) : tab === "tasks" ? (
+        <TasksTab ctx={ctx} />
       ) : (
         settingsView(ctx)
       )}

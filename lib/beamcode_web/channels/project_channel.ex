@@ -8,6 +8,9 @@ defmodule BeamcodeWeb.ProjectChannel do
 
   Requests:
     * `sessions` → `{sessions}`; `runs` → `{runs}`
+    * `tickets` → `{tickets}`: the Folder's `tk` tasks. `ticket_create`
+      `{params}` queues one, `ticket_status` `{id, status}` moves it, and
+      `ticket_note` `{id, text}` adds progress; each replies with `{tickets}`
     * `run` `{inputs?}` → `{session_id}` (routines)
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
@@ -48,6 +51,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     Routines,
     Schedules,
     Sessions,
+    Tickets,
     Vault,
     Worktrees
   }
@@ -180,6 +184,27 @@ defmodule BeamcodeWeb.ProjectChannel do
         {:error, reason} -> error(reason)
       end
     end)
+  end
+
+  ## Tasks (tk tickets in the Folder's .tickets/)
+
+  def handle_in("tickets", _params, socket) do
+    project = socket.assigns.project
+    ChannelTasks.reply_async(socket, fn -> ticket_reply(project) end)
+  end
+
+  def handle_in("ticket_create", %{"params" => params}, socket) when is_map(params) do
+    ticket_edit(socket, &Tickets.create(&1, params))
+  end
+
+  def handle_in("ticket_status", %{"id" => id, "status" => status}, socket)
+      when is_binary(id) and is_binary(status) do
+    ticket_edit(socket, &Tickets.set_status(&1, id, status))
+  end
+
+  def handle_in("ticket_note", %{"id" => id, "text" => text}, socket)
+      when is_binary(id) and is_binary(text) do
+    ticket_edit(socket, &Tickets.note(&1, id, text))
   end
 
   ## Skills and files
@@ -686,6 +711,28 @@ defmodule BeamcodeWeb.ProjectChannel do
   end
 
   defp inputs(_, _config), do: %{}
+
+  # The Folder's tasks, to reply after any change.
+  defp ticket_reply(project) do
+    {:ok, tickets} = Tickets.list(project)
+    {:ok, %{tickets: tickets}}
+  end
+
+  # A change to the Folder's tasks (owners and admins), replying with the new list.
+  defp ticket_edit(socket, fun) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      if ProjectTools.can_edit?(project, user) do
+        case fun.(project) do
+          {:error, reason} -> error(reason)
+          _ -> ticket_reply(project)
+        end
+      else
+        error("Only the folder's owner can change its tasks.")
+      end
+    end)
+  end
 
   # A change to the Folder's sources (owners and admins), replying with the new list.
   defp edit(socket, fun) do

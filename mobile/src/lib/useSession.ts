@@ -24,6 +24,8 @@ type SessionState = {
   forms: Form[];
   run: Run | null;
   diff: DiffFile[];
+  /** Cursor for the page of messages just older than the ones loaded, or null. */
+  older: string | null;
 };
 
 const initial: SessionState = {
@@ -40,6 +42,7 @@ const initial: SessionState = {
   forms: [],
   run: null,
   diff: [],
+  older: null,
 };
 
 const storedTextLength = (m: Message) =>
@@ -83,10 +86,13 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
 
     ch.on("messages", ({ upsert, ids }: { upsert: Message[]; ids: string[] }) =>
       setState((s) => {
+        // Older messages already loaded stay above the window the server tracks.
+        const kept = s.ids.filter((mid) => !ids.includes(mid));
+        const merged = [...kept, ...ids];
         const messages: Record<string, Message> = {};
-        for (const mid of ids) if (s.messages[mid]) messages[mid] = s.messages[mid];
+        for (const mid of merged) if (s.messages[mid]) messages[mid] = s.messages[mid];
         for (const m of upsert) messages[m.id] = m;
-        return { ...s, ids, messages, streaming: dropCaughtUp(s.streaming, messages) };
+        return { ...s, ids: merged, messages, streaming: dropCaughtUp(s.streaming, messages) };
       }),
     );
 
@@ -121,6 +127,7 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
           forms: r.forms ?? [],
           run: r.run,
           diff: r.diff ?? [],
+          older: r.older ?? null,
         }));
       })
       .receive("error", ({ reason }) =>
@@ -196,5 +203,49 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
   );
   const skip = useCallback((formId: string) => request(channel.current, "form_cancel", { id: formId }), []);
 
-  return { ...state, items, send, interrupt, answer, reply, skip, call };
+  // Older messages load a page at a time as you scroll up.
+  const olderRef = useRef<string | null>(null);
+  const loadingOlder = useRef(false);
+  const [olderBusy, setOlderBusy] = useState(false);
+  useEffect(() => {
+    olderRef.current = state.older;
+  }, [state.older]);
+  const loadOlder = useCallback(async () => {
+    const cursor = olderRef.current;
+    if (!cursor || loadingOlder.current) return;
+    loadingOlder.current = true;
+    setOlderBusy(true);
+    try {
+      const r = await request<{ messages: Message[]; older: string | null }>(channel.current, "older", {
+        cursor,
+      });
+      setState((s) => {
+        const messages = { ...s.messages };
+        const fresh: string[] = [];
+        for (const m of r.messages) {
+          if (!s.messages[m.id]) fresh.push(m.id);
+          messages[m.id] = m;
+        }
+        return { ...s, ids: [...fresh, ...s.ids], messages, older: r.older ?? null };
+      });
+      olderRef.current = r.older ?? null;
+    } catch {
+      // Leave the cursor as it was, so scrolling up can try again.
+    }
+    loadingOlder.current = false;
+    setOlderBusy(false);
+  }, []);
+
+  return {
+    ...state,
+    items,
+    send,
+    interrupt,
+    answer,
+    reply,
+    skip,
+    call,
+    loadOlder,
+    loadingOlder: olderBusy,
+  };
 }
