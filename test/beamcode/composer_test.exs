@@ -113,4 +113,75 @@ defmodule Beamcode.ComposerTest do
     assert Composer.prompt(%{skill: "review", task: ""}) == "/review"
     assert Composer.prompt(%{skill: nil, task: "hi"}) == "hi"
   end
+
+  describe "model and agent" do
+    @catalog %{
+      models: [
+        %{value: "anthropic/claude-sonnet-4", name: "Claude Sonnet 4"},
+        %{value: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5"},
+        %{value: "anthropic/claude-opus-4-1", name: "Claude Opus 4.1"},
+        %{value: "github-copilot/claude-opus-4.1", name: "Claude Opus 4.1"},
+        %{value: "openai/gpt-5", name: "GPT-5"},
+        %{value: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash"}
+      ],
+      agents: ["build", "plan", "reviewer"],
+      default_provider: "anthropic"
+    }
+
+    defp with_model(text) do
+      p = Composer.parse(text, @projects, @catalog)
+      {p.project && p.project.name, p.use_model && p.use_model.value, p.agent, p.task}
+    end
+
+    test "using a model, at the end or up front" do
+      assert with_model("new session in chatos-web, fix the login button using opus") ==
+               {"chatos-web", "anthropic/claude-opus-4-1", nil, "fix the login button"}
+
+      assert with_model("@amino-monorepo with gpt-5, find why checkout fails on CI") ==
+               {"amino-monorepo", "openai/gpt-5", nil, "find why checkout fails on CI"}
+    end
+
+    test "the newest match, versions written any way, the provider when named" do
+      assert {_, "anthropic/claude-sonnet-4-5", _, _} =
+               with_model("@chatos-web fix it with sonnet")
+
+      assert {_, "anthropic/claude-sonnet-4", _, _} =
+               with_model("@chatos-web fix it, model: claude sonnet 4")
+
+      assert {_, "anthropic/claude-sonnet-4-5", _, _} =
+               with_model("@chatos-web fix it on sonnet 4.5 model")
+
+      assert {_, "github-copilot/claude-opus-4.1", _, _} =
+               with_model("@chatos-web fix it using copilot opus")
+    end
+
+    test "an agent only with the word agent" do
+      assert with_model("new session in chatos-web with the plan agent, plan the settings page") ==
+               {"chatos-web", nil, "plan", "plan the settings page"}
+
+      assert with_model("@chatos-web use reviewer agent with opus to review the auth change") ==
+               {"chatos-web", "anthropic/claude-opus-4-1", "reviewer", "review the auth change"}
+    end
+
+    test "ordinary words stay in the task" do
+      assert with_model("@chatos-web replace the banner with flash messages") ==
+               {"chatos-web", nil, nil, "replace the banner with flash messages"}
+
+      assert with_model("@chatos-web make a plan for the migration") ==
+               {"chatos-web", nil, nil, "make a plan for the migration"}
+
+      assert with_model("@chatos-web deploy on 5 servers") ==
+               {"chatos-web", nil, nil, "deploy on 5 servers"}
+    end
+
+    test "no model on a run or a status question" do
+      p = Composer.parse("run stripe-reconcile using opus", @projects, @catalog)
+      assert {p.action, p.use_model} == {:run, nil}
+    end
+
+    test "resolve_model: unknown names are nil" do
+      assert Composer.resolve_model("gpt-9", @catalog.models) == nil
+      assert Composer.resolve_model("the", @catalog.models) == nil
+    end
+  end
 end

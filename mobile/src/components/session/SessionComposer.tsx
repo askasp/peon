@@ -16,7 +16,7 @@ import { useCommand } from "@/lib/commands";
 import { bindingMatches } from "@/lib/keys";
 import { getState } from "@/lib/peon";
 import { fileToAttachment, pickImage, type Attachment } from "@/lib/images";
-import { setVoiceSettings, useDictation, useVoiceSettings } from "@/lib/voice";
+import { useDictation, useVoiceSettings } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 import type { SessionOptions } from "@/lib/types";
 
@@ -50,7 +50,6 @@ function completing(draft: string): { kind: "slash" | "file"; query: string } | 
 const withCurrent = (list: string[], current: string) => (list.includes(current) ? list : [current, ...list]);
 
 export function SessionComposer(p: Props) {
-  const voice = useVoiceSettings();
   const [draft, setDraft] = useState("");
   const [files, setFiles] = useState<Attachment[]>([]);
   const [sending, setSending] = useState(false);
@@ -65,6 +64,7 @@ export function SessionComposer(p: Props) {
 
   // Talking adds to what is typed; you look it over and send it yourself.
   const join = (a: string, b: string) => (a.trim() && b ? `${a.trimEnd()} ${b}` : a + b);
+  const voice = useVoiceSettings();
   const dictation = useDictation((text) => setDraft((d) => join(d, text)));
   const shown = dictation.listening ? join(draft, dictation.transcript) : draft;
   useCommand("session:send", () => send(draft));
@@ -170,7 +170,7 @@ export function SessionComposer(p: Props) {
   const canSend = (draft.trim() !== "" || files.length > 0) && !dictation.listening;
   const modelName =
     p.options?.models.find((m) => m.value === p.model)?.name ??
-    (p.model ? p.model.split("/").pop() : "default model");
+    (p.model ? p.model.split("/").pop() : (p.options?.default?.name ?? "default model"));
 
   return (
     <View style={[st.wrap, { paddingBottom: p.bottomPad }]}>
@@ -216,97 +216,98 @@ export function SessionComposer(p: Props) {
         <Tap style={[st.round, { backgroundColor: color.field }]} onPress={attach} testID="attach">
           <Text style={st.plus}>+</Text>
         </Tap>
-        <TextInput
-          ref={input}
-          testID="reply"
-          value={shown}
-          onChangeText={(v) => {
-            setDraft(v);
-            setPick(0);
-          }}
-          editable={!dictation.listening}
-          placeholder={
-            dictation.listening
-              ? "Listening…"
-              : p.queued
-                ? "Queue a follow-up…"
-                : p.busy
-                  ? "Follow up"
-                  : "Reply, or / for commands and skills"
-          }
-          placeholderTextColor={dictation.listening ? color.accentText : color.faint}
-          multiline
-          onKeyPress={(e: any) => {
-            const k = e.nativeEvent.key;
-            if (items.length && (k === "ArrowDown" || k === "ArrowUp")) {
-              e.preventDefault?.();
-              setPick((i) => (i + (k === "ArrowDown" ? 1 : items.length - 1)) % items.length);
-            } else if (items.length && (k === "Tab" || (k === "Enter" && !e.nativeEvent.shiftKey))) {
-              e.preventDefault?.();
-              complete(items[pick] ?? items[0]);
-            } else if (Platform.OS === "web") {
-              // Desktop: the composer keys from Settings (OpenCode's input_* and agent_cycle).
-              const binds = getState().keys?.binds ?? {};
-              const ev = e.nativeEvent;
-              const is = (action: string, fallback: string) => bindingMatches(ev, binds[action] ?? fallback);
-              if (is("input_newline", "shift+return,alt+return,ctrl+j")) {
+        <View style={st.pill}>
+          <TextInput
+            ref={input}
+            testID="reply"
+            value={shown}
+            onChangeText={(v) => {
+              setDraft(v);
+              setPick(0);
+            }}
+            editable={!dictation.listening}
+            placeholder={
+              dictation.listening
+                ? "Listening…"
+                : p.queued
+                  ? "Queue a follow-up…"
+                  : p.busy
+                    ? "Follow up"
+                    : "Message"
+            }
+            placeholderTextColor={dictation.listening ? color.accentText : color.faint}
+            multiline
+            onKeyPress={(e: any) => {
+              const k = e.nativeEvent.key;
+              if (items.length && (k === "ArrowDown" || k === "ArrowUp")) {
                 e.preventDefault?.();
-                setDraft((d) => d + "\n");
-              } else if (is("input_submit", "return")) {
+                setPick((i) => (i + (k === "ArrowDown" ? 1 : items.length - 1)) % items.length);
+              } else if (items.length && (k === "Tab" || (k === "Enter" && !e.nativeEvent.shiftKey))) {
                 e.preventDefault?.();
-                send(draft);
-              } else if (
-                is("input_clear", "ctrl+c") &&
-                // Native has no window.getSelection.
-                !(Platform.OS === "web" && window.getSelection()?.toString())
-              ) {
-                e.preventDefault?.();
-                setDraft("");
-              } else if (is("agent_cycle", "tab") || is("agent_cycle_reverse", "shift+tab")) {
-                const agents = p.options?.agents ?? [];
-                if (agents.length) {
+                complete(items[pick] ?? items[0]);
+              } else if (Platform.OS === "web") {
+                // Desktop: the composer keys from Settings (OpenCode's input_* and agent_cycle).
+                const binds = getState().keys?.binds ?? {};
+                const ev = e.nativeEvent;
+                const is = (action: string, fallback: string) =>
+                  bindingMatches(ev, binds[action] ?? fallback);
+                if (is("input_newline", "shift+return,alt+return,ctrl+j")) {
                   e.preventDefault?.();
-                  const step = is("agent_cycle_reverse", "shift+tab") ? -1 : 1;
-                  const i = Math.max(0, agents.indexOf(p.agent ?? "build"));
-                  p.setAgent(agents[(i + step + agents.length) % agents.length]).catch((err) =>
-                    p.onError(err.message),
-                  );
+                  setDraft((d) => d + "\n");
+                } else if (is("input_submit", "return")) {
+                  e.preventDefault?.();
+                  send(draft);
+                } else if (
+                  is("input_clear", "ctrl+c") &&
+                  // Native has no window.getSelection.
+                  !(Platform.OS === "web" && window.getSelection()?.toString())
+                ) {
+                  e.preventDefault?.();
+                  setDraft("");
+                } else if (is("agent_cycle", "tab") || is("agent_cycle_reverse", "shift+tab")) {
+                  const agents = p.options?.agents ?? [];
+                  if (agents.length) {
+                    e.preventDefault?.();
+                    const step = is("agent_cycle_reverse", "shift+tab") ? -1 : 1;
+                    const i = Math.max(0, agents.indexOf(p.agent ?? "build"));
+                    p.setAgent(agents[(i + step + agents.length) % agents.length]).catch((err) =>
+                      p.onError(err.message),
+                    );
+                  }
                 }
               }
-            }
-          }}
-          style={[st.input, dictation.listening && { borderColor: color.accent, borderWidth: 1 }]}
-        />
+            }}
+            style={st.input}
+          />
+          {/* Voice is there, but quiet: a small mic inside the field. */}
+          {voice.dictation ? (
+            <Tap
+              hitSlop={6}
+              testID="mic"
+              style={[st.mic, dictation.listening && { backgroundColor: color.accentWash }]}
+              onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
+            >
+              <Icon
+                name={dictation.listening ? "stop" : "mic"}
+                size={dictation.listening ? 12 : 16}
+                color={dictation.listening ? color.accentText : color.muted}
+              />
+            </Tap>
+          ) : null}
+        </View>
         <Tap
-          hitSlop={6}
-          onPress={() => setVoiceSettings({ reply: !voice.reply })}
-          style={[st.round, { backgroundColor: voice.reply ? color.accentWash : color.field }]}
-          testID="voice-reply"
+          haptic
+          style={[st.round, canSend ? st.go : { backgroundColor: color.raised }]}
+          onPress={() => send(draft)}
+          disabled={sending || !canSend}
+          testID="send"
         >
-          <Icon name="speaker" size={16} color={voice.reply ? color.accentText : color.muted} />
+          {sending ? (
+            <ActivityIndicator color={color.accentInk} />
+          ) : (
+            <Icon name="send" size={18} color={canSend ? color.accentInk : color.faint} />
+          )}
         </Tap>
-        {canSend ? (
-          <Tap haptic style={[st.round, st.go]} onPress={() => send(draft)} disabled={sending} testID="send">
-            {sending ? (
-              <ActivityIndicator color={color.accentInk} />
-            ) : (
-              <Icon name="send" size={18} color={color.accentInk} />
-            )}
-          </Tap>
-        ) : (
-          <Tap
-            haptic
-            testID="mic"
-            style={[st.round, st.go, dictation.listening && { backgroundColor: color.textStrong }]}
-            onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
-          >
-            <Icon
-              name={dictation.listening ? "stop" : "mic"}
-              size={dictation.listening ? 14 : 18}
-              color={color.accentInk}
-            />
-          </Tap>
-        )}
       </View>
 
       <View style={st.chips}>
@@ -350,12 +351,15 @@ export function SessionComposer(p: Props) {
         items={(p.model && !(p.options?.models ?? []).some((m) => m.value === p.model)
           ? [{ value: p.model, name: p.model }, ...(p.options?.models ?? [])]
           : (p.options?.models ?? [])
-        ).map((m) => ({
-          key: m.value,
-          label: m.name,
-          detail: m.value,
-          active: m.value === p.model,
-        }))}
+        )
+          .map((m) => ({
+            key: m.value,
+            label: m.name,
+            detail: m.value === p.options?.default?.value ? `${m.value} · default` : m.value,
+            active: p.model ? m.value === p.model : m.value === p.options?.default?.value,
+          }))
+          // The one in use first.
+          .sort((a, b) => Number(b.active) - Number(a.active))}
         onClose={() => setPicker(null)}
         onPick={(m) => {
           setPicker(null);
@@ -376,12 +380,27 @@ const st = StyleSheet.create({
     position: "relative",
   },
   row: { flexDirection: "row", alignItems: "flex-end", gap: 8 },
+  pill: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "flex-end",
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: color.field,
+    paddingRight: 5,
+  },
+  mic: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    marginBottom: 5,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   input: {
     flex: 1,
     minHeight: 44,
     maxHeight: 160,
-    borderRadius: 22,
-    backgroundColor: color.field,
     paddingHorizontal: 16,
     paddingTop: 12,
     paddingBottom: 12,

@@ -1,18 +1,8 @@
 import { useState } from "react";
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router } from "expo-router";
-import {
-  Button,
-  Card,
-  Dot,
-  Empty,
-  ErrorLine,
-  LargeTitle,
-  Screen,
-  SectionLabel,
-  Segmented,
-  Tap,
-} from "@/components/ui";
+import { Button, Card, Dot, Empty, ErrorLine, LargeTitle, Screen, SectionLabel, Tap } from "@/components/ui";
+import { Letter } from "@/components/desktop/Sidebar";
 import { ask, refreshInbox, usePeon } from "@/lib/peon";
 import { PermResources } from "@/components/PermResources";
 import { ago, duration } from "@/lib/time";
@@ -24,8 +14,6 @@ import type { InboxItem } from "@/lib/types";
 export default function Inbox() {
   const user = usePeon((s) => s.user);
   const inbox = usePeon((s) => s.inbox);
-  const [filter, setFilter] = useState<"mine" | "team" | "all">("all");
-  const shown = inbox.filter((i) => filter === "all" || (filter === "mine" ? i.mine : !i.mine));
   const running = usePeon((s) => s.running);
   const connected = usePeon((s) => s.connected);
   const [refreshing, setRefreshing] = useState(false);
@@ -65,19 +53,7 @@ export default function Inbox() {
         </LargeTitle>
         <Text style={st.summary}>{connected ? summary : "Connecting…"}</Text>
 
-        {inbox.length ? (
-          <Segmented
-            options={[
-              { value: "mine", label: `Mine · ${inbox.filter((i) => i.mine).length}` },
-              { value: "team", label: `Team · ${inbox.filter((i) => !i.mine).length}` },
-              { value: "all", label: `All · ${inbox.length}` },
-            ]}
-            value={filter}
-            onChange={setFilter}
-          />
-        ) : null}
-
-        {shown.map((item) => (
+        {inbox.map((item) => (
           <InboxCard key={item.key} item={item} />
         ))}
 
@@ -115,6 +91,18 @@ function KindTile({ glyph, tint, bg }: { glyph: string; tint: string; bg: string
   );
 }
 
+/** Where a card comes from: the Folder's letter and name, then a detail. */
+function Source({ name, detail }: { name: string; detail: string }) {
+  return (
+    <View style={st.source}>
+      <Letter name={name} size={16} />
+      <Text style={st.meta} numberOfLines={1}>
+        {name} · {detail}
+      </Text>
+    </View>
+  );
+}
+
 function InboxCard({ item }: { item: InboxItem }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -141,9 +129,7 @@ function InboxCard({ item }: { item: InboxItem }) {
           <View style={st.cardHead}>
             <KindTile glyph="!" tint={color.needs} bg={color.needsWash} />
             <Text style={[st.kind, { color: color.needs }]}>Permission</Text>
-            <Text style={st.meta} numberOfLines={1}>
-              {item.project.name} · {item.session.title} · {item.mine ? "your session" : "team"}
-            </Text>
+            <Source name={item.project.name} detail={item.session.title} />
           </View>
           <Text style={st.cardText}>{perm.title}</Text>
           <PermResources resources={perm.resources} />
@@ -151,20 +137,15 @@ function InboxCard({ item }: { item: InboxItem }) {
           <View style={st.actions}>
             <Button
               label="Allow once"
+              height={44}
               style={{ flex: 1 }}
               busy={busy === "once"}
               onPress={() => reply("once")}
             />
             <Button
-              label="Always"
-              kind="secondary"
-              style={{ flex: 1 }}
-              busy={busy === "always"}
-              onPress={() => reply("always")}
-            />
-            <Button
               label="Deny"
               kind="secondary"
+              height={44}
               style={{ flex: 1 }}
               busy={busy === "reject"}
               onPress={() => reply("reject")}
@@ -189,10 +170,7 @@ function InboxCard({ item }: { item: InboxItem }) {
           <Text style={[st.kind, { color: failed ? color.red : color.teal }]}>
             {failed ? "Run failed" : "Run finished"}
           </Text>
-          <Text style={st.meta}>
-            {item.project.name} · {run.schedule_key} · {run.scope === "private" ? "only you" : "team"} ·{" "}
-            {ago(run.finished ?? run.started)}
-          </Text>
+          <Source name={item.project.name} detail={ago(run.finished ?? run.started)} />
         </View>
         <Text style={st.cardText}>
           {run.error || run.summary || `${run.schedule_key} ran for ${duration(run.started, run.finished)}.`}
@@ -201,6 +179,7 @@ function InboxCard({ item }: { item: InboxItem }) {
         <View style={st.actions}>
           <Button
             label="Open"
+            height={44}
             style={{ flex: 1 }}
             disabled={!run.session_id}
             onPress={() => router.push(`/session/${run.session_id}`)}
@@ -208,6 +187,7 @@ function InboxCard({ item }: { item: InboxItem }) {
           <Button
             label="Dismiss"
             kind="secondary"
+            height={44}
             style={{ flex: 1 }}
             busy={busy === "dismiss"}
             onPress={() => act("dismiss", () => ask("dismiss_run", { id: run.id }))}
@@ -235,7 +215,8 @@ const st = StyleSheet.create({
   kindTile: { width: 26, height: 26, borderRadius: 7, alignItems: "center", justifyContent: "center" },
   kindGlyph: { fontSize: 13, fontWeight: "700" },
   kind: { fontSize: 12, fontWeight: "600" },
-  meta: { fontSize: 12, color: color.muted, flexShrink: 1, marginLeft: "auto" },
+  meta: { fontSize: 12, color: color.muted, flexShrink: 1 },
+  source: { flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, marginLeft: "auto" },
   cardText: { fontSize: 15, lineHeight: 21, color: color.text },
   actions: { flexDirection: "row", gap: 8 },
   running: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 6, paddingHorizontal: 2 },

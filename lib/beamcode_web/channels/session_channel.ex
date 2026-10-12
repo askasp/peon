@@ -130,6 +130,8 @@ defmodule BeamcodeWeb.SessionChannel do
     dir = Sessions.session_dir(socket.assigns.session, socket.assigns.project)
 
     ChannelTasks.reply_async(socket, fn ->
+      default = Task.async(fn -> Opencode.default_model(dir) end)
+
       agents =
         case Opencode.agents(dir) do
           {:ok, list} -> for a <- list, a["mode"] != "subagent", !a["hidden"], do: a["id"]
@@ -148,7 +150,18 @@ defmodule BeamcodeWeb.SessionChannel do
             []
         end
 
-      {:ok, %{agents: agents, models: models, slash: Sessions.slash_items(dir, 2)}}
+      # Named, so the chip says which model "no pick" means.
+      default =
+        case Task.yield(default, 15_000) || Task.shutdown(default) do
+          {:ok, {:ok, %{"providerID" => p, "id" => id} = m}} ->
+            %{name: m["name"] || id, value: "#{p}/#{id}"}
+
+          _ ->
+            nil
+        end
+
+      {:ok,
+       %{agents: agents, models: models, default: default, slash: Sessions.slash_items(dir, 2)}}
     end)
   end
 
@@ -254,7 +267,7 @@ defmodule BeamcodeWeb.SessionChannel do
 
     case Schedules.run_for_session(sid) do
       nil ->
-        {:reply, {:error, %{message: "This session isn't a routine run."}}, socket}
+        {:reply, {:error, %{message: "This session isn't a procedure run."}}, socket}
 
       run ->
         ChannelTasks.reply_async(socket, fn ->

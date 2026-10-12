@@ -201,6 +201,15 @@ defmodule Beamcode.ProjectTools do
   end
 
   @doc "Deletes a schedule, unless it is someone else's private one."
+  def pause_schedule(%Project{} = project, key, paused, user) do
+    with :ok <- may_change(existing_schedule(project, key), user),
+         :ok <- Schedules.set_paused(project, key, paused) do
+      :ok
+    else
+      {:error, msg} -> {:error, format(msg)}
+    end
+  end
+
   def delete_schedule(%Project{} = project, key, user) do
     with :ok <- may_change(existing_schedule(project, key), user),
          :ok <- Schedules.delete(project, key) do

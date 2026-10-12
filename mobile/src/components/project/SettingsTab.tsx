@@ -1,13 +1,18 @@
 import { useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
-import { Button, ErrorLine, Group, Loading, SectionLabel, Toggle } from "../ui";
+import { Button, ErrorLine, Group, Loading, SectionLabel, Segmented, Tap, Toggle } from "../ui";
+import { templateName } from "@/lib/folders";
+import { useWide } from "@/lib/useWide";
+import { FileView } from "./FilesTab";
 import { confirm } from "@/lib/confirm";
 import { useLoad } from "@/lib/useLoad";
-import { color } from "@/lib/theme";
+import { color, font } from "@/lib/theme";
 import type { ProjectCtx } from "./types";
 
 type Settings = {
+  directory: string;
+  skills: { name: string; path: string }[];
   settings: { scope: string; always_worktree: boolean; protect_default_branch: boolean };
   github: { repo: string | null; hint: string | null } | null;
   connectors: { name: string; tools: number; ready: boolean; granted: boolean }[];
@@ -15,9 +20,20 @@ type Settings = {
   admin: boolean;
 };
 
-/** Who sees the project, worktrees and branch protection, GitHub access, connectors. */
-export function SettingsTab({ ctx }: { ctx: ProjectCtx }) {
+/**
+ * The template it came from, its instructions and skills, who sees it,
+ * worktrees and branch protection, GitHub access, connectors.
+ */
+export function SettingsTab({
+  ctx,
+  onSection,
+}: {
+  ctx: ProjectCtx;
+  onSection: (s: "skills" | "schedules") => void;
+}) {
   const [version, setVersion] = useState(0);
+  const wide = useWide();
+  const [picked, setPicked] = useState("AGENTS.md");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -49,42 +65,94 @@ export function SettingsTab({ ctx }: { ctx: ProjectCtx }) {
   const p = ctx.project;
   const edit = data.can_edit;
 
-  return (
-    <ScrollView contentContainerStyle={st.body}>
+  const settings = (
+    <ScrollView style={wide ? st.leftWide : null} contentContainerStyle={st.body}>
       {note ? <Text style={st.note}>{note}</Text> : null}
       <ErrorLine message={error} />
 
-      <Group>
-        <Row label="Only me" detail="Hide this project from the team.">
-          <Toggle
-            label="Only me"
-            value={s.scope === "private"}
-            onChange={(v) => edit && save({ scope: v ? "private" : "team" })}
-          />
-        </Row>
-        {p.kind === "code" ? (
-          <>
-            <Row label="New sessions in a worktree" detail="Each session gets its own git worktree." top>
-              <Toggle
-                label="New sessions in a worktree"
-                value={s.always_worktree}
-                onChange={(v) => edit && save({ always_worktree: String(v) })}
-              />
-            </Row>
-            <Row
+      <View style={st.card}>
+        <Text style={st.cardTitle}>{p.kind === "home" ? "Home" : `${templateName[p.kind]} template`}</Text>
+        <Text style={st.hint}>
+          {p.kind === "home"
+            ? "Your private Folder. General chats and what they make live here."
+            : `Set up from the ${templateName[p.kind]} template. After that it works like any other Folder.`}
+        </Text>
+      </View>
+
+      <Text style={st.heading}>Instructions</Text>
+      <View style={st.group}>
+        {[
+          { name: "AGENTS.md", path: "AGENTS.md", sub: "What the agent should know here" },
+          ...data.skills.map((k) => ({ name: `/${k.name}`, path: k.path, sub: "Skill" })),
+        ].map((x) => (
+          <Tap
+            key={x.path}
+            kb="row"
+            onPress={() =>
+              wide
+                ? setPicked(x.path)
+                : router.push({ pathname: "/view" as any, params: { project: String(p.id), path: x.path } })
+            }
+            style={[st.item, st.itemLine, wide && picked === x.path && { backgroundColor: color.raised }]}
+          >
+            <View style={st.glyph}>
+              <Text style={st.glyphText}>¶</Text>
+            </View>
+            <View style={{ flex: 1, gap: 1 }}>
+              <Text style={st.itemMono}>{x.name}</Text>
+              <Text style={st.itemSub}>{x.sub}</Text>
+            </View>
+            <Text style={st.chev}>›</Text>
+          </Tap>
+        ))}
+        <Tap kb="row" testID="settings-new-skill" onPress={() => onSection("skills")} style={st.item}>
+          <Text style={[st.itemTitle, { color: color.accentText }]}>+ New skill</Text>
+        </Tap>
+      </View>
+
+      <Text style={st.heading}>Who can see it</Text>
+      <Segmented
+        options={[
+          { value: "private", label: "Only you" },
+          { value: "team", label: "Team" },
+        ]}
+        value={s.scope === "private" ? "private" : "team"}
+        onChange={(v) => edit && p.kind !== "home" && save({ scope: v })}
+      />
+
+      {p.kind === "code" ? (
+        <Group>
+          <Row label="New worktree for each chat">
+            <Toggle
+              label="New worktree for each chat"
+              value={s.always_worktree}
+              onChange={(v) => edit && save({ always_worktree: String(v) })}
+            />
+          </Row>
+          <Row label="Protect the default branch" detail="Chats can't push to it; they push branches." top>
+            <Toggle
               label="Protect the default branch"
-              detail="Sessions can't push to it; they push branches."
-              top
-            >
-              <Toggle
-                label="Protect the default branch"
-                value={s.protect_default_branch}
-                onChange={(v) => edit && save({ protect_default_branch: String(v) })}
-              />
-            </Row>
-          </>
-        ) : null}
-      </Group>
+              value={s.protect_default_branch}
+              onChange={(v) => edit && save({ protect_default_branch: String(v) })}
+            />
+          </Row>
+        </Group>
+      ) : null}
+
+      {p.kind !== "routine" ? (
+        <View style={st.group}>
+          <Tap kb="row" testID="settings-schedules" onPress={() => onSection("schedules")} style={st.item}>
+            <View style={{ flex: 1, gap: 1 }}>
+              <Text style={st.itemTitle}>Schedules</Text>
+              <Text style={st.itemSub}>{p.schedule ?? "None"}</Text>
+            </View>
+            <Text style={st.chev}>›</Text>
+          </Tap>
+        </View>
+      ) : null}
+      <Text style={st.path} selectable>
+        {data.directory}
+      </Text>
       {!edit ? <Text style={st.hint}>Only the owner or an admin can change these.</Text> : null}
 
       {data.github ? (
@@ -191,6 +259,17 @@ export function SettingsTab({ ctx }: { ctx: ProjectCtx }) {
       ) : null}
     </ScrollView>
   );
+
+  // Web: the settings beside the instruction file that's picked.
+  if (!wide) return settings;
+  return (
+    <View style={st.split}>
+      {settings}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <FileView key={picked} call={ctx.call} path={picked} />
+      </View>
+    </View>
+  );
 }
 
 function Row({
@@ -216,7 +295,36 @@ function Row({
 }
 
 const st = StyleSheet.create({
-  body: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40, gap: 8 },
+  split: { flex: 1, minHeight: 0, flexDirection: "row" },
+  leftWide: { width: 440, flexGrow: 0, borderRightWidth: 1, borderRightColor: color.hairline },
+  card: { padding: 14, borderRadius: 14, backgroundColor: color.card, gap: 4 },
+  cardTitle: { fontSize: 15, color: color.text },
+  heading: { fontSize: 13, color: color.muted, marginTop: 4 },
+  group: { borderRadius: 14, backgroundColor: color.card, overflow: "hidden" },
+  item: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    minHeight: 52,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  itemLine: { borderBottomWidth: 1, borderBottomColor: color.divider },
+  glyph: {
+    width: 30,
+    height: 30,
+    borderRadius: 7,
+    backgroundColor: color.divider,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  glyphText: { fontSize: 12, color: color.textDim },
+  itemTitle: { fontSize: 15, color: color.text },
+  itemMono: { fontSize: 14, fontFamily: font.mono, color: color.text },
+  itemSub: { fontSize: 12, color: color.muted },
+  chev: { fontSize: 18, color: "#5d5d66" },
+  path: { fontSize: 12, fontFamily: font.mono, color: color.faint },
+  body: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40, gap: 12, maxWidth: 760, width: "100%" },
   section: { paddingTop: 12, paddingLeft: 4 },
   row: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 14, paddingVertical: 10 },
   top: { borderTopWidth: 1, borderTopColor: color.divider },

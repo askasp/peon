@@ -1,9 +1,21 @@
 import { useState } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { Markdown } from "./Markdown";
+import { viewFor, viewInfo, type ViewKind } from "@/lib/folders";
+
 import { Tap } from "./ui";
 import { color, font } from "@/lib/theme";
 import type { Message } from "@/lib/types";
+
+const opensAs: Record<ViewKind, string> = {
+  doc: "Markdown · opens as a document",
+  canvas: "HTML · opens in the canvas",
+  app: "HTML · opens as an app",
+  table: "Data · opens as a table",
+  image: "Image",
+  code: "Code",
+  diff: "Diff",
+};
 
 // The session's messages: your messages as bubbles, replies as text, the
 // model's thinking folded away, and tool calls folded into one "Ran N steps"
@@ -20,7 +32,9 @@ export type Block =
   | { kind: "thinking"; key: string; text: string }
   | { kind: "steps"; key: string; tools: Tool[]; from?: number; to?: number }
   | { kind: "shell"; key: string; command: string; output: string }
-  | { kind: "note"; key: string; text: string; tint?: string };
+  | { kind: "note"; key: string; text: string; tint?: string }
+  /** A file the agent wrote or edited, once per message. */
+  | { kind: "file"; key: string; path: string; verb: "Wrote" | "Edited" };
 
 const base = (p?: string) => (p ? p.split("/").pop() : "");
 
@@ -95,7 +109,8 @@ export function toBlocks(items: Message[]): Block[] {
           ),
         });
         break;
-      case "assistant":
+      case "assistant": {
+        const files = new Map<string, "Wrote" | "Edited">();
         (m.content ?? []).forEach((p: any, i) => {
           if (p.type === "reasoning" && p.text?.trim()) {
             out.push({ kind: "thinking", key: `${m.id}-r${i}`, text: p.text });
@@ -112,11 +127,16 @@ export function toBlocks(items: Message[]): Block[] {
               output: toolOutput(p.state),
             });
             b.to = m.time?.completed ?? b.to;
+            const path = input?.filePath ?? input?.path;
+            if (p.state?.status === "completed" && typeof path === "string" && /^(write|edit)$/.test(p.name))
+              files.set(path, files.get(path) ?? (p.name === "write" ? "Wrote" : "Edited"));
           }
         });
+        for (const [path, verb] of files) out.push({ kind: "file", key: `${m.id}-f-${path}`, path, verb });
         if (m.error?.message)
           out.push({ kind: "note", key: `${m.id}-err`, text: m.error.message, tint: color.red });
         break;
+      }
       case "shell":
         out.push({
           kind: "shell",
@@ -165,8 +185,16 @@ export function BlockView({
   block,
   onImage,
   loadImage,
+  onFile,
+  viewing,
+  rel = (p) => p,
 }: {
   block: Block;
+  /** Opens a file card's file; `viewing` is the one open now (as `rel` shows it). */
+  onFile?: (path: string) => void;
+  viewing?: string | null;
+  /** A file's path as shown (relative to the folder). */
+  rel?: (path: string) => string;
   onImage?: (uri: string) => void;
   /** Fetches a big image's data URI (see `Img`). */
   loadImage?: (img: Img) => Promise<string>;
@@ -188,6 +216,26 @@ export function BlockView({
   }
 
   switch (block.kind) {
+    case "file": {
+      const on = viewing != null && rel(block.path) === viewing;
+      const kind = viewFor(rel(block.path));
+      return (
+        <Tap onPress={() => onFile?.(block.path)} style={[st.fileCard, on && st.fileCardOn]} kb="row">
+          <View style={[st.fileGlyph, on && { backgroundColor: color.accentWash }]}>
+            <Text style={[st.fileGlyphText, on && { color: color.accentText }]}>{viewInfo[kind][1]}</Text>
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={st.fileText} numberOfLines={1}>
+              {block.verb} {rel(block.path)}
+            </Text>
+            <Text style={st.fileSub} numberOfLines={1}>
+              {opensAs[kind]}
+            </Text>
+          </View>
+          {on ? <Text style={st.fileOn}>In view</Text> : <Text style={st.fileChev}>›</Text>}
+        </Tap>
+      );
+    }
     case "user":
       return (
         <View style={st.userWrap}>
@@ -293,6 +341,31 @@ export function BlockView({
 }
 
 const st = StyleSheet.create({
+  fileCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: color.border,
+    backgroundColor: color.card,
+  },
+  fileCardOn: { borderColor: color.accentBorder, backgroundColor: color.accentCard },
+  fileGlyph: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: color.divider,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  fileGlyphText: { fontSize: 13, color: color.textDim },
+  fileText: { fontSize: 14, color: color.text },
+  fileSub: { fontSize: 12, color: color.muted },
+  fileChev: { fontSize: 18, color: "#5d5d66" },
+  fileOn: { fontSize: 12, color: color.accentText },
   userWrap: { alignItems: "flex-end" },
   user: {
     maxWidth: "82%",

@@ -7,7 +7,7 @@ export type User = { id: number; username: string; admin: boolean };
 export type Project = {
   id: number;
   name: string;
-  kind: "code" | "chat" | "routine" | "system";
+  kind: "code" | "chat" | "document" | "design" | "dataset" | "home" | "routine" | "system";
   scope: "team" | "private";
   always_worktree: boolean;
   default_branch: string | null;
@@ -79,6 +79,7 @@ export type Schedule = {
   scope: "team" | "me";
   owner: string | null;
   prompt: string;
+  paused: boolean;
   next: string | null;
   last: Run | null;
 };
@@ -134,6 +135,8 @@ export type DiffFile = {
 export type SessionOptions = {
   agents: string[];
   models: { name: string; value: string }[];
+  /** The model used when none is picked. */
+  default?: { name: string; value: string } | null;
   slash: { name: string; description: string | null; kind: "skill" | "command" }[];
 };
 

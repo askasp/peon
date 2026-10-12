@@ -47,6 +47,36 @@ defmodule Beamcode.Composer.PlanTest do
              )
   end
 
+  test "start_session and chat: model and agent checked against the catalog" do
+    ctx =
+      Map.put(@ctx, :catalog, %{
+        models: [
+          %{value: "anthropic/claude-opus-4-1", name: "Claude Opus 4.1"},
+          %{value: "openai/gpt-5", name: "GPT-5"}
+        ],
+        agents: ["build", "plan"],
+        default_provider: nil
+      })
+
+    json = %{"action" => "start_session", "project" => "amino-monorepo", "task" => "fix it"}
+
+    assert {:ok, %{use_model: %{value: "anthropic/claude-opus-4-1"}, agent: "plan"} = plan} =
+             Plan.resolve(Map.merge(json, %{"model" => "Opus", "agent" => "Plan"}), ctx)
+
+    assert {"Model", "Claude Opus 4.1"} in Plan.rows(plan)
+    assert {"Agent", "plan"} in Plan.rows(plan)
+
+    assert {:ok, %{use_model: nil, agent: nil}} = Plan.resolve(json, ctx)
+
+    assert {:error, "No model called \"gpt-9\"."} =
+             Plan.resolve(Map.put(json, "model", "gpt-9"), ctx)
+
+    assert {:error, "No agent called \"ops\"."} = Plan.resolve(Map.put(json, "agent", "ops"), ctx)
+
+    assert {:ok, %{action: :chat, use_model: %{value: "openai/gpt-5"}}} =
+             Plan.resolve(%{"action" => "chat", "text" => "hi", "model" => "gpt 5"}, ctx)
+  end
+
   test "create_routine: kebab name, known connectors only" do
     json = %{
       "action" => "create_routine",
@@ -109,7 +139,7 @@ defmodule Beamcode.Composer.PlanTest do
     assert {:ok,
             %{
               action: :unclear,
-              question: "There’s no project or routine called “stripe reconcile”."
+              question: "There’s no project or procedure called “stripe reconcile”."
             }} =
              Plan.resolve(
                %{"action" => "status", "project" => "stripe reconcile", "scope" => "overview"},

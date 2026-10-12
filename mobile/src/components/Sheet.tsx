@@ -2,6 +2,7 @@ import { ReactNode, useState } from "react";
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { color } from "@/lib/theme";
+import { useKeyboardHeight } from "@/lib/useKeyboard";
 import { useWide } from "@/lib/useWide";
 
 /** A modal panel: a bottom sheet on phones, a centred card on desktop. */
@@ -11,21 +12,34 @@ export function Sheet({
   onClose,
   children,
   width = 480,
+  tall = false,
 }: {
   visible: boolean;
   title?: string;
   onClose: () => void;
   children: ReactNode;
   width?: number;
+  /** Phone: nearly full height (long lists with a search box). */
+  tall?: boolean;
 }) {
   const wide = useWide();
   const insets = useSafeAreaInsets();
+  // A Modal doesn't move for the keyboard, so the sheet sits on top of it.
+  const keyboard = useKeyboardHeight();
   return (
     <Modal visible={visible} transparent animationType={wide ? "fade" : "slide"} onRequestClose={onClose}>
       <View style={[st.backdrop, wide && st.backdropWide]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View
-          style={[st.sheet, wide ? [st.card, { width }] : { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}
+          style={[
+            st.sheet,
+            wide
+              ? [st.card, { width }]
+              : [
+                  { paddingBottom: keyboard > 0 ? keyboard + 8 : Math.max(insets.bottom, 12) + 8 },
+                  tall && { height: "88%" },
+                ],
+          ]}
         >
           {!wide ? <View style={st.grabber} /> : null}
           {title ? <Text style={st.title}>{title}</Text> : null}
@@ -61,21 +75,30 @@ export function PickSheet({
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const shown = items.filter((i) => !q || `${i.label} ${i.detail ?? ""}`.toLowerCase().includes(q));
+  const wide = useWide();
+  const long = items.length > 8;
 
   return (
-    <Sheet visible={visible} title={title} onClose={onClose}>
-      {items.length > 8 ? (
+    <Sheet visible={visible} title={title} onClose={onClose} tall={long}>
+      {long ? (
         <TextInput
           value={query}
           onChangeText={setQuery}
           placeholder="Search"
           placeholderTextColor={color.faint}
-          autoFocus
+          // Phone: the keyboard would cover half the list straight away.
+          autoFocus={wide}
           autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
           style={st.search}
         />
       ) : null}
-      <ScrollView style={{ maxHeight: 420 }} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        style={wide || !long ? { maxHeight: 420 } : { flex: 1 }}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+      >
         {shown.map((i) => (
           <Pressable
             key={i.key}

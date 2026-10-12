@@ -45,7 +45,11 @@ config :beamcode, start_workers: false
 
 # Point at a closed port so tests never reach a real OpenCode server.
 config :beamcode, :opencode, url: "http://127.0.0.1:9", password: nil
+config :beamcode, :composer_catalog_ttl, 0
 config :beamcode, :chatos_root, "/tmp/chatos-test"
 
 # The phone app's login waits after a wrong password; not in tests.
 config :beamcode, :app_login_delay, 0
+
+# Each user's Home folder is made on first join; tests make their own.
+config :beamcode, :ensure_home, false

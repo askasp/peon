@@ -40,6 +40,7 @@ defmodule BeamcodeWeb.AppChannel do
     Keybinds,
     Opencode,
     Projects,
+    ProjectTools,
     Routines,
     Schedules,
     Sessions,
@@ -47,7 +48,7 @@ defmodule BeamcodeWeb.AppChannel do
     Workspace
   }
 
-  alias Beamcode.Composer.Plan
+  alias Beamcode.Composer.{Catalog, Plan}
   alias Beamcode.Opencode.Events
   alias BeamcodeWeb.{AppJSON, AppToken, ChannelTasks}
 
@@ -65,6 +66,14 @@ defmodule BeamcodeWeb.AppChannel do
     user = socket.assigns.user
     projects = Projects.list_visible(user)
     send(self(), :refresh)
+
+    # Home shows up in the projects push once it exists.
+    if Application.get_env(:beamcode, :ensure_home, true) and
+         not Enum.any?(projects, &(&1.kind == "home" and &1.owner_id == user.id)),
+       do:
+         Task.Supervisor.start_child(Beamcode.TaskSupervisor, fn ->
+           Workspace.ensure_home(user)
+         end)
 
     {:ok,
      %{
@@ -194,6 +203,20 @@ defmodule BeamcodeWeb.AppChannel do
     end)
   end
 
+  def handle_in("pause_schedule", %{"project_id" => id, "key" => key, "paused" => paused}, socket)
+      when is_binary(key) and is_boolean(paused) do
+    user = socket.assigns.user
+
+    with_project(socket, id, fn project ->
+      ChannelTasks.reply_async(socket, fn ->
+        case ProjectTools.pause_schedule(project, key, paused, user) do
+          :ok -> {:ok, %{}}
+          {:error, msg} -> {:error, %{message: msg}}
+        end
+      end)
+    end)
+  end
+
   def handle_in("change_password", %{"password" => password}, socket) when is_binary(password) do
     case Beamcode.Accounts.update_password(socket.assigns.user, %{"password" => password}) do
       {:ok, user} ->
@@ -243,11 +266,11 @@ defmodule BeamcodeWeb.AppChannel do
   end
 
   # Only these can be made from the app; "system" projects (setup) get every connector.
-  @creatable ~w(code routine chat)
+  @creatable ~w(code routine chat document design dataset)
 
   def handle_in("create_project", %{"params" => %{"kind" => kind}}, socket)
       when kind not in @creatable,
-      do: {:reply, {:error, %{message: "A project is code, a routine or a chat."}}, socket}
+      do: {:reply, {:error, %{message: "Pick a template."}}, socket}
 
   def handle_in("create_project", %{"params" => raw}, socket) when is_map(raw) do
     user = socket.assigns.user
@@ -260,14 +283,15 @@ defmodule BeamcodeWeb.AppChannel do
   end
 
   def handle_in("compose:preview", %{"text" => text}, socket) when is_binary(text) do
-    {:reply, {:ok, %{preview: preview(Composer.parse(text, projects(socket)))}}, socket}
+    parsed = Composer.parse(text, projects(socket), Catalog.get())
+    {:reply, {:ok, %{preview: preview(parsed)}}, socket}
   end
 
   def handle_in("compose:submit", %{"text" => text} = params, socket) when is_binary(text) do
     user = socket.assigns.user
     projects = projects(socket)
 
-    case Composer.parse(text, projects) do
+    case Composer.parse(text, projects, Catalog.get()) do
       nil ->
         {:reply, {:error, %{message: "Say or type what to do."}}, socket}
 
@@ -472,6 +496,8 @@ defmodule BeamcodeWeb.AppChannel do
       [{"Action", Composer.action_label(parsed.action)}] ++
         if(parsed.project, do: [{"Project", parsed.project.name}], else: []) ++
         if(parsed.skill, do: [{"Skill", parsed.skill}], else: []) ++
+        if(parsed.use_model, do: [{"Model", parsed.use_model.name}], else: []) ++
+        if(parsed.agent, do: [{"Agent", parsed.agent}], else: []) ++
         if(parsed.task not in [nil, ""], do: [{"Task", parsed.task}], else: [])
 
     %{

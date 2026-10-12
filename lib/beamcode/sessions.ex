@@ -5,7 +5,8 @@ defmodule Beamcode.Sessions do
 
   @doc """
   Creates a session in the project's folder, or in a fresh git worktree when
-  `worktree: true`. Records who started it.
+  `worktree: true` in a Code Folder (other Folders have one tree). Records who
+  started it.
 
   opts: :worktree, :scope, :schedule_key, :title, :agent, :model (%{"id", "providerID"})
   """
@@ -105,6 +106,9 @@ defmodule Beamcode.Sessions do
   defp put_opt(map, key, value), do: Map.put(map, key, value)
 
   defp directory(project, false), do: {:ok, project.directory}
+
+  defp directory(%Project{kind: kind} = project, true) when kind != "code",
+    do: {:ok, project.directory}
 
   defp directory(%Project{oc_project_id: nil} = project, true),
     do: {:error, "#{project.name} has no OpenCode project id yet"}

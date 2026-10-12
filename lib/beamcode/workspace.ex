@@ -14,7 +14,8 @@ defmodule Beamcode.Workspace do
             opencode.json      gateway MCP server + connector permissions
             schedules.json
         code/<name>/           cloned or new git repos
-        <name>/                chat projects
+        home/<username>/       each user's private Home folder
+        <name>/                chat, document, design and dataset folders
 
   `<root>` is `CHATOS_ROOT`, or `chatos/` inside the server's default folder.
   """
@@ -236,7 +237,7 @@ defmodule Beamcode.Workspace do
           {Path.join([root, "routines", name]), &prepare_routine(root, &1, name, attrs)}
 
         _ ->
-          {Path.join(root, name), &prepare_chat(root, &1)}
+          {Path.join(root, name), &prepare_folder(root, &1, kind, attrs["description"])}
       end
 
     project_attrs = %{
@@ -370,14 +371,147 @@ defmodule Beamcode.Workspace do
     end
   end
 
-  defp prepare_chat(root, dir) do
-    write_new(root, Path.join(Path.relative_to(dir, root), "AGENTS.md"), """
+  # AGENTS.md (with what the Folder is for, if given) and the template's skill.
+  defp prepare_folder(root, dir, kind, description \\ nil) do
+    rel = Path.relative_to(dir, root)
+    desc = String.trim(description || "")
+
+    agents =
+      if desc == "",
+        do: folder_agents_md(kind),
+        else: folder_agents_md(kind) <> "\n## About\n\n#{desc}\n"
+
+    with :ok <- write_new(root, Path.join(rel, "AGENTS.md"), agents) do
+      case folder_skill(kind) do
+        nil -> :ok
+        {name, body} -> write_new(root, Path.join(rel, ".opencode/skill/#{name}/SKILL.md"), body)
+      end
+    end
+  end
+
+  defp folder_skill("document"),
+    do:
+      {"writing",
+       """
+       ---
+       name: writing
+       description: Write and edit documents in docs/
+       ---
+
+       One Markdown file per document in docs/, starting with a `# Title`. Short
+       sentences, plain words, summary first. Edit the file in place when asked
+       for changes.
+       """}
+
+  defp folder_skill("design"),
+    do:
+      {"html-design",
+       """
+       ---
+       name: html-design
+       description: Make and change HTML designs in designs/
+       ---
+
+       One standalone HTML file per screen in designs/, with all CSS and JS inline.
+       Every design works at phone (390px) and desktop widths. Edit in place when
+       asked for changes, and say what changed.
+       """}
+
+  defp folder_skill("dataset"),
+    do:
+      {"sqlite-schema",
+       """
+       ---
+       name: sqlite-schema
+       description: Keep the data in data.sqlite and its schema in schema.md
+       ---
+
+       Use the sqlite3 command on data.sqlite. Propose columns before creating them
+       and never drop data without asking. Keep schema.md in step with the tables.
+
+       Apps over the data are standalone HTML files in app/ (all CSS and JS inline,
+       no build step, no CDN needed). When the page is shown, `peon.query(sql)`
+       exists: it returns a promise of rows as objects, read-only, from
+       data.sqlite (`peon.query(sql, "other.sqlite")` for another file). Load
+       data with it on page load; never copy rows into the HTML. Changes to the
+       data go through the chat.
+       """}
+
+  defp folder_skill(_), do: nil
+
+  defp folder_agents_md("document") do
+    """
+    # Documents
+
+    Write documents as Markdown files in `docs/`, one file per document, with a
+    short `# Title` first. Edit them in place when asked for changes, and mention
+    the path of every file you write.
+    """
+  end
+
+  defp folder_agents_md("design") do
+    """
+    # Designs
+
+    Make designs as standalone HTML files in `designs/`: one file per screen or
+    page, all CSS and JS inline, no build step. They're shown in a live preview at
+    desktop and phone widths, so make them responsive. Edit the file in place when
+    asked for changes, and mention the path of every file you write.
+    """
+  end
+
+  defp folder_agents_md("dataset") do
+    """
+    # Dataset
+
+    Keep the data in `data.sqlite` (use the `sqlite3` command). Keep the schema
+    simple and documented in `schema.md`. A UI over the data goes in `app/` as
+    standalone HTML files that read the data with `peon.query(sql)` (see the
+    sqlite-schema skill). Mention the path of every file you write.
+    """
+  end
+
+  defp folder_agents_md(_chat) do
+    """
     # Chat
 
     General chat. When you make something worth keeping (a document, data, a diagram),
     save it as a file in `artifacts/` and mention the path.
-    """)
+    """
   end
+
+  @doc """
+  The user's private Home folder (`home/<username>/`, a "home" project), made the
+  first time it's asked for. General chat happens here.
+  """
+  def ensure_home(user) do
+    name = home_name(user)
+
+    case Projects.get_by_name(name) do
+      %Project{} = project ->
+        {:ok, project}
+
+      nil ->
+        with root when is_binary(root) <- root(),
+             dir = Path.join([root, "home", slug(user.username)]),
+             :ok <- prepare_folder(root, dir, "home"),
+             {:ok, project} <-
+               Projects.insert_project(
+                 %{name: name, kind: "home", directory: dir, scope: "private"},
+                 user
+               ) do
+          {:ok, finish_project(project)}
+        else
+          nil -> {:error, "OpenCode server is not reachable"}
+          error -> error
+        end
+    end
+  end
+
+  def home_name(user), do: String.slice("home-" <> slug(user.username), 0, 48)
+
+  defp slug(s),
+    do: s |> String.downcase() |> String.replace(~r/[^a-z0-9]+/, "-") |> String.trim("-")
 
   defp finish_project(project) do
     project =
@@ -390,7 +524,8 @@ defmodule Beamcode.Workspace do
     project
   end
 
-  def uses_gateway?(%Project{kind: kind}), do: kind in ~w(routine chat system)
+  def uses_gateway?(%Project{kind: kind}),
+    do: kind in ~w(routine system) or Project.chat_like?(kind)
 
   @gateway "gateway"
   def gateway_server, do: @gateway

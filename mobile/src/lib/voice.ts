@@ -6,15 +6,23 @@ import * as storage from "./storage";
 import * as Speech from "expo-speech";
 import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 
-type VoiceSettings = { reply: boolean; rate: number };
+/** `voice`: a system voice's identifier, or null for the best one installed. */
+// `reply`: read replies aloud. `dictation`: show the mic in the text fields.
+type VoiceSettings = { reply: boolean; dictation: boolean; rate: number; voice: string | null };
 
-let settings: VoiceSettings = { reply: true, rate: 1.1 };
+// Chat comes first: replies aren't read aloud unless asked for.
+let settings: VoiceSettings = { reply: false, dictation: true, rate: 1.0, voice: null };
 const listeners = new Set<() => void>();
 
 export async function loadVoiceSettings() {
   try {
     const raw = await storage.getItem("voice");
-    if (raw) settings = { ...settings, ...JSON.parse(raw) };
+    if (raw) {
+      const saved = JSON.parse(raw);
+      // Settings from before voices could be picked kept the old 1.1× default: too fast.
+      if (!("voice" in saved) && saved.rate === 1.1) saved.rate = 1.0;
+      settings = { ...settings, ...saved };
+    }
   } catch {}
   listeners.forEach((l) => l());
 }
@@ -64,8 +72,60 @@ let listeningNow = false;
 export const isListening = () => listeningNow;
 export const stopListening = () => ExpoSpeechRecognitionModule.stop();
 
+export type SystemVoice = { id: string; label: string };
+
+// Apple's joke voices and the old Eloquence ones ("Eddy", "Flo"…) sound like robots.
+const NOVELTY =
+  /^(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Good News|Jester|Organ|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Junior|Ralph|Kathy)$/i;
+
+// 2 premium, 1 enhanced (or a browser's natural voice), 0 the rest.
+function tier(v: Speech.Voice): number {
+  if (/\.premium\./i.test(v.identifier)) return 2;
+  if (v.quality === Speech.VoiceQuality.Enhanced || /\.enhanced\./i.test(v.identifier)) return 1;
+  if (/natural|google|online/i.test(v.name)) return 1;
+  return 0;
+}
+
+let voices: Promise<SystemVoice[]> | null = null;
+
+/** English voices on this device, best first: premium, enhanced, then US English. */
+export function listVoices(): Promise<SystemVoice[]> {
+  voices ??= Speech.getAvailableVoicesAsync()
+    .then((all) =>
+      all
+        .filter(
+          (v) =>
+            v.language.toLowerCase().startsWith("en") &&
+            !/eloquence|speech\.synthesis/i.test(v.identifier) &&
+            !NOVELTY.test(v.name),
+        )
+        .sort(
+          (a, b) =>
+            tier(b) - tier(a) ||
+            Number(b.language === "en-US") - Number(a.language === "en-US") ||
+            a.name.localeCompare(b.name),
+        )
+        .map((v) => ({
+          id: v.identifier,
+          label: `${v.name}${tier(v) === 2 ? " (Premium)" : tier(v) === 1 ? " (Enhanced)" : ""}`,
+        })),
+    )
+    .catch(() => []);
+  return voices;
+}
+
+/** The voice to speak with: the one picked, if it's still installed, else the best one. */
+async function chosenVoice(): Promise<string | undefined> {
+  const list = await listVoices();
+  return (list.find((v) => v.id === settings.voice) ?? list[0])?.id;
+}
+
 export function say(text: string, force = false): Promise<void> {
   if (!text || (!settings.reply && !force)) return Promise.resolve();
+  return chosenVoice().then((voice) => speak(text, voice));
+}
+
+function speak(text: string, voice: string | undefined): Promise<void> {
   return new Promise((resolve) => {
     Speech.stop();
     setSpeaking(text);
@@ -75,6 +135,7 @@ export function say(text: string, force = false): Promise<void> {
     };
     Speech.speak(text, {
       language: "en-US",
+      voice,
       rate: settings.rate,
       onDone: done,
       onStopped: done,

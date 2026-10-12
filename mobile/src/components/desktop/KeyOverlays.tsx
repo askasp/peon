@@ -21,7 +21,7 @@ const WHICH: [string, [string, string][]][] = [
     "Act",
     [
       ["c", "New session"],
-      ["r", "Run routine"],
+      ["r", "Run procedure"],
       [",", "Rename session"],
     ],
   ],

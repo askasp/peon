@@ -9,7 +9,7 @@ import { useCommand } from "@/lib/commands";
 import { isMac } from "@/lib/keys";
 import { usePeon } from "@/lib/peon";
 import { useComposer } from "@/lib/useComposer";
-import { setVoiceSettings, useDictation, useVoiceSettings } from "@/lib/voice";
+import { useDictation, useVoiceSettings } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 
 // One bar for everything: type (or talk) a task and Enter starts it; start with
@@ -19,9 +19,9 @@ function CommandBar() {
   const [focused, setFocused] = useState(false);
   const [index, setIndex] = useState(0);
   const input = useRef<TextInput>(null);
-  const voice = useVoiceSettings();
   // Talking adds to the line; Enter (or the button) starts it.
   const join = (a: string, b: string) => (a.trim() && b ? `${a.trimEnd()} ${b}` : a + b);
+  const voice = useVoiceSettings();
   const dictation = useDictation((spoken) => {
     setText((t) => join(t, spoken));
     input.current?.focus();
@@ -93,7 +93,6 @@ function CommandBar() {
 
   const result = c.busy || c.answer || c.note || c.error || c.plan;
   const open_ = focused || (task && result) || !!dictation.error;
-  const voiceLabel = voice.reply ? "Voice reply" : "Text reply";
 
   return (
     <View style={st.barWrap}>
@@ -129,32 +128,24 @@ function CommandBar() {
           style={st.input}
         />
         <Text style={st.kbd}>{isMac ? "⌘K" : "Ctrl+K"}</Text>
-        <Pressable
-          testID="top-voice-reply"
-          onPress={() => setVoiceSettings({ reply: !voice.reply })}
-          style={(s: any) => [
-            st.chip,
-            voice.reply && { backgroundColor: color.accentWash },
-            s.hovered && !voice.reply && { backgroundColor: color.raised },
-          ]}
-        >
-          <Icon name="speaker" size={13} color={voice.reply ? color.accentText : color.muted} />
-          <Text style={[st.chipText, { color: voice.reply ? color.accentText : color.muted }]}>
-            {voiceLabel}
-          </Text>
-        </Pressable>
-        <Pressable
-          testID="top-mic"
-          accessibilityLabel="Talk"
-          onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
-          style={(s: any) => [
-            st.mic,
-            dictation.listening && { backgroundColor: color.cream },
-            s.hovered && { opacity: 0.85 },
-          ]}
-        >
-          <Icon name={dictation.listening ? "stop" : "mic"} size={14} color={color.accentInk} />
-        </Pressable>
+        {voice.dictation ? (
+          <Pressable
+            testID="top-mic"
+            accessibilityLabel="Talk"
+            onPress={() => (dictation.listening ? dictation.stop() : dictation.start())}
+            style={(s: any) => [
+              st.mic,
+              dictation.listening && { backgroundColor: color.accentWash },
+              s.hovered && { backgroundColor: color.raised },
+            ]}
+          >
+            <Icon
+              name={dictation.listening ? "stop" : "mic"}
+              size={14}
+              color={dictation.listening ? color.accentText : color.faint}
+            />
+          </Pressable>
+        ) : null}
       </View>
 
       {open_ ? (
@@ -175,9 +166,7 @@ function CommandBar() {
               <ErrorLine message={c.error ?? dictation.error} />
               {task ? (
                 <View style={st.taskFoot}>
-                  <Text style={st.hint}>
-                    @ project · / skill · {voice.reply ? "voice reply on" : "text reply"}
-                  </Text>
+                  <Text style={st.hint}>@ folder · / skill · “using” model</Text>
                   <Button
                     label={`${c.button}  ↵`}
                     height={30}
@@ -312,7 +301,6 @@ const st = StyleSheet.create({
     borderRadius: 7,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: color.accent,
   },
   panel: {
     position: "absolute",

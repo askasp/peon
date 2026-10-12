@@ -1,16 +1,16 @@
-import { useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useEffect, useState } from "react";
+import { Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Button, ErrorLine, Group, LargeTitle, Screen, SectionLabel, Tap, Toggle } from "@/components/ui";
 import { useWide } from "@/lib/useWide";
 import { KeysSettings } from "@/components/KeysSettings";
 import { changePassword as setNewPassword, signOut, usePeon } from "@/lib/peon";
-import { say, setVoiceSettings, useVoiceSettings } from "@/lib/voice";
-import { color } from "@/lib/theme";
+import { listVoices, say, setVoiceSettings, useVoiceSettings, type SystemVoice } from "@/lib/voice";
+import { color, font } from "@/lib/theme";
 
 const speeds = [0.9, 1.0, 1.1, 1.25, 1.5];
 
-// 12 · Settings: the server, voice, and signing out.
+// Settings: the server and your Home, where new chats go, voice, password, sign out.
 export default function Settings() {
   const server = usePeon((s) => s.server);
   const user = usePeon((s) => s.user);
@@ -33,6 +33,20 @@ export default function Settings() {
     }
   }
 
+  const [voices, setVoices] = useState<SystemVoice[]>([]);
+  useEffect(() => {
+    listVoices().then(setVoices);
+  }, []);
+  const current = voices.find((v) => v.id === voice.voice) ?? voices[0];
+
+  // Steps through the installed voices, each saying hello.
+  const nextVoice = () => {
+    if (!voices.length) return;
+    const next = voices[((current ? voices.indexOf(current) : -1) + 1) % voices.length];
+    setVoiceSettings({ voice: next.id });
+    say(`Hi, this is ${next.label.replace(/ \(.*\)$/, "")}. Work work.`, true);
+  };
+
   const nextSpeed = () => {
     const i = speeds.indexOf(voice.rate);
     const rate = speeds[(i + 1) % speeds.length];
@@ -52,32 +66,65 @@ export default function Settings() {
             <Text style={st.value}>{user?.username}</Text>
           </View>
           <View style={[st.row, st.top]}>
-            <Text style={st.label}>Connection</Text>
-            <Text style={[st.value, { color: connected ? color.teal : color.red }]}>
-              {connected ? "Live" : "Reconnecting…"}
-            </Text>
+            <Text style={st.label}>Home Folder</Text>
+            <Text style={[st.value, st.mono]}>home/{user?.username}/</Text>
+          </View>
+          {!connected ? (
+            <View style={[st.row, st.top]}>
+              <Text style={st.label}>Connection</Text>
+              <Text style={[st.value, { color: color.red }]}>Reconnecting…</Text>
+            </View>
+          ) : null}
+        </Group>
+
+        <SectionLabel style={st.section}>Composer</SectionLabel>
+        <Group>
+          <View style={st.row}>
+            <Text style={st.label}>New chats go to</Text>
+            <Text style={st.value}>Current Folder, else Home</Text>
           </View>
         </Group>
 
         <SectionLabel style={st.section}>Voice</SectionLabel>
         <Group>
           <View style={st.row}>
-            <Text style={st.label}>Reply with voice</Text>
-            <Toggle value={voice.reply} onChange={(reply) => setVoiceSettings({ reply })} />
+            <Text style={st.label}>Dictation button</Text>
+            <Toggle
+              label="Dictation button"
+              value={voice.dictation}
+              onChange={(dictation) => setVoiceSettings({ dictation })}
+            />
           </View>
-          <Tap style={[st.row, st.top]} onPress={nextSpeed}>
-            <Text style={st.label}>Speed</Text>
-            <Text style={st.value}>{voice.rate}× ›</Text>
-          </Tap>
           <View style={[st.row, st.top]}>
-            <Text style={st.label}>Speech-to-text</Text>
-            <Text style={st.value}>On this phone</Text>
+            <Text style={st.label}>Read replies aloud</Text>
+            <Toggle
+              label="Read replies aloud"
+              value={voice.reply}
+              onChange={(reply) => setVoiceSettings({ reply })}
+            />
           </View>
+          {voice.reply ? (
+            <>
+              <Tap style={[st.row, st.top]} onPress={nextVoice} testID="settings-voice">
+                <Text style={st.label}>Voice</Text>
+                <Text style={st.value} numberOfLines={1}>
+                  {current ? current.label : "System"} ›
+                </Text>
+              </Tap>
+              <Tap style={[st.row, st.top]} onPress={nextSpeed}>
+                <Text style={st.label}>Speed</Text>
+                <Text style={st.value}>{voice.rate}× ›</Text>
+              </Tap>
+            </>
+          ) : null}
         </Group>
-        <Text style={st.note}>
-          Hands-free keeps listening with the screen locked on iPhone. Peon says a short version of each
-          reply.
-        </Text>
+        <Text style={st.note}>Dictation turns speech into text you can edit before sending.</Text>
+        {voice.reply && Platform.OS === "ios" && !voices.some((v) => v.label.endsWith("(Premium)")) ? (
+          <Text style={st.note}>
+            For a natural voice, download a Premium voice in iPhone Settings › Accessibility › Spoken Content
+            › Voices.
+          </Text>
+        ) : null}
 
         {wide ? <KeysSettings /> : null}
 
@@ -137,7 +184,8 @@ const st = StyleSheet.create({
   },
   top: { borderTopWidth: 1, borderTopColor: color.divider },
   label: { fontSize: 15, color: color.text, flexShrink: 1 },
-  value: { fontSize: 15, color: color.muted },
+  value: { fontSize: 15, color: color.muted, flexShrink: 1, textAlign: "right" },
+  mono: { fontFamily: font.mono, fontSize: 13 },
   ok: { fontSize: 13, color: color.teal },
   input: {
     height: 42,

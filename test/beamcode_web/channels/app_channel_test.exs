@@ -146,7 +146,7 @@ defmodule BeamcodeWeb.AppChannelTest do
   test "system projects can't be created from the app", %{socket: socket} do
     {_, socket} = join(socket)
     ref = push(socket, "create_project", %{"params" => %{"kind" => "system", "name" => "x"}})
-    assert_reply ref, :error, %{message: "A project is code, a routine or a chat."}
+    assert_reply ref, :error, %{message: "Pick a template."}
   end
 
   test "the composer previews what a line will do", %{socket: socket} do

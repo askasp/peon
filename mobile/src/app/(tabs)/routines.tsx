@@ -81,11 +81,11 @@ export default function Routines() {
             </Tap>
           }
         >
-          Routines
+          Procedures
         </LargeTitle>
         <ErrorLine message={error} />
         {routines.length === 0 ? (
-          <Empty title="No routines yet" detail="Create one from the composer: “make a routine that…”." />
+          <Empty title="No procedures yet" detail="Create one from the composer: “make a procedure that…”." />
         ) : null}
 
         {routines.map((p) => {

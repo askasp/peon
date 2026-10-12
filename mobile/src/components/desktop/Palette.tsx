@@ -119,7 +119,7 @@ export function usePaletteItems(mode: PaletteMode | null): Item[] {
           key: `run-${p.id}`,
           group: "Do",
           label: `Run ${p.name}`,
-          detail: p.schedule ?? "routine",
+          detail: p.schedule ?? "procedure",
           run: async () => {
             try {
               const { session_id } = await ask<{ session_id: string }>(

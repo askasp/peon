@@ -86,6 +86,12 @@ export function socketUrl(server: string): string {
   return `${local ? "ws" : "wss"}://${s}/socket`;
 }
 
+/** An absolute http(s) URL on the server for a path the server handed out, like "/files/…". */
+export function serverUrl(path: string): string {
+  const ws = socketUrl(state.server ?? "").replace(/\/socket$/, "");
+  return ws.replace(/^ws/, "http") + path;
+}
+
 function open(server: string, params: Record<string, string> | (() => Record<string, string>)): Socket {
   const sock = new Socket(socketUrl(server), {
     params,

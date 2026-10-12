@@ -5,8 +5,8 @@ defmodule Beamcode.Composer do
   find why checkout fails on CI", "run stripe-reconcile", "what changed in
   chatos-web this week?").
 
-  `parse/2` reads the line into an action, a target project or routine, an
-  optional skill and the task; `start/3` does it. Names match loosely, so speech
+  `parse/3` reads the line into an action, a target project or routine, an
+  optional skill, model and agent, and the task; `start/2` does it. Names match loosely, so speech
   ("amino monorepo", "stripe") finds `amino-monorepo` and `stripe-reconcile`.
 
   It is plain rules, no model: the preview has to follow along word by word
@@ -15,6 +15,7 @@ defmodule Beamcode.Composer do
   session data (`Beamcode.Composer.Status`), not by an agent.
   """
   alias Beamcode.{Routines, Sessions}
+  alias Beamcode.Composer.Catalog
   alias Beamcode.Projects.Project
 
   @type action :: :session | :run | :ask | :chat | :status
@@ -24,6 +25,8 @@ defmodule Beamcode.Composer do
           status: :latest | :overview | nil,
           sure: boolean,
           skill: String.t() | nil,
+          use_model: Catalog.model() | nil,
+          agent: String.t() | nil,
           task: String.t(),
           text: String.t()
         }
@@ -38,8 +41,9 @@ defmodule Beamcode.Composer do
   @plural ~r/\b(all|every|sessions|runs)\b/i
 
   @doc """
-  Reads a composer line. `projects` are the ones the user can see. Returns nil
-  for an empty line. `sure` is true only for plain, unambiguous lines ("run
+  Reads a composer line. `projects` are the ones the user can see; `catalog`
+  (`Beamcode.Composer.Catalog`) has the models and agents the line may name
+  ("using opus", "with the plan agent"). Returns nil for an empty line. `sure` is true only for plain, unambiguous lines ("run
   stripe-reconcile", "new session in X, …", "anything waiting?"); everything
   else goes to the model on Enter.
 
@@ -51,14 +55,14 @@ defmodule Beamcode.Composer do
     * `:ask` – a question about a named project; it also runs as a session
     * `:chat` – no project named; goes to the first chat project, if any
   """
-  @spec parse(String.t(), [Project.t()]) :: parsed | nil
-  def parse(text, projects) do
+  @spec parse(String.t(), [Project.t()], map) :: parsed | nil
+  def parse(text, projects, catalog \\ %{}) do
     t = String.trim(text || "")
 
     if t == "" do
       nil
     else
-      places = Enum.filter(projects, &(&1.kind in ~w(code chat)))
+      places = Enum.filter(projects, &(&1.kind == "code" or Project.chat_like?(&1)))
       routines = Enum.filter(projects, &(&1.kind == "routine"))
 
       project = find_name(t, places)
@@ -84,6 +88,10 @@ defmodule Beamcode.Composer do
         end
 
       s = if skill, do: String.replace(t, skill.raw, " ", global: false), else: t
+      agent = find_agent(s, catalog[:agents] || [])
+      s = if agent, do: String.replace(s, agent.raw, " ", global: false), else: s
+      use_model = find_model(s, catalog[:models] || [], catalog[:default_provider])
+      s = if use_model, do: String.replace(s, use_model.raw, " ", global: false), else: s
       anchor = if action == :run, do: routine, else: project
 
       s =
@@ -100,7 +108,11 @@ defmodule Beamcode.Composer do
         s
         |> String.replace(~r/\s{2,}/, " ")
         |> String.replace(~r/^[\s,.:;-]*(and\s+)?(then\s+)?/i, "")
+        # "use opus to fix it" → "fix it".
+        |> then(&if(use_model || agent, do: String.replace(&1, ~r/^to\s+/i, ""), else: &1))
         |> String.replace(~r/\s+([?.!,])/, "\\1")
+        |> String.replace(~r/([\s,;:]+(and|then))+$/i, "")
+        |> String.replace(~r/[\s,;:]+$/, "")
         |> String.trim()
 
       s = if action in [:ask, :chat] and s == "", do: t, else: s
@@ -109,7 +121,7 @@ defmodule Beamcode.Composer do
         case action do
           :status -> earliest(project, routine)
           :run -> routine.project
-          :chat -> Enum.find(places, &(&1.kind == "chat"))
+          :chat -> chat_place(places)
           _ -> project.project
         end
 
@@ -121,6 +133,9 @@ defmodule Beamcode.Composer do
         end
 
       skill = if action == :status, do: nil, else: skill && skill.name
+      session? = action in [:session, :ask, :chat]
+      use_model = if session? and use_model, do: use_model.model
+      agent = if session? and agent, do: agent.name
       task = if action == :status, do: t, else: s
 
       sure =
@@ -136,6 +151,8 @@ defmodule Beamcode.Composer do
         project: target,
         status: status,
         skill: skill,
+        use_model: use_model,
+        agent: agent,
         task: task,
         text: t,
         sure: sure
@@ -148,7 +165,9 @@ defmodule Beamcode.Composer do
     s
     |> String.downcase()
     |> String.split(~r/[^\p{L}\p{N}-]+/u, trim: true)
-    |> Enum.reject(&(&1 in ~w(run the routine now please it again kick off trigger start)))
+    |> Enum.reject(
+      &(&1 in ~w(run the routine procedure now please it again kick off trigger start))
+    )
     |> length()
   end
 
@@ -157,9 +176,13 @@ defmodule Beamcode.Composer do
   defp earliest(nil, b), do: b.project
   defp earliest(a, b), do: if(a.idx <= b.idx, do: a.project, else: b.project)
 
+  @doc "Where a general chat goes: the user's Home folder, else the first chat folder."
+  def chat_place(projects),
+    do: Enum.find(projects, &(&1.kind == "home")) || Enum.find(projects, &(&1.kind == "chat"))
+
   @doc "What the preview calls the action."
   def action_label(:session), do: "New session"
-  def action_label(:run), do: "Run routine"
+  def action_label(:run), do: "Run procedure"
   def action_label(:ask), do: "Ask about project"
   def action_label(:chat), do: "Chat"
   def action_label(:status), do: "Status (Peon answers)"
@@ -186,13 +209,29 @@ defmodule Beamcode.Composer do
   end
 
   def start(%{project: project} = parsed, user) do
-    with {:ok, session} <- Sessions.start(project, user, worktree: project.always_worktree) do
+    opts = [
+      worktree: project.always_worktree,
+      model: session_model(parsed[:use_model]),
+      agent: parsed[:agent]
+    ]
+
+    with {:ok, session} <- Sessions.start(project, user, opts) do
       dir = get_in(session, ["location", "directory"]) || project.directory
       id = session["id"]
 
       with {:ok, _} <- Sessions.send_text(id, prompt(parsed), dir), do: {:ok, id}
     end
   end
+
+  # "provider/id" as OpenCode takes it on a new session.
+  defp session_model(%{value: value}) do
+    case String.split(value, "/", parts: 2) do
+      [provider, id] -> %{"providerID" => provider, "id" => id}
+      _ -> nil
+    end
+  end
+
+  defp session_model(_), do: nil
 
   ## Matching
 
@@ -239,7 +278,7 @@ defmodule Beamcode.Composer do
         ""
       )
 
-    tail = Regex.replace(~r/^\s+(project|routine)\b/i, tail, "")
+    tail = Regex.replace(~r/^\s+(project|routine|procedure)\b/i, tail, "")
     head <> " " <> tail
   end
 
@@ -269,4 +308,133 @@ defmodule Beamcode.Composer do
       end
     end)
   end
+
+  # "with the plan agent", "using build agent", "agent: plan". The word "agent"
+  # has to be there: names like "plan" are ordinary words too.
+  defp find_agent(t, agents) do
+    Enum.find_value(agents, fn name ->
+      a = Regex.escape(name)
+
+      re =
+        ~r/[,.]?\s*(and\s+)?((use|using|with|as|in|on)\s+)?(the\s+)?(#{a}\s+agent\b|agent\s*:?\s*#{a}(?![\w-]))/i
+
+      case Regex.run(re, t) do
+        [raw | _] -> %{name: name, raw: raw}
+        nil -> nil
+      end
+    end)
+  end
+
+  # Model mentions: "using opus", "with gpt-5", "on sonnet 4.5 model",
+  # "model: haiku". After use/using/with/on/via the name has to end the clause
+  # (end, punctuation, "and", "to", "model"…), so "with flash messages" is not
+  # the Flash model.
+  @model_lead ~r/(?:^|[\s,;])((?:and\s+)?(?:use|using|with|on|via)\s+(?:the\s+)?|model\s*:?\s*)((?:[\w.-]+\s*){1,4})/iu
+  @clause_end ~r/^(\s*$|\s*[,.;:!?]|\s+(and|then|to|for|in|model|agent|so|please)\b)/i
+
+  defp find_model(_t, [], _default), do: nil
+
+  defp find_model(t, models, default) do
+    Regex.scan(@model_lead, t, return: :index)
+    |> Enum.find_value(fn [_, {ls, ll}, {ps, pl}] ->
+      model_lead? = binary_part(t, ls, ll) =~ ~r/^model/i
+      # Where each word of the phrase ends; try the longest phrase first.
+      ends =
+        for [{s, l}] <- Regex.scan(~r/[\w.-]+/u, binary_part(t, ps, pl), return: :index),
+            do: ps + s + l
+
+      ends
+      |> Enum.reverse()
+      |> Enum.find_value(fn stop ->
+        phrase = binary_part(t, ps, stop - ps)
+        rest = binary_part(t, stop, byte_size(t) - stop)
+
+        {model_word, rest} =
+          case Regex.run(~r/^\s+model\b/i, rest) do
+            [m] -> {m, binary_part(rest, byte_size(m), byte_size(rest) - byte_size(m))}
+            nil -> {"", rest}
+          end
+
+        ended? = model_lead? or model_word != "" or Regex.match?(@clause_end, rest)
+        model = ended? && resolve_model(phrase, models, default)
+        if model, do: %{model: model, raw: binary_part(t, ls, stop - ls) <> model_word}
+      end)
+    end)
+  end
+
+  @doc """
+  The model a phrase names ("opus", "gpt 5", "claude-sonnet-4-5", "copilot
+  sonnet"), or nil. Every word has to be in the model's name, id or provider.
+  On a tie: the exact name, then the default model's provider, then the newest
+  (highest version in the id).
+  """
+  @spec resolve_model(String.t() | nil, [Catalog.model()], String.t() | nil) ::
+          Catalog.model() | nil
+  def resolve_model(phrase, models, default_provider \\ nil)
+  def resolve_model(nil, _models, _default), do: nil
+
+  def resolve_model(phrase, models, default_provider) do
+    words = phrase |> model_words() |> Enum.reject(&(&1 in ~w(the model)))
+    exact = norm(phrase)
+
+    # One real word at least: "on 5" or "with it" names no model.
+    named? = Enum.any?(words, &(String.length(&1) >= 3 or Regex.match?(~r/\d/, &1)))
+
+    if words == [] or not named? or Enum.all?(words, &(&1 in ~w(a an it this that my new))) do
+      nil
+    else
+      models
+      |> Enum.filter(fn m ->
+        tokens = model_tokens(m)
+        Enum.all?(words, &(&1 in tokens))
+      end)
+      |> Enum.max_by(
+        fn m ->
+          [provider, id] = split_value(m.value)
+
+          {norm(m.name) == exact or norm(id) == exact, provider == default_provider,
+           version_key(id)}
+        end,
+        fn -> nil end
+      )
+    end
+  end
+
+  defp model_tokens(m) do
+    [provider, id] = split_value(m.value)
+    Enum.uniq(model_words(m.name) ++ model_words(id) ++ model_words(provider))
+  end
+
+  defp split_value(value) do
+    case String.split(value, "/", parts: 2) do
+      [p, id] -> [p, id]
+      [id] -> ["", id]
+    end
+  end
+
+  # "Claude Sonnet 4.5" → ["claude", "sonnet", "4.5", "4", "5"]: versions both
+  # whole and in parts, so "4.5", "4 5" and "4-5" all match.
+  defp model_words(s) do
+    s
+    |> String.downcase()
+    |> String.split(~r/[\s\/_:()-]+/, trim: true)
+    |> Enum.flat_map(fn w ->
+      parts = String.split(w, ".", trim: true)
+      if length(parts) > 1, do: [w | parts], else: [w]
+    end)
+  end
+
+  # Ids compare by their parts, numbers as numbers: claude-sonnet-4-5 > claude-sonnet-4.
+  defp version_key(id) do
+    id
+    |> String.split(~r/[^a-z0-9]+/i, trim: true)
+    |> Enum.map(fn part ->
+      case Integer.parse(part) do
+        {n, ""} -> {1, n, ""}
+        _ -> {0, 0, part}
+      end
+    end)
+  end
+
+  defp norm(s), do: s |> String.downcase() |> String.replace(~r/[^a-z0-9]/, "")
 end

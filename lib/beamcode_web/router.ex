@@ -26,6 +26,13 @@ defmodule BeamcodeWeb.Router do
     delete "/:token", McpController, :not_allowed
   end
 
+  # A project's files for the app's views. Auth is the signed token in the path.
+  scope "/files", BeamcodeWeb do
+    get "/:token/_query", FileController, :query
+    post "/:token/_query", FileController, :query
+    get "/:token/*path", FileController, :show
+  end
+
   scope "/", BeamcodeWeb do
     pipe_through [:browser, :redirect_if_user]
 

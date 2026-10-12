@@ -45,7 +45,6 @@ export default function RootLayout() {
         <Stack.Screen name="project/[id]" />
         <Stack.Screen name="session/[id]" />
         <Stack.Screen name="routine/[id]" />
-        <Stack.Screen name="schedules" />
         <Stack.Screen name="new" />
         <Stack.Screen name="users" />
         <Stack.Screen name="connectors" />
@@ -57,6 +56,18 @@ export default function RootLayout() {
             animation: "fade",
             contentStyle: { backgroundColor: "transparent" },
           }}
+        />
+        <Stack.Screen
+          name="new-folder"
+          options={{
+            presentation: "transparentModal",
+            animation: "fade",
+            contentStyle: { backgroundColor: "transparent" },
+          }}
+        />
+        <Stack.Screen
+          name="view"
+          options={{ presentation: "fullScreenModal", animation: "slide_from_bottom" }}
         />
         <Stack.Screen
           name="handsfree"

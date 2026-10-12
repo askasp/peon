@@ -16,18 +16,23 @@ import { Icon } from "@/components/Icon";
 import { PickSheet, Sheet } from "@/components/Sheet";
 import { BlockView, toBlocks, type Block } from "@/components/Transcript";
 import { DiffView } from "@/components/session/DiffView";
+import { FileView, treeCall } from "@/components/project/FilesTab";
+import { Letter } from "@/components/desktop/Sidebar";
 import { PermResources } from "@/components/PermResources";
 import { SessionComposer } from "@/components/session/SessionComposer";
-import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap } from "@/components/ui";
+import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap, UnderlineTabs } from "@/components/ui";
 import { CopyResult, RunProgress } from "@/components/session/RunProgress";
 import { useKeyboardHeight } from "@/lib/useKeyboard";
 import { useSession } from "@/lib/useSession";
 import { useCommand } from "@/lib/commands";
 import { useCurrent } from "@/lib/current";
 import { useWide } from "@/lib/useWide";
+import { useChannel } from "@/lib/useChannel";
+import { folderHref } from "@/lib/folders";
+import { setViewDiff } from "@/lib/viewStore";
 import { inputsLabel, runLine, runWho } from "@/lib/runs";
 import { say, stopSpeaking } from "@/lib/voice";
-import { color } from "@/lib/theme";
+import { color, font } from "@/lib/theme";
 import type { SessionOptions } from "@/lib/types";
 
 const modelValue = (m: any): string | null =>
@@ -48,11 +53,22 @@ export default function SessionScreen() {
   const wide = useWide();
   const list = useRef<FlatList>(null);
   const atEnd = useRef(true);
+  // Opening a session lands on its end: the list renders in pieces, so for a
+  // moment every growth jumps to the bottom, whatever the scroll events say.
+  const pinUntil = useRef(0);
+  useEffect(() => {
+    if (!s.joined) return;
+    atEnd.current = true;
+    pinUntil.current = Date.now() + 2500;
+  }, [id, s.joined]);
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<SessionOptions | null>(null);
   const [menu, setMenu] = useState(false);
-  const [showDiff, setShowDiff] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
+  // The View beside the chat (desktop): "diff" or a file the agent wrote.
+  const [view, setView] = useState<string | null>(null);
+  const [opened, setOpened] = useState<string[]>([]);
+  const [paneHidden, setPaneHidden] = useState(false);
 
   const all = useMemo(() => toBlocks(s.items), [s.items]);
   const [full, setFull] = useState(false);
@@ -72,6 +88,38 @@ export default function SessionScreen() {
     return () => clearInterval(t);
   }, [s.run?.status]);
   const call = s.call;
+  // Files open through the Folder's channel.
+  const folder = useChannel(s.project ? `project:${s.project.id}` : null);
+  const dir = s.session?.directory ?? null;
+  // A chat in its own worktree: its files come from there, not the Folder's main.
+  const tree = s.session?.worktree ? id : "main";
+  const folderCall = useMemo(() => treeCall(folder.call, tree), [folder.call, tree]);
+  const openInFiles = () =>
+    s.project &&
+    router.push({
+      pathname: `/project/${s.project.id}` as any,
+      params: { tab: "files", ...(tree !== "main" ? { tree } : {}) },
+    });
+  const rel = (path: string) => (dir && path.startsWith(`${dir}/`) ? path.slice(dir.length + 1) : path);
+  const openFile = (path: string) => {
+    const r = rel(path);
+    if (!wide)
+      return (
+        s.project &&
+        router.push({
+          pathname: "/view" as any,
+          params: {
+            project: String(s.project.id),
+            path: r,
+            from: "chat",
+            ...(tree !== "main" ? { tree } : {}),
+          },
+        })
+      );
+    setOpened((o) => (o.includes(r) ? o : [...o, r]));
+    setView(r);
+    setPaneHidden(false);
+  };
   const offset = useRef(0);
   const height = useRef(600);
   useCurrent(s.project?.id, id);
@@ -144,7 +192,27 @@ export default function SessionScreen() {
     .filter(Boolean)
     .join(" · ");
   const changed = s.diff.length;
+  const added = s.diff.reduce((n, f) => n + (f.additions ?? 0), 0);
+  const removed = s.diff.reduce((n, f) => n + (f.deletions ?? 0), 0);
+  const openDiff = () => {
+    if (wide) {
+      setView("diff");
+      setPaneHidden(false);
+    } else if (s.project) {
+      setViewDiff(s.diff);
+      router.push({
+        pathname: "/view" as any,
+        params: { project: String(s.project.id), diff: s.session?.branch ?? "changes" },
+      });
+    }
+  };
   const run = runLine(s.run);
+  const current =
+    view && (view === "diff" ? changed > 0 : opened.includes(view)) ? view : changed ? "diff" : opened[0];
+  const pane = wide && !paneHidden && current != null;
+  const folderName = s.project?.kind === "home" ? "Home" : s.project?.name;
+  const goFolder = (tab: string) =>
+    s.project && router.navigate({ pathname: folderHref(s.project), params: { tab } } as any);
 
   const transcript = s.error ? (
     <View style={{ padding: 18 }}>
@@ -156,6 +224,8 @@ export default function SessionScreen() {
     <FlatList
       ref={list}
       data={blocks}
+      // File cards show which file is in the View.
+      extraData={pane ? current : null}
       keyExtractor={(b) => b.key}
       renderItem={({ item }) =>
         item.kind === "note" && item.key === FOLD ? (
@@ -168,6 +238,9 @@ export default function SessionScreen() {
         ) : (
           <BlockView
             block={item}
+            onFile={openFile}
+            viewing={pane && current !== "diff" ? current : null}
+            rel={rel}
             onImage={setImage}
             loadImage={(img) =>
               call<{ mime: string; data: string }>(
@@ -184,11 +257,13 @@ export default function SessionScreen() {
         const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
         offset.current = contentOffset.y;
         height.current = layoutMeasurement.height;
+        if (Date.now() < pinUntil.current) return;
         atEnd.current = contentOffset.y + layoutMeasurement.height >= contentSize.height - 80;
       }}
       scrollEventThrottle={100}
       onContentSizeChange={() => {
-        if (atEnd.current) list.current?.scrollToEnd({ animated: true });
+        if (Date.now() < pinUntil.current) list.current?.scrollToEnd({ animated: false });
+        else if (atEnd.current) list.current?.scrollToEnd({ animated: true });
       }}
       ListHeaderComponent={
         s.run && run ? (
@@ -219,12 +294,24 @@ export default function SessionScreen() {
       }
       ListFooterComponent={
         <View style={{ gap: 12 }}>
-          {!wide && changed ? (
-            <Tap onPress={() => setShowDiff(true)} style={st.changed}>
-              <Text style={st.changedText}>
-                {changed} changed file{changed === 1 ? "" : "s"}
+          {changed ? (
+            <Tap
+              onPress={openDiff}
+              style={[st.diffCard, pane && current === "diff" && st.diffCardOn]}
+              kb="row"
+            >
+              <View style={st.diffTop}>
+                <Text style={st.diffBranch} numberOfLines={1}>
+                  {s.session?.branch ?? s.session?.worktree ?? "changes"}
+                </Text>
+                <Text style={st.diffCounts}>
+                  <Text style={{ color: color.teal }}>+{added}</Text>{" "}
+                  <Text style={{ color: color.red }}>−{removed}</Text>
+                </Text>
+              </View>
+              <Text style={st.diffSub}>
+                {changed} file{changed === 1 ? "" : "s"} · tap to see the diff
               </Text>
-              <Icon name="chevron" size={16} color={color.muted} />
             </Tap>
           ) : null}
           {s.perms.map((p) => (
@@ -280,26 +367,50 @@ export default function SessionScreen() {
               {s.session?.title ?? " "}
             </Text>
           )}
-          <Text style={st.headerSub} numberOfLines={1}>
-            {subtitle}
-          </Text>
+          {wide && folderName ? (
+            <Text style={st.crumb} onPress={() => goFolder("chats")}>
+              {folderName} › Chats
+            </Text>
+          ) : null}
+          {wide ? (
+            <Text style={st.headerSub} numberOfLines={1}>
+              {subtitle}
+            </Text>
+          ) : s.project ? (
+            // Phone: which Folder (and worktree) this chat is in.
+            <View style={st.subRow}>
+              <Letter name={folderName ?? ""} system={s.project.kind === "home"} size={13} />
+              <Text style={st.headerSub} numberOfLines={1}>
+                {[folderName, s.session?.worktree].filter(Boolean).join(" · ")}
+              </Text>
+            </View>
+          ) : null}
         </View>
-        {s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
-        {s.status === "running" ? <Badge label="Running" /> : null}
+        {wide && s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
+        {wide && s.status === "running" ? <Badge label="Working" /> : null}
         <Tap testID="session-menu" hitSlop={12} onPress={() => setMenu(true)} style={st.menuButton}>
           <Text style={st.menuDots}>⋯</Text>
         </Tap>
-        <Tap
-          testID="handsfree"
-          hitSlop={12}
-          onPress={() => router.push({ pathname: "/handsfree", params: { session: id } })}
-        >
-          <Icon name="phone" size={22} color={color.text} />
-        </Tap>
       </View>
+      {wide && s.project ? (
+        <View style={st.folderTabs}>
+          <UnderlineTabs
+            options={[
+              { value: "chats", label: "Chats" },
+              { value: "files", label: "Files" },
+              ...(s.project.kind === "routine" || s.project.schedule
+                ? [{ value: "runs", label: "Runs" }]
+                : []),
+              { value: "settings", label: "Settings" },
+            ]}
+            value="chats"
+            onChange={goFolder}
+          />
+        </View>
+      ) : null}
 
       <View style={{ flex: 1, flexDirection: "row", minHeight: 0 }}>
-        <View style={{ flex: 1, paddingBottom: keyboard, minWidth: 0 }}>
+        <View style={[{ flex: 1, paddingBottom: keyboard, minWidth: 0 }, pane && st.chatColumn]}>
           {transcript}
           <ErrorLine message={error} />
           {note ? <Text style={st.note}>{note}</Text> : null}
@@ -323,23 +434,77 @@ export default function SessionScreen() {
             onError={setError}
           />
         </View>
-        {/* Desktop: changed files beside the conversation. */}
-        {wide && changed ? (
-          <ScrollView style={st.side} contentContainerStyle={{ padding: 12 }}>
-            <Text style={st.sideTitle}>Changed files</Text>
-            <DiffView files={s.diff} />
-          </ScrollView>
+        {/* Desktop: the View beside the conversation, the diff or a file the agent wrote. */}
+        {pane ? (
+          <View style={st.side}>
+            {(changed ? 1 : 0) + opened.length > 1 ? (
+              <View style={st.paneTabs}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 4 }}
+                >
+                  {changed ? (
+                    <Tap
+                      onPress={() => setView("diff")}
+                      style={[st.paneTab, current === "diff" && st.paneTabOn]}
+                    >
+                      <Text style={[st.paneTabText, current === "diff" && { color: color.textStrong }]}>
+                        Diff · {changed} file{changed === 1 ? "" : "s"}
+                      </Text>
+                    </Tap>
+                  ) : null}
+                  {opened.map((f) => (
+                    <Tap
+                      key={f}
+                      onPress={() => setView(f)}
+                      style={[st.paneTab, current === f && st.paneTabOn]}
+                    >
+                      <Text style={[st.paneTabText, current === f && { color: color.textStrong }]}>
+                        {f.split("/").pop()}
+                      </Text>
+                    </Tap>
+                  ))}
+                </ScrollView>
+              </View>
+            ) : null}
+            {current === "diff" ? (
+              <View style={st.diffPane}>
+                <View style={st.diffHead}>
+                  <View style={st.kindChip}>
+                    <Text style={st.kindText}>Diff</Text>
+                  </View>
+                  <Text style={st.diffName} numberOfLines={1}>
+                    {s.session?.branch ?? s.session?.worktree ?? "changes"}
+                  </Text>
+                  <View style={{ flex: 1 }} />
+                  <Tap onPress={() => setPaneHidden(true)} style={st.closeBox} aria-label="Close the view">
+                    <Icon name="close" size={14} color={color.muted} />
+                  </Tap>
+                </View>
+                <ScrollView>
+                  <DiffView files={s.diff} />
+                </ScrollView>
+              </View>
+            ) : folder.joined ? (
+              <FileView
+                key={current}
+                call={folderCall}
+                path={current!}
+                version={all.length}
+                readOnly={s.project?.kind === "code" && tree === "main"}
+                onOpenInFiles={openInFiles}
+                onClose={() => setPaneHidden(true)}
+              />
+            ) : (
+              <Loading />
+            )}
+          </View>
         ) : null}
       </View>
 
       <Sheet visible={image != null} onClose={() => setImage(null)} width={900}>
         {image ? <Image source={{ uri: image }} style={st.full} resizeMode="contain" /> : null}
-      </Sheet>
-
-      <Sheet visible={showDiff} title="Changed files" onClose={() => setShowDiff(false)} width={720}>
-        <ScrollView style={{ maxHeight: 560 }}>
-          <DiffView files={s.diff} />
-        </ScrollView>
       </Sheet>
 
       <PickSheet
@@ -353,6 +518,11 @@ export default function SessionScreen() {
             label: "Changed files",
             detail: changed ? `${changed} file${changed === 1 ? "" : "s"}` : "none yet",
           },
+          {
+            key: "files",
+            label: "Open in Files",
+            detail: tree !== "main" ? "This chat's worktree" : "The Folder's files",
+          },
           { key: "compact", label: "Compact the conversation", detail: "Summarize it to free up context" },
           { key: "handsfree", label: "Hands-free", detail: "Talk to this session" },
           ...(busy ? [{ key: "stop", label: "Stop", danger: true }] : []),
@@ -360,7 +530,8 @@ export default function SessionScreen() {
         onPick={(key) => {
           setMenu(false);
           if (key === "rename") setRenaming(s.session?.title ?? "");
-          else if (key === "diff") setShowDiff(true);
+          else if (key === "diff") openDiff();
+          else if (key === "files") openInFiles();
           else if (key === "compact") compact();
           else if (key === "handsfree") router.push({ pathname: "/handsfree", params: { session: id } });
           else if (key === "stop") s.interrupt().catch((e) => setError(e.message));
@@ -465,6 +636,7 @@ const st = StyleSheet.create({
     outlineStyle: "none",
   } as any,
   headerSub: { fontSize: 12, color: color.muted },
+  subRow: { flexDirection: "row", alignItems: "center", gap: 5, maxWidth: "100%" },
   menuButton: { paddingHorizontal: 4 },
   menuDots: { fontSize: 22, color: color.text, marginTop: -6 },
   transcript: { padding: 16, gap: 14 },
@@ -495,9 +667,59 @@ const st = StyleSheet.create({
     borderColor: color.outline,
   },
   stopText: { fontSize: 13, color: color.text },
-  side: { width: 380, flexGrow: 0, borderLeftWidth: 1, borderLeftColor: color.hairline },
+  side: {
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+    borderLeftWidth: 1,
+    borderLeftColor: color.hairline,
+  },
+  chatColumn: { flexGrow: 0, flexShrink: 0, flexBasis: 540, width: 540 },
+  diffPane: { flex: 1, minHeight: 0, backgroundColor: "#0f0f12" },
+  diffHead: {
+    height: 46,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingLeft: 16,
+    paddingRight: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#222228",
+  },
+  kindChip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 5, backgroundColor: color.field },
+  kindText: { fontSize: 11, color: color.textDim },
+  diffName: { flexShrink: 1, fontSize: 13, color: color.text },
+  closeBox: { width: 26, height: 26, borderRadius: 6, alignItems: "center", justifyContent: "center" },
+  paneTabs: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: color.hairline,
+  },
+  paneTab: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7 },
+  paneTabOn: { backgroundColor: color.raised },
+  paneTabText: { fontSize: 12.5, color: color.muted },
+  crumb: { fontSize: 12, color: color.muted, marginTop: 2 },
+  diffCard: {
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: color.border,
+    backgroundColor: color.card,
+  },
+  diffCardOn: { borderColor: color.accentBorder, backgroundColor: color.accentCard },
+  diffTop: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  diffBranch: { flex: 1, fontSize: 14, fontFamily: font.mono, color: color.text },
+  diffCounts: { fontSize: 14 },
+  diffSub: { fontSize: 13, color: color.muted },
+  folderTabs: { paddingHorizontal: 24, borderBottomWidth: 1, borderBottomColor: color.hairline },
   runActions: { flexDirection: "row", gap: 16 },
   note: { fontSize: 12.5, color: color.muted, paddingHorizontal: 16, paddingBottom: 4 },
   full: { width: "100%", height: 560 },
-  sideTitle: { fontSize: 13, fontWeight: "600", color: color.text, paddingBottom: 8 },
 });

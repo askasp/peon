@@ -277,7 +277,7 @@ function ScheduleForm({
             : " "}
         </Text>
       </Field>
-      <Field label={routine ? "Prompt (empty runs the routine)" : "Prompt"}>
+      <Field label={routine ? "Prompt (empty runs the procedure)" : "Prompt"}>
         <TextInput
           value={p.prompt}
           onChangeText={(v) => set("prompt", v)}

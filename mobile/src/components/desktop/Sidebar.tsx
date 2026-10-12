@@ -1,9 +1,10 @@
-import { ReactNode } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ReactNode, useRef, useState } from "react";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { router, usePathname } from "expo-router";
 import { Icon } from "../Icon";
 import { Dot, kbProps } from "../ui";
 import { signOut, usePeon } from "@/lib/peon";
+import { filters, folderHref, kindLabel, sortFolders, templates } from "@/lib/folders";
 import { color, tileColors } from "@/lib/theme";
 import type { Project } from "@/lib/types";
 
@@ -61,27 +62,41 @@ export function Letter({
   );
 }
 
-function Section({ title, onAdd }: { title: string; onAdd?: () => void }) {
-  return (
-    <View style={st.sectionRow}>
-      <Text style={st.section}>{title}</Text>
-      {onAdd ? (
-        <Pressable
-          onPress={onAdd}
-          hitSlop={8}
-          style={(s: any) => [st.add, s.hovered && { color: color.text }]}
-        >
-          <Text style={st.addText}>+</Text>
-        </Pressable>
-      ) : null}
-    </View>
-  );
-}
-
 // React Native has a `window` but no `location`, so check for it.
 const host = (typeof window !== "undefined" && window.location?.hostname) || "connected";
 
-// Projects and routines, then the app's places, like the web app's sidebar.
+/** The templates a new Folder can start from, floating next to the sidebar. */
+export function TemplateMenu({ at, onClose }: { at: { x: number; y: number } | null; onClose: () => void }) {
+  return (
+    <Modal transparent visible={at != null} animationType="fade" onRequestClose={onClose}>
+      <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
+      {at ? (
+        <View style={[st.menu, { left: at.x, top: Math.max(12, at.y - 140) }]}>
+          <Text style={st.menuTitle}>New Folder</Text>
+          {templates.map((t) => (
+            <Pressable
+              key={t.kind}
+              testID={`template-${t.kind}`}
+              onPress={() => {
+                onClose();
+                router.navigate({ pathname: "/new-folder", params: { kind: t.kind } } as any);
+              }}
+              style={(s: any) => [st.menuRow, s.hovered && { backgroundColor: color.raised }]}
+            >
+              <View style={{ flex: 1, gap: 2 }}>
+                <Text style={st.menuLabel}>{t.label}</Text>
+                <Text style={st.menuDetail}>{t.detail}</Text>
+              </View>
+              <Text style={st.menuOpens}>opens {t.opens}</Text>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
+    </Modal>
+  );
+}
+
+// Folders (Home first, filtered by template), then the app's places.
 export function Sidebar() {
   const path = usePathname();
   const projects = usePeon((s) => s.projects);
@@ -89,58 +104,79 @@ export function Sidebar() {
   const inbox = usePeon((s) => s.inbox.length);
   const user = usePeon((s) => s.user);
   const connected = usePeon((s) => s.connected);
+  const [filter, setFilter] = useState("all");
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const newRow = useRef<View>(null);
   // Per project: "waiting" if any session needs you, else "running".
   const busy = new Map<number, string>();
   for (const r of running)
     if (busy.get(r.project.id) !== "waiting")
       busy.set(r.project.id, r.status === "waiting" ? "waiting" : "running");
 
-  // A row's right side: a dot while it works (cream when it needs you), a lock if private, its schedule.
-  const meta = (p: Project, label: string) => (
+  // A row's right side: a dot while it works (amber when it needs you), a lock if private, its template.
+  const meta = (p: Project) => (
     <View style={st.metaRow}>
       {busy.has(p.id) ? (
         <Dot size={7} tint={busy.get(p.id) === "waiting" ? color.needs : color.accent} />
       ) : null}
-      {p.scope === "private" ? <Icon name="lock" size={11} color={color.faint} /> : null}
+      {p.scope === "private" && p.kind !== "home" ? <Icon name="lock" size={11} color={color.faint} /> : null}
       <Text style={st.meta} numberOfLines={1}>
-        {label}
+        {kindLabel[p.kind]}
       </Text>
     </View>
   );
 
-  const places = projects.filter((p) => p.kind === "code" || p.kind === "chat");
-  const routines = projects.filter((p) => p.kind === "routine" || p.kind === "system");
+  const { home, folders } = sortFolders(projects, filter);
 
-  const projectRow = (p: Project, href: string, right: ReactNode) => (
-    <NavRow
-      key={p.id}
-      testID={`side-${p.name}`}
-      label={p.name}
-      href={href}
-      active={path === href || path.startsWith(`${href}/`)}
-      left={<Letter name={p.name} system={p.kind === "system"} />}
-      right={right}
-    />
-  );
+  const folderRow = (p: Project, label = p.name) => {
+    const href = folderHref(p);
+    return (
+      <NavRow
+        key={p.id}
+        testID={`side-${p.name}`}
+        label={label}
+        href={href}
+        active={path === href || path.startsWith(`${href}/`)}
+        left={<Letter name={label} system={p.kind === "system" || p.kind === "home"} />}
+        right={meta(p)}
+      />
+    );
+  };
+
+  const openMenu = () => newRow.current?.measureInWindow((x, y, w) => setMenu({ x: x + w - 24, y }));
 
   return (
     <View style={st.side}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 10, paddingBottom: 16 }}>
-        <Section title="Projects" onAdd={user ? () => router.navigate("/new" as any) : undefined} />
-        {places.map((p) => projectRow(p, `/project/${p.id}`, meta(p, p.schedule ?? p.kind)))}
-        <Section
-          title="Routines"
-          onAdd={
-            user ? () => router.navigate({ pathname: "/new", params: { kind: "routine" } } as any) : undefined
-          }
-        />
-        {routines.map((p) =>
-          projectRow(
-            p,
-            p.kind === "system" ? `/project/${p.id}` : `/routine/${p.id}`,
-            meta(p, p.kind === "system" ? "system" : (p.schedule ?? "")),
-          ),
-        )}
+        <Text style={st.section}>Folders</Text>
+        <View style={st.chips}>
+          {filters.map((f) => (
+            <Pressable
+              key={f.key}
+              onPress={() => setFilter(f.key)}
+              style={(s: any) => [st.chip, filter === f.key ? st.chipOn : s.hovered && st.chipHover]}
+            >
+              <Text style={[st.chipText, filter === f.key && { color: color.textStrong }]}>{f.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {home ? folderRow(home, "Home") : null}
+        {home ? <View style={st.rule} /> : null}
+        {folders.map((p) => folderRow(p))}
+        {user ? (
+          <View ref={newRow} collapsable={false}>
+            <Pressable
+              testID="side-new-folder"
+              onPress={openMenu}
+              style={(s: any) => [st.row, s.hovered && st.rowHover]}
+            >
+              <View style={st.plus}>
+                <Text style={st.plusText}>+</Text>
+              </View>
+              <Text style={[st.rowLabel, { color: color.muted }]}>New Folder</Text>
+            </Pressable>
+          </View>
+        ) : null}
 
         <View style={{ height: 18 }} />
         <NavRow
@@ -152,11 +188,7 @@ export function Sidebar() {
         />
         <NavRow label="Schedules" href="/schedules" active={path === "/schedules"} />
         {user?.admin ? (
-          <>
-            <NavRow label="Connectors" href="/connectors" active={path === "/connectors"} />
-            <NavRow label="Models" href="/models" active={path === "/models"} />
-            <NavRow label="Users" href="/users" active={path === "/users"} />
-          </>
+          <NavRow label="Connectors" href="/connectors" active={path === "/connectors"} />
         ) : null}
         <NavRow label="Settings" href="/settings" active={path === "/settings"} />
       </ScrollView>
@@ -171,23 +203,62 @@ export function Sidebar() {
           <Text style={st.footText}>Log out</Text>
         </Pressable>
       </View>
+      <TemplateMenu at={menu} onClose={() => setMenu(null)} />
     </View>
   );
 }
 
 const st = StyleSheet.create({
   side: { width: 240, borderRightWidth: 1, borderRightColor: color.hairline, backgroundColor: color.bar },
-  sectionRow: {
+  section: { fontSize: 12, color: color.muted, paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8 },
+  chips: { flexDirection: "row", flexWrap: "wrap", gap: 4, paddingHorizontal: 14, paddingBottom: 10 },
+  chip: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
+  chipOn: { backgroundColor: color.raised },
+  chipHover: { backgroundColor: color.card },
+  chipText: { fontSize: 11.5, color: color.muted },
+  rule: { height: 1, backgroundColor: color.hairline, marginHorizontal: 18, marginVertical: 8 },
+  plus: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: color.ghost,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  plusText: { fontSize: 14, color: color.muted, marginTop: -1 },
+  menu: {
+    position: "absolute",
+    width: 340,
+    padding: 6,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: color.border,
+    backgroundColor: color.card,
+    shadowColor: "#000",
+    shadowOpacity: 0.5,
+    shadowRadius: 30,
+    shadowOffset: { width: 0, height: 12 },
+  },
+  menuTitle: {
+    fontSize: 11,
+    color: color.faint,
+    letterSpacing: 0.6,
+    textTransform: "uppercase",
+    padding: 10,
+  },
+  menuRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 18,
-    paddingTop: 14,
-    paddingBottom: 6,
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
   },
-  section: { fontSize: 12, color: color.muted },
-  add: { paddingHorizontal: 4 },
-  addText: { fontSize: 16, color: color.muted },
+  menuLabel: { fontSize: 14, color: color.text },
+  menuDetail: { fontSize: 12, color: color.muted },
+  menuOpens: { fontSize: 11, color: color.faint },
   row: {
     flexDirection: "row",
     alignItems: "center",

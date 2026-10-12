@@ -2,7 +2,10 @@ defmodule Beamcode.Projects.Project do
   use Ecto.Schema
   import Ecto.Changeset
 
-  @kinds ~w(code routine chat system)
+  # A project is a Folder in the app; its kind is the template it was made
+  # from. chat, document, design, dataset and home all behave like chat.
+  @kinds ~w(code routine chat document design dataset home system)
+  @chat_like ~w(chat document design dataset home)
   @scopes ~w(team private)
 
   schema "projects" do
@@ -21,6 +24,10 @@ defmodule Beamcode.Projects.Project do
   end
 
   def kinds, do: @kinds
+
+  @doc "Kinds that are a plain folder for chatting and making files (no git, no routine)."
+  def chat_like?(%__MODULE__{kind: kind}), do: kind in @chat_like
+  def chat_like?(kind) when is_binary(kind), do: kind in @chat_like
 
   def changeset(project, attrs) do
     project

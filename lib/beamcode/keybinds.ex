@@ -46,6 +46,7 @@ defmodule Beamcode.Keybinds do
   # Pages reachable with `g <key>`; admin-only ones are hidden from others.
   @globals [
     {"inbox", "Inbox", "i", "/inbox", false},
+    {"folders", "Folders", "f", "/projects", false},
     {"schedules", "Schedules", "s", "/schedules", false},
     {"connectors", "Connectors", "c", "/connectors", true},
     {"models", "Models", "m", "/models", true},
@@ -151,7 +152,7 @@ defmodule Beamcode.Keybinds do
          {"i", "Inbox"},
          {"g", "Go to…"}
        ]},
-      {"Act", [{"c", "New session"}, {"r", "Run routine"}, {",", "Rename session"}]},
+      {"Act", [{"c", "New session"}, {"r", "Run procedure"}, {",", "Rename session"}]},
       {"View",
        [
          {"[ ]", "Previous / next tab ↻"},
@@ -190,7 +191,7 @@ defmodule Beamcode.Keybinds do
           {"Act",
            [
              {[p, "c"], "New session"},
-             {[p, "r"], "Run routine"},
+             {[p, "r"], "Run procedure"},
              {[p, ","], "Rename session"},
              {["mod+enter"], "Run / send"}
            ]},

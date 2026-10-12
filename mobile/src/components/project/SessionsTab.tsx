@@ -2,7 +2,8 @@ import { useState } from "react";
 import { FlatList, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Badge, Dot, Empty, ErrorLine, kbProps, Loading, Tap, Toggle } from "../ui";
+import { Badge, Dot, Empty, ErrorLine, kbProps, Loading, Tap } from "../ui";
+import { Icon } from "../Icon";
 import { ask } from "@/lib/peon";
 import { useLoad } from "@/lib/useLoad";
 import { ago } from "@/lib/time";
@@ -25,12 +26,11 @@ function dayLabel(ms: number | null): string {
 
 type Row = { kind: "day"; key: string; label: string } | { kind: "session"; key: string; s: SessionSummary };
 
-/** Sessions (or chats), newest first by day, with search and "+ New session". */
+/** A Folder's chats, newest first by day, under a box that starts a new one. */
 export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
   const insets = useSafeAreaInsets();
   const wide = useWide();
-  const [query, setQuery] = useState("");
-  const [worktree, setWorktree] = useState(ctx.project.always_worktree);
+  const [text, setText] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { data, error: loadError } = useLoad(
@@ -38,10 +38,9 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
     [ctx.changed],
   );
 
-  const q = query.trim().toLowerCase();
   const rows: Row[] = [];
   let last = "";
-  for (const s of (data ?? []).filter((s) => !q || s.title.toLowerCase().includes(q))) {
+  for (const s of data ?? []) {
     const label = dayLabel(s.updated);
     if (label !== last) rows.push({ kind: "day", key: `day-${label}`, label });
     last = label;
@@ -54,9 +53,10 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
     try {
       const { session_id } = await ask<{ session_id: string }>(
         "new_session",
-        { project_id: ctx.project.id, worktree },
+        { project_id: ctx.project.id, text },
         60000,
       );
+      setText("");
       router.push(`/session/${session_id}`);
     } catch (e: any) {
       setError(e.message);
@@ -64,39 +64,46 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
     setStarting(false);
   }
 
-  const noun = ctx.project.kind === "chat" ? "chat" : "session";
+  const name = ctx.project.kind === "home" ? "Home" : ctx.project.name;
 
   return (
     <View style={{ flex: 1 }}>
-      <View style={st.tools}>
-        <TextInput
-          value={query}
-          onChangeText={setQuery}
-          placeholder={`Search ${noun}s`}
-          placeholderTextColor={color.faint}
-          style={st.search}
-          autoCapitalize="none"
-          {...kbProps("search")}
-        />
-        {ctx.project.kind === "code" ? (
-          <View style={st.worktree}>
-            <Text style={st.worktreeText}>New worktree</Text>
-            <Toggle value={worktree} onChange={setWorktree} />
+      {/* Phone: the + New chat button starts chats; desktop: this box. */}
+      {wide ? (
+        <View style={[st.tools, st.toolsWide]}>
+          <View style={st.start}>
+            <Text style={st.plus}>+</Text>
+            <TextInput
+              testID="start-chat"
+              value={text}
+              onChangeText={setText}
+              placeholder={`New chat in ${name}`}
+              placeholderTextColor={color.muted}
+              style={st.startInput}
+              editable={!starting}
+              onSubmitEditing={newSession}
+              returnKeyType="send"
+              {...kbProps("search")}
+            />
+            {text.trim() ? (
+              <Tap testID="new-session" onPress={newSession} disabled={starting} style={st.send}>
+                <Icon name="send" size={14} color={color.accentInk} />
+              </Tap>
+            ) : (
+              <Text style={st.hint}>{starting ? "Starting…" : "Enter to start"}</Text>
+            )}
           </View>
-        ) : null}
-      </View>
+        </View>
+      ) : null}
       <ErrorLine message={error ?? loadError} />
       <FlatList
         data={rows}
         keyExtractor={(r) => r.key}
-        contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 120 + insets.bottom }}
-        ListEmptyComponent={
-          data == null ? (
-            <Loading />
-          ) : (
-            <Empty title={q ? "No match" : `No ${noun}s yet`} detail={q ? undefined : "Start one below."} />
-          )
-        }
+        contentContainerStyle={[
+          { paddingHorizontal: 18, paddingBottom: (wide ? 40 : 110) + insets.bottom },
+          wide && st.listWide,
+        ]}
+        ListEmptyComponent={data == null ? <Loading /> : <Empty title="No chats yet" />}
         renderItem={({ item }) =>
           item.kind === "day" ? (
             <Text style={st.day}>{item.label}</Text>
@@ -127,7 +134,7 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
                     {item.s.title}
                   </Text>
                   {item.s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
-                  {item.s.status === "running" ? <Badge label="Running" /> : null}
+                  {item.s.status === "running" ? <Badge label="Working" /> : null}
                 </View>
                 <Text style={st.rowMeta}>
                   {[
@@ -146,32 +153,38 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
           )
         }
       />
-      <Tap
-        testID="new-session"
-        haptic
-        onPress={newSession}
-        disabled={starting}
-        style={[st.fab, { bottom: 24 + insets.bottom }]}
-      >
-        <Text style={st.fabText}>{starting ? "Starting…" : `+ New ${noun}`}</Text>
-      </Tap>
     </View>
   );
 }
 
 const st = StyleSheet.create({
-  tools: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 18, paddingBottom: 6 },
-  search: {
+  tools: { flexDirection: "row", alignItems: "center", gap: 14, paddingHorizontal: 18, paddingBottom: 6 },
+  toolsWide: { paddingHorizontal: 32, paddingTop: 8, maxWidth: 868 },
+  listWide: { paddingHorizontal: 32, maxWidth: 868 },
+  start: {
     flex: 1,
-    height: 38,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    height: 44,
     borderRadius: 10,
-    backgroundColor: color.field,
-    paddingHorizontal: 12,
-    color: color.text,
-    fontSize: 14,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: color.outline,
+    paddingLeft: 12,
+    paddingRight: 6,
   },
-  worktree: { flexDirection: "row", alignItems: "center", gap: 8 },
-  worktreeText: { fontSize: 13, color: color.textDim },
+  plus: { fontSize: 16, color: color.accentText },
+  hint: { fontSize: 12, color: "#5d5d66", paddingRight: 6 },
+  startInput: { flex: 1, height: 42, color: color.text, fontSize: 14, outlineStyle: "none" } as any,
+  send: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    backgroundColor: color.accent,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   day: { fontSize: 12, color: color.muted, paddingTop: 16, paddingBottom: 4 },
   row: {
     paddingVertical: 12,
@@ -185,19 +198,4 @@ const st = StyleSheet.create({
   rowTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 10 },
   rowTitle: { flex: 1, fontSize: 15.5, color: color.text },
   rowMeta: { fontSize: 13, color: color.muted },
-  fab: {
-    position: "absolute",
-    right: 18,
-    height: 50,
-    paddingHorizontal: 20,
-    borderRadius: 25,
-    backgroundColor: color.textStrong,
-    justifyContent: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.4,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  fabText: { color: color.bg, fontWeight: "600", fontSize: 15 },
 });

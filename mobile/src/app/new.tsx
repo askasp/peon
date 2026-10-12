@@ -5,20 +5,15 @@ import { BackHeader, Button, ErrorLine, Screen, Segmented, SectionLabel, Tap, To
 import { notify } from "@/lib/notice";
 import { ask } from "@/lib/peon";
 import { useLoad } from "@/lib/useLoad";
+import { folderHref, templates } from "@/lib/folders";
 import { color, font } from "@/lib/theme";
 
-type Kind = "code" | "routine" | "chat";
+type Kind = "code" | "document" | "design" | "dataset" | "routine";
 type Options = {
   known_repos: string[];
   known_routines: string[];
   connectors: { name: string; tools: number; ready: boolean }[];
 };
-
-const kinds: { kind: Kind; label: string; detail: string }[] = [
-  { kind: "code", label: "Code", detail: "Clone a repository, or start an empty one. Sessions code in it." },
-  { kind: "routine", label: "Routine", detail: "A folder with instructions and skills. Does one job." },
-  { kind: "chat", label: "Chat", detail: "General chat. Files it makes are artifacts." },
-];
 
 const slug = (s: string) =>
   s
@@ -28,7 +23,7 @@ const slug = (s: string) =>
 const validName = (s: string) => /^[a-z0-9][a-z0-9-]*$/.test(s);
 const isGithub = (s: string) => /github\.com[/:][^/\s]+\/[^/\s]+/.test(s);
 
-// New project: code (clone or new repo), routine (one job, drafted by a session) or chat.
+// New Folder from a template: code (clone or new repo), document, design, dataset, or routine (drafted by a session).
 /** What creating the project makes, like the web shows it. */
 function willCreate(kind: Kind, name: string, source: string, token: string, importing: boolean): string {
   if (kind === "routine") {
@@ -49,13 +44,14 @@ function willCreate(kind: Kind, name: string, source: string, token: string, imp
     if (source) return `code/${name}/   git clone ${source}`;
     return `code/${name}/   new git repo`;
   }
-  return `${name}/\n  AGENTS.md\n  artifacts/`;
+  const sub = { document: "docs/", design: "designs/", dataset: "data.sqlite  app/" }[kind];
+  return `${name}/\n  AGENTS.md\n  ${sub}`;
 }
 
 export default function NewProject() {
   const params = useLocalSearchParams<{ kind?: string }>();
   const [kind, setKind] = useState<Kind>(
-    params.kind === "routine" || params.kind === "chat" ? params.kind : "code",
+    templates.some((t) => t.kind === params.kind) ? (params.kind as Kind) : "code",
   );
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
@@ -96,7 +92,7 @@ export default function NewProject() {
       // Shown on the page we go to next.
       if (r.note) notify(r.note);
       if (r.session_id) router.replace(`/session/${r.session_id}`);
-      else router.replace(kind === "routine" ? `/routine/${r.project_id}` : `/project/${r.project_id}`);
+      else router.replace(folderHref({ id: r.project_id, kind }) as any);
     } catch (e: any) {
       setError(e.message);
     }
@@ -107,14 +103,14 @@ export default function NewProject() {
     <Screen>
       <BackHeader label="Back" />
       <ScrollView contentContainerStyle={st.body} keyboardShouldPersistTaps="handled">
-        <Text style={st.title}>New project</Text>
+        <Text style={st.title}>New Folder</Text>
         <View style={st.kinds}>
-          {kinds.map((k) => (
+          {templates.map((k) => (
             <Tap
               key={k.kind}
               testID={`kind-${k.kind}`}
               onPress={() => {
-                setKind(k.kind);
+                setKind(k.kind as Kind);
                 setImporting(null);
               }}
               style={[st.kind, kind === k.kind && st.kindOn]}
@@ -127,7 +123,7 @@ export default function NewProject() {
 
         {kind === "routine" && options?.known_routines.length ? (
           <>
-            <SectionLabel>Add an existing routine folder</SectionLabel>
+            <SectionLabel>Add an existing procedure folder</SectionLabel>
             <View style={st.chips}>
               {options.known_routines.map((r) => (
                 <Tap
@@ -148,7 +144,15 @@ export default function NewProject() {
               testID="project-name"
               value={name}
               onChangeText={(v) => setName(v.toLowerCase())}
-              placeholder={kind === "routine" ? "front-digest" : kind === "chat" ? "ops-notes" : "my-app"}
+              placeholder={
+                {
+                  code: "my-app",
+                  document: "board-memos",
+                  design: "landing",
+                  dataset: "tool-loans",
+                  routine: "front-digest",
+                }[kind]
+              }
               placeholderTextColor={color.faint}
               autoCapitalize="none"
               style={st.input}

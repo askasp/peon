@@ -55,9 +55,25 @@ defmodule Beamcode.Opencode do
 
   def models, do: request(:get, "/api/model", []) |> data()
 
-  def default_model, do: request(:get, "/api/model/default", []) |> data()
+  @doc "The model a session uses when none is picked (a folder's opencode.json can set it)."
+  def default_model(dir \\ nil),
+    do: request(:get, "/api/model/default", params: loc(dir)) |> data()
 
-  def agents(dir \\ nil), do: request(:get, "/api/agent", params: loc(dir)) |> data()
+  @doc """
+  The agents for a folder. OpenCode answers `[]` while it's still loading a
+  folder it hasn't seen (it always has at least `build` once loaded), so an
+  empty list is retried for a few seconds.
+  """
+  def agents(dir \\ nil, tries \\ 10) do
+    case request(:get, "/api/agent", params: loc(dir)) |> data() do
+      {:ok, []} when tries > 1 ->
+        Process.sleep(300)
+        agents(dir, tries - 1)
+
+      result ->
+        result
+    end
+  end
 
   @doc "Makes OpenCode re-read config, skills and instructions for a folder."
   def reload_location(dir), do: request(:post, "/api/location/reload", params: loc(dir))

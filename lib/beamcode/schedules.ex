@@ -6,7 +6,8 @@ defmodule Beamcode.Schedules do
       { "morning-digest": { "cron": "0 8 * * 1-5", "prompt": "/digest since the last run",
                             "scope": "team", "owner": "aksel" } }
 
-  Optional keys: `agent`, `model` ("provider/model"). `scope` is `team` or `me`.
+  Optional keys: `agent`, `model` ("provider/model"), `paused` (true: kept, but
+  not run). `scope` is `team` or `me`.
   Each run is an ordinary session; runs are listed from `schedule_runs`.
   Times are server local time.
   """
@@ -89,7 +90,7 @@ defmodule Beamcode.Schedules do
 
     next =
       case Cron.parse(s["cron"]) do
-        {:ok, cron} -> Cron.next(cron, now)
+        {:ok, cron} -> if(s["paused"] != true, do: Cron.next(cron, now))
         _ -> nil
       end
 
@@ -103,6 +104,7 @@ defmodule Beamcode.Schedules do
       agent: s["agent"],
       model: s["model"],
       when: Cron.describe(s["cron"]),
+      paused: s["paused"] == true,
       next: next,
       last: last_run(project.id, key),
       raw: s
@@ -126,12 +128,26 @@ defmodule Beamcode.Schedules do
         with {:ok, scheds} <- read(project) do
           entry =
             attrs
-            |> Map.take(~w(cron prompt scope owner agent model))
-            |> Enum.reject(fn {_, v} -> v in [nil, ""] end)
+            |> Map.take(~w(cron prompt scope owner agent model paused))
+            |> Enum.reject(fn {_, v} -> v in [nil, "", false] end)
             |> Map.new()
 
           write(project, Map.put(scheds, key, entry))
         end
+    end
+  end
+
+  @doc "Pauses or resumes a schedule (`paused` in schedules.json)."
+  def set_paused(project, key, paused) do
+    with {:ok, scheds} <- read(project) do
+      case scheds[key] do
+        nil ->
+          {:error, "No schedule by that name."}
+
+        s ->
+          s = if paused, do: Map.put(s, "paused", true), else: Map.delete(s, "paused")
+          write(project, Map.put(scheds, key, s))
+      end
     end
   end
 

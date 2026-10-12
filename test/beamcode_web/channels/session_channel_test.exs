@@ -162,7 +162,7 @@ defmodule BeamcodeWeb.SessionChannelTest do
   test "run_again only works on routine runs", %{socket: socket} do
     {:ok, _, socket} = subscribe_and_join(socket, "session:ses_1", %{})
     ref = push(socket, "run_again", %{})
-    assert_reply ref, :error, %{message: "This session isn't a routine run."}
+    assert_reply ref, :error, %{message: "This session isn't a procedure run."}
   end
 
   test "a run finishing is pushed to its session", %{socket: socket} do

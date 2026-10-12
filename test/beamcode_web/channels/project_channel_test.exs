@@ -17,10 +17,24 @@ defmodule BeamcodeWeb.ProjectChannelTest do
 
       case {conn.method, conn.request_path} do
         {"GET", "/api/fs/read/" <> path} ->
-          case Agent.get(files, &Map.get(&1, URI.decode(path))) do
+          # A chat's worktree keeps its files under "wt:".
+          path =
+            if get_in(conn.query_params, ["location", "directory"]) == "/srv/app-wt",
+              do: "wt:" <> URI.decode(path),
+              else: URI.decode(path)
+
+          case Agent.get(files, &Map.get(&1, path)) do
             nil -> Plug.Conn.send_resp(conn, 404, "")
             body -> Plug.Conn.send_resp(conn, 200, body)
           end
+
+        {"GET", "/api/fs/list"} ->
+          data(conn, [
+            %{"path" => "docs/", "type" => "directory"},
+            %{"path" => ".git/", "type" => "directory"},
+            %{"path" => "../../etc/", "type" => "directory"},
+            %{"path" => "README.md", "type" => "file"}
+          ])
 
         {"POST", "/api/experimental/fs/write"} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
@@ -35,7 +49,17 @@ defmodule BeamcodeWeb.ProjectChannelTest do
             %{"name" => "review_pr", "path" => "/srv/app/.claude/skills/review_pr/SKILL.md"}
           ])
 
-        # Agents, models: nothing to pick from.
+        {"GET", "/api/session/ses_wt"} ->
+          data(conn, %{"id" => "ses_wt", "location" => %{"directory" => "/srv/app-wt"}})
+
+        {"GET", "/api/session/" <> _} ->
+          Plug.Conn.send_resp(conn, 404, "")
+
+        # A loaded folder always has `build` (an empty list means still loading).
+        {"GET", "/api/agent"} ->
+          data(conn, [%{"id" => "build", "mode" => "primary"}])
+
+        # Models: nothing to pick from.
         {"GET", _} ->
           data(conn, [])
       end
@@ -70,6 +94,58 @@ defmodule BeamcodeWeb.ProjectChannelTest do
     assert_reply ref, :error, %{message: "That file can't be opened here."}
     ref = push(socket, "save_file", %{"path" => "lib/app.ex", "content" => "x"})
     assert_reply ref, :error, %{message: "That file can't be saved here."}
+  end
+
+  test "files: list a subfolder and open a file, never outside the folder", %{
+    user: user,
+    app: app,
+    files: files
+  } do
+    Agent.update(files, &Map.put(&1, "docs/plan.md", "# Plan"))
+    {:ok, _, socket} = join_as(user, app)
+
+    ref = push(socket, "list_files", %{"path" => ""})
+    assert_reply ref, :ok, %{path: ".", entries: entries, base: "/files/" <> _}
+    assert Enum.map(entries, & &1.name) == ["docs", "README.md"]
+
+    ref = push(socket, "open_file", %{"path" => "docs//plan.md"})
+    assert_reply ref, :ok, %{path: "docs/plan.md", text: "# Plan", type: "text/markdown"}
+
+    ref = push(socket, "open_file", %{"path" => "docs/missing.md"})
+    assert_reply ref, :error, %{message: "Not found."}
+
+    for path <- ["../x", "/etc/passwd", "docs/../../x"] do
+      ref = push(socket, "list_files", %{"path" => path})
+      assert_reply ref, :error, %{message: "That path is outside the folder."}
+      ref = push(socket, "open_file", %{"path" => path})
+      assert_reply ref, :error, %{message: "That path is outside the folder."}
+    end
+  end
+
+  test "files: a chat's worktree by ref; a Code Folder's main is read-only", %{
+    admin: admin,
+    user: user,
+    app: app,
+    files: files
+  } do
+    Beamcode.Projects.record_session("ses_wt", app, admin)
+    Agent.update(files, &Map.merge(&1, %{"plan.md" => "main", "wt:plan.md" => "chat"}))
+    {:ok, _, socket} = join_as(user, app)
+
+    ref = push(socket, "open_file", %{"path" => "plan.md"})
+    assert_reply ref, :ok, %{text: "main", url: main_url}
+    ref = push(socket, "open_file", %{"path" => "plan.md", "ref" => "ses_wt"})
+    assert_reply ref, :ok, %{text: "chat", url: chat_url}
+    # The signed links load from different trees.
+    assert main_url != chat_url
+
+    ref = push(socket, "open_file", %{"path" => "plan.md", "ref" => "ses_other"})
+    assert_reply ref, :error, %{message: "That chat's files aren't available."}
+
+    ref = push(socket, "write_file", %{"path" => "plan.md", "content" => "x"})
+    assert_reply ref, :error, %{message: "Main is read-only here." <> _}
+    ref = push(socket, "write_file", %{"path" => "plan.md", "content" => "x", "ref" => "ses_wt"})
+    assert_reply ref, :ok, %{}
   end
 
   test "creating a skill writes its SKILL.md from the template", %{

@@ -121,10 +121,10 @@ async function desktop() {
     await waitFor(async () => (await byText(page, "Inbox").count()) > 0, "no inbox");
   });
 
-  const chat = `e2e-chat-${stamp}`;
-  await step("new project: create a chat project", async () => {
+  const chat = `e2e-doc-${stamp}`;
+  await step("new folder: create one from the Document template", async () => {
     await page.goto(`${BASE}/app/new`);
-    await click(page, "kind-chat");
+    await click(page, "kind-document");
     await page.fill('[data-testid="project-name"]', chat);
     await click(page, "create-project");
     await page.waitForURL(/\/app\/project\/\d+/, { timeout: 30000 });
@@ -145,25 +145,20 @@ async function desktop() {
     );
   });
 
-  await step("project: sessions list, search and day groups", async () => {
+  await step("folder: chats list under the start box", async () => {
     await openProject(page, PROJECT, true);
-    await waitFor(async () => (await visible(page, '[data-testid^="session-"]').count()) > 0, "no sessions");
-    const before = await visible(page, '[data-testid^="session-"]').count();
-    await visible(page, '[data-kb="search"]').first().fill("zzz-no-match");
+    await tab(page, "Chats");
+    await waitFor(async () => (await visible(page, '[data-testid^="session-"]').count()) > 0, "no chats");
     await waitFor(
-      async () => (await visible(page, '[data-testid^="session-"]').count()) === 0,
-      "search didn't filter",
-    );
-    await visible(page, '[data-kb="search"]').first().fill("");
-    await waitFor(
-      async () => (await visible(page, '[data-testid^="session-"]').count()) === before,
-      "search didn't reset",
+      async () => (await visible(page, '[data-testid="start-chat"]').count()) === 1,
+      "no start box",
     );
   });
 
   const skill = `e2e-${stamp}`;
   await step("skills: create a skill and save an edit", async () => {
-    await tab(page, "Skills");
+    await tab(page, "Settings");
+    await click(page, "settings-new-skill");
     await byText(page, "+ New skill").first().click();
     await page.keyboard.type(skill);
     await page.keyboard.press("Enter");
@@ -183,7 +178,8 @@ async function desktop() {
 
   const sched = `e2e-${stamp}`;
   await step("schedules: create, edit and delete a schedule", async () => {
-    await tab(page, "Schedules");
+    await click(page, "settings-up");
+    await click(page, "settings-schedules");
     // The button is enabled once the schedules have loaded.
     await waitFor(
       async () =>
@@ -213,9 +209,9 @@ async function desktop() {
   });
 
   await step("project settings: toggle worktrees on and off", async () => {
-    await tab(page, "Settings");
-    await waitFor(async () => (await byText(page, "New sessions in a worktree").count()) > 0, "no settings");
-    const toggle = page.getByRole("switch", { name: "New sessions in a worktree" }).locator("visible=true");
+    await click(page, "settings-up");
+    await waitFor(async () => (await byText(page, "New worktree for each chat").count()) > 0, "no settings");
+    const toggle = page.getByRole("switch", { name: "New worktree for each chat" }).locator("visible=true");
     const was = await toggle.isChecked();
     await toggle.click();
     await waitFor(
@@ -227,10 +223,10 @@ async function desktop() {
   });
 
   await step("session: new session, send, streamed reply", async () => {
-    await tab(page, "Sessions");
-    await click(page, "new-session");
+    await tab(page, "Chats");
+    await visible(page, '[data-testid="start-chat"]').first().fill("Reply with exactly the word: pong");
+    await visible(page, '[data-testid="start-chat"]').first().press("Enter");
     await page.waitForURL(/\/app\/session\//, { timeout: 30000 });
-    await sendInSession(page, "Reply with exactly the word: pong");
     await waitFor(async () => (await byText(page, "pong").count()) > 0, "no reply", 90000);
   });
 
@@ -351,13 +347,11 @@ async function desktop() {
   await step("session: diff panel, thinking and tool output", async () => {
     // A fresh session: OpenCode can loop on a request sent after a stop in a compacted session.
     await openProject(page, PROJECT, true);
-    await tab(page, "Sessions");
-    await click(page, "new-session");
+    await tab(page, "Chats");
+    const start = visible(page, '[data-testid="start-chat"]').first();
+    await start.fill(`Create the file e2e-${stamp}.txt containing the word hello. Use the write tool.`);
+    await start.press("Enter");
     await page.waitForURL(/\/app\/session\//, { timeout: 30000 });
-    await sendInSession(
-      page,
-      `Create the file e2e-${stamp}.txt containing the word hello. Use the write tool.`,
-    );
     await waitFor(async () => (await byText(page, "Changed files").count()) > 0, "no diff panel", 120000);
     await waitFor(
       async () => (await page.getByText(new RegExp(`e2e-${stamp}\\.txt`)).count()) > 0,
@@ -598,12 +592,13 @@ async function iphone() {
 
   await step("iphone project: tabs and a new session with a reply", async () => {
     await openProject(page, PROJECT, false);
-    await tab(page, "Skills");
-    await tab(page, "Schedules");
-    await tab(page, "Sessions");
+    await tab(page, "Files");
+    await tab(page, "Settings");
+    await tab(page, "Chats");
     await click(page, "new-session");
+    await page.locator('[data-testid="compose-input"]').fill("Reply with exactly the word: iphone");
+    await click(page, "compose-go");
     await page.waitForURL(/\/app\/session\//, { timeout: 30000 });
-    await sendInSession(page, "Reply with exactly the word: iphone");
     await waitFor(async () => (await byText(page, "iphone").count()) > 0, "no reply", 90000);
   });
 
@@ -619,12 +614,12 @@ async function iphone() {
     rmSync(f, { force: true });
   });
 
-  await step("iphone composer sheet: mic button opens it, Go starts a session", async () => {
+  await step("iphone new chat sheet: + opens it, @folder picks the Folder", async () => {
     await page.goto(`${BASE}/app`);
     await click(page, "tab-mic");
     const box = page.locator('[data-testid="compose-input"]');
-    await box.fill(`new session in ${PROJECT}, reply with exactly: sheet`);
-    await waitFor(async () => (await byText(page, "New session").count()) > 0, "no preview");
+    await box.fill(`@${PROJECT} reply with exactly: sheet`);
+    await waitFor(async () => (await byText(page, PROJECT).count()) > 0, "no Folder picked");
     await click(page, "compose-go");
     await page.waitForURL(/\/app\/session\//, { timeout: 60000 });
     await waitFor(async () => (await byText(page, "sheet").count()) > 0, "no reply", 90000);
@@ -632,8 +627,8 @@ async function iphone() {
 
   await step("iphone routines: run one", async () => {
     await page.goto(`${BASE}/app`);
-    await click(page, "tab-routines");
-    await click(page, `routine-${ROUTINE}`);
+    await click(page, "tab-projects");
+    await click(page, `project-${ROUTINE}`);
     await click(page, "run-routine");
     await page.waitForURL(/\/app\/session\//, { timeout: 60000 });
   });

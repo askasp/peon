@@ -56,6 +56,7 @@ defmodule Beamcode.Schedules.Scheduler do
         Schedules.put_summary(project.id, scheds)
 
         for {key, sched} <- scheds,
+            sched["paused"] != true,
             {:ok, cron} <- [Cron.parse(sched["cron"])],
             Cron.matches?(cron, minute) do
           Logger.info("running schedule #{project.name}/#{key}")

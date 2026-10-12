@@ -13,6 +13,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { Platform } from "react-native";
 import { router } from "expo-router";
 import { emit } from "./commands";
+import { folderHref, sortFolders } from "./folders";
 import { getCurrent } from "./current";
 import { closePalette, openPalette } from "./palette";
 import { ask, getState } from "./peon";
@@ -186,14 +187,10 @@ export const prefixLabel = (p: string) =>
     "ctrl+a": isMac ? "⌃A" : "Ctrl+A",
   })[p] ?? p;
 
-/** Sidebar order: projects (code, chat), then routines (and setup). */
+/** Sidebar order: Home, then every other Folder (system last), as the sidebar lists them. */
 export function sidebarItems(projects: Project[]): { project: Project; href: string }[] {
-  const places = projects.filter((p) => p.kind === "code" || p.kind === "chat");
-  const routines = projects.filter((p) => p.kind === "routine" || p.kind === "system");
-  return [...places, ...routines].map((p) => ({
-    project: p,
-    href: p.kind === "routine" ? `/routine/${p.id}` : `/project/${p.id}`,
-  }));
+  const { home, folders } = sortFolders(projects);
+  return [...(home ? [home] : []), ...folders].map((p) => ({ project: p, href: folderHref(p) }));
 }
 
 // Our paths for the server's `g` destinations (LiveView paths).
@@ -382,7 +379,7 @@ async function run() {
   const { projectId, sessionId } = getCurrent();
   const project = getState().projects.find((p) => p.id === projectId);
   if (sessionId && emit("session:run-again")) return;
-  if (project?.kind !== "routine") return toast("Open a routine to run it");
+  if (project?.kind !== "routine") return toast("Open a procedure to run it");
   try {
     const { session_id } = await ask<{ session_id: string }>(
       "run_routine",

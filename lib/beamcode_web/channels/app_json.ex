@@ -132,6 +132,7 @@ defmodule BeamcodeWeb.AppJSON do
       scope: s.scope,
       owner: s.owner,
       prompt: s.prompt,
+      paused: s.paused,
       next: s.next && NaiveDateTime.to_iso8601(s.next),
       last: s.last && run(s.last)
     }

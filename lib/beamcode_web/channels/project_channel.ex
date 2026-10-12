@@ -11,10 +11,18 @@ defmodule BeamcodeWeb.ProjectChannel do
     * `run` `{inputs?}` → `{session_id}` (routines)
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
+    * `trees` → `{trees}`: the chats with a worktree that has changes
+      (`[%{ref, title, worktree, changed}]`, see `Beamcode.Worktrees`)
+    * `list_files` `{path}` → `{path, entries, base}`; `open_file` `{path}` →
+      `{path, type, size, url, text}` (`text` is nil for binary or big files;
+      `url` loads it under the signed `base`, see `BeamcodeWeb.FileToken`);
+      `write_file` `{path, content}`; `table` `{path, table?}` → `{tables, table, columns, rows}`.
+      Each takes `ref`: "main" (default) or a chat id for that chat's worktree.
+      A Code Folder's own folder is read-only here: chats change it.
     * `schedules` → `{schedules, agents, models, blank}`; `describe_schedule` `{params}`
       → `{cron, when, next}`; `save_schedule` `{params}`; `delete_schedule` `{key}`;
       `run_schedule` `{key}` → `{session_id}`
-    * `settings` → `{settings, github, connectors}`; `save_settings` `{params}` → `{project, message}`;
+    * `settings` → `{directory, skills, settings, github, connectors}`; `save_settings` `{params}` → `{project, message}`;
       `grant` `{connector, granted}`; `github_save` `{token}`; `github_remove`; `remove`
 
   Pushes `changed` when the project's sessions or runs change, so lists reload.
@@ -25,15 +33,20 @@ defmodule BeamcodeWeb.ProjectChannel do
     Connectors,
     GitTokens,
     Projects,
+    ProjectFiles,
     ProjectTools,
     Routines,
     Schedules,
     Sessions,
-    Vault
+    Vault,
+    Worktrees
   }
 
   alias Beamcode.Opencode.Events
   alias BeamcodeWeb.{AppJSON, ChannelTasks}
+
+  # Text bigger than this is opened by URL instead of sent over the socket.
+  @max_text 1_000_000
 
   # Only these files open in the editor: the instructions and the project's skills.
   @editable ~r{\A(AGENTS\.md|\.opencode/skill/[a-z0-9][a-z0-9-]*/SKILL\.md)\z}
@@ -157,6 +170,85 @@ defmodule BeamcodeWeb.ProjectChannel do
       else
         false -> {:error, %{message: "That file can't be saved here."}}
         {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
+  def handle_in("trees", _params, socket) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      case Worktrees.list(project, user) do
+        {:ok, trees} -> {:ok, %{trees: trees}}
+        {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
+  def handle_in("list_files", %{"path" => path} = params, socket) when is_binary(path) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      with {:ok, project} <- Worktrees.at(project, user, params["ref"]),
+           {:ok, entries} <- ProjectFiles.list(project, path) do
+        {:ok, clean} = ProjectFiles.clean_path(path)
+        {:ok, %{path: clean, entries: entries, base: BeamcodeWeb.FileToken.base(user, project)}}
+      else
+        {:error, reason} -> file_error(reason)
+      end
+    end)
+  end
+
+  def handle_in("open_file", %{"path" => path} = params, socket) when is_binary(path) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      with {:ok, project} <- Worktrees.at(project, user, params["ref"]),
+           {:ok, body} <- ProjectFiles.read(project, path) do
+        {:ok, clean} = ProjectFiles.clean_path(path)
+
+        text =
+          if byte_size(body) <= @max_text and ProjectFiles.text?(body), do: body
+
+        {:ok,
+         %{
+           path: clean,
+           type: ProjectFiles.content_type(clean),
+           size: byte_size(body),
+           url: BeamcodeWeb.FileToken.base(user, project) <> URI.encode(clean),
+           text: text
+         }}
+      else
+        {:error, reason} -> file_error(reason)
+      end
+    end)
+  end
+
+  def handle_in("write_file", %{"path" => path, "content" => content} = params, socket)
+      when is_binary(path) and is_binary(content) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      with {:ok, tree} <- Worktrees.at(project, user, params["ref"]),
+           false <- Worktrees.code_main?(tree, project),
+           :ok <- ProjectFiles.write(tree, path, content) do
+        {:ok, %{}}
+      else
+        true -> file_error(:read_only)
+        {:error, reason} -> file_error(reason)
+      end
+    end)
+  end
+
+  def handle_in("table", %{"path" => path} = params, socket) when is_binary(path) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      with {:ok, project} <- Worktrees.at(project, user, params["ref"]),
+           {:ok, data} <- ProjectFiles.table(project, path, params["table"]) do
+        {:ok, data}
+      else
+        {:error, reason} -> file_error(reason)
       end
     end)
   end
@@ -400,6 +492,9 @@ defmodule BeamcodeWeb.ProjectChannel do
         else: {[], MapSet.new()}
 
     %{
+      directory: project.directory,
+      skills:
+        for({name, path} <- ProjectTools.skill_files(project), do: %{name: name, path: path}),
       settings: %{
         scope: project.scope,
         always_worktree: project.always_worktree,
@@ -435,4 +530,14 @@ defmodule BeamcodeWeb.ProjectChannel do
   defp inputs(_, _config), do: %{}
 
   defp error(reason), do: {:error, %{message: ChannelTasks.error_message(reason)}}
+
+  defp file_error(:bad_path), do: {:error, %{message: "That path is outside the folder."}}
+  defp file_error(:enoent), do: {:error, %{message: "Not found."}}
+  defp file_error(:too_big), do: {:error, %{message: "Too big to open."}}
+  defp file_error(:bad_ref), do: {:error, %{message: "That chat's files aren't available."}}
+
+  defp file_error(:read_only),
+    do: {:error, %{message: "Main is read-only here. Edit in a chat's worktree, or ask a chat."}}
+
+  defp file_error(reason), do: error(reason)
 end

@@ -2,14 +2,13 @@ import { useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Icon } from "../Icon";
-import { Sheet } from "../Sheet";
-import { Button, Card, Empty, ErrorLine, kbProps, Loading, Tap } from "../ui";
-import { usePeon } from "@/lib/peon";
-import { inputsLabel, runWho, stopRun } from "@/lib/runs";
+import { Button, ErrorLine, Loading, Tap, Toggle } from "../ui";
+import { ask, usePeon } from "@/lib/peon";
+import { inputsLabel, stopRun } from "@/lib/runs";
 import { useLoad } from "@/lib/useLoad";
 import { ago, duration } from "@/lib/time";
-import { color } from "@/lib/theme";
-import type { Run } from "@/lib/types";
+import { color, font } from "@/lib/theme";
+import type { Run, Schedule } from "@/lib/types";
 import type { ProjectCtx, RoutineInput } from "./types";
 
 const statusTint = (s: string) =>
@@ -17,29 +16,29 @@ const statusTint = (s: string) =>
 
 const label = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-function dayLabel(iso: string): string {
-  const d = new Date(iso.endsWith("Z") ? iso : `${iso}Z`);
-  const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const days = Math.round((day(new Date()) - day(d)) / 86400000);
-  if (days === 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return d.toLocaleDateString("en-GB", { weekday: "long" });
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "long" });
-}
-
-/** A routine's runs: run it (with inputs, if it has any), follow the current run, open past ones. */
+/**
+ * A routine: what it does and its inputs, Run now, its schedule, and past runs.
+ * (Any Folder's scheduled runs are listed too.)
+ */
 export function RunsTab({ ctx }: { ctx: ProjectCtx }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [query, setQuery] = useState("");
-  const me = usePeon((s) => s.user?.id);
+  const [values, setValues] = useState<Record<string, string | string[]>>(() =>
+    Object.fromEntries(ctx.inputs.map((i) => [i.name, i.default])),
+  );
+  const [paused, setPaused] = useState<Record<string, boolean>>({});
+  const schedulesChanged = usePeon((s) => s.schedulesChanged);
   const [, tick] = useState(0);
   const { data: runs, error: loadError } = useLoad(
     () => ctx.call<{ runs: Run[] }>("runs").then((r) => r.runs),
     [ctx.changed],
   );
+  const { data: scheds } = useLoad(
+    () => ctx.call<{ schedules: Schedule[] }>("schedules", {}, 60000).then((r) => r.schedules),
+    [schedulesChanged],
+  );
   const current = runs?.find((r) => r.status === "running") ?? null;
+  const sched = scheds?.[0];
 
   // The running clock.
   useEffect(() => {
@@ -48,12 +47,15 @@ export function RunsTab({ ctx }: { ctx: ProjectCtx }) {
     return () => clearInterval(t);
   }, [current]);
 
-  async function run(inputs?: Record<string, string | string[]>) {
+  async function run() {
     setBusy(true);
     setError(null);
-    setAsking(false);
     try {
-      const { session_id } = await ctx.call<{ session_id: string }>("run", { inputs }, 60000);
+      const { session_id } = await ctx.call<{ session_id: string }>(
+        "run",
+        { inputs: ctx.inputs.length ? values : undefined },
+        60000,
+      );
       router.push(`/session/${session_id}`);
     } catch (e: any) {
       setError(e.message);
@@ -61,127 +63,17 @@ export function RunsTab({ ctx }: { ctx: ProjectCtx }) {
     setBusy(false);
   }
 
-  const number = (r: Run) => (runs ? runs.length - runs.indexOf(r) : 0);
-  const who = (r: Run) => runWho(r, me);
-  const q = query.trim().toLowerCase();
-  const past = (runs ?? [])
-    .filter((r) => r !== current)
-    .filter(
-      (r) => !q || `${r.summary ?? ""} ${r.error ?? ""} ${inputsLabel(r.inputs)}`.toLowerCase().includes(q),
-    );
+  async function pause(s: Schedule, on: boolean) {
+    setPaused((p) => ({ ...p, [s.key]: !on }));
+    try {
+      await ask("pause_schedule", { project_id: ctx.project.id, key: s.key, paused: !on });
+    } catch (e: any) {
+      setError(e.message);
+      setPaused((p) => ({ ...p, [s.key]: s.paused }));
+    }
+  }
 
-  return (
-    <ScrollView contentContainerStyle={st.body}>
-      <View style={{ flexDirection: "row", gap: 10 }}>
-        {current?.session_id ? (
-          <Button
-            label="Stop"
-            kind="secondary"
-            height={50}
-            style={{ flex: 1 }}
-            onPress={() => stopRun(current.session_id!).catch((e) => setError(e.message))}
-          />
-        ) : (
-          <Button
-            label="Run"
-            height={50}
-            style={{ flex: 1 }}
-            busy={busy}
-            onPress={() => run()}
-            icon={<Icon name="play" size={13} color={color.bg} />}
-            testID="run-routine"
-          />
-        )}
-        {ctx.inputs.length && !current ? (
-          <Button label="Run with…" kind="secondary" height={50} onPress={() => setAsking(true)} />
-        ) : null}
-      </View>
-      <ErrorLine message={error ?? loadError} />
-      {runs && runs.length > 1 ? <History runs={runs} /> : null}
-
-      {current ? (
-        <Tap onPress={() => current.session_id && router.push(`/session/${current.session_id}`)}>
-          <Card accent>
-            <View style={st.cardHead}>
-              <Text style={st.cardTitle}>
-                Run #{number(current)} · {current.schedule_key === "manual" ? "manual" : current.schedule_key}
-              </Text>
-              <Text style={{ color: color.accentText, fontVariant: ["tabular-nums"] }}>
-                {duration(current.started)}
-              </Text>
-            </View>
-            <Text style={st.cardBody}>Working. Tap to follow along.</Text>
-          </Card>
-        </Tap>
-      ) : null}
-
-      <TextInput
-        value={query}
-        onChangeText={setQuery}
-        placeholder="Search runs and results"
-        placeholderTextColor={color.faint}
-        autoCapitalize="none"
-        style={st.search}
-        {...kbProps("search")}
-      />
-      {runs == null ? <Loading /> : null}
-      {runs && runs.length === 0 ? <Empty title="No runs yet" /> : null}
-      {runs && runs.length > 0 && past.length === 0 && q ? <Empty title="No runs match" /> : null}
-      <View>
-        {past.map((r, i) => {
-          const day = dayLabel(r.started);
-          const header = i === 0 || dayLabel(past[i - 1].started) !== day ? day : null;
-          const inputs = inputsLabel(r.inputs);
-          return (
-            <View key={r.id}>
-              {header ? <Text style={st.day}>{header}</Text> : null}
-              <Tap
-                kb="row"
-                onPress={() => r.session_id && router.push(`/session/${r.session_id}`)}
-                style={st.run}
-              >
-                <View style={st.runTop}>
-                  <Text style={st.runTitle}>
-                    #{number(r)} <Text style={{ color: statusTint(r.status) }}>{label(r.status)}</Text>
-                  </Text>
-                  <Text style={st.runMeta}>
-                    {who(r)} · {duration(r.started, r.finished)} · {ago(r.started, true)}
-                  </Text>
-                </View>
-                {inputs ? <Text style={st.runMeta}>{inputs}</Text> : null}
-                {r.error || r.summary ? (
-                  <Text style={st.runSummary} numberOfLines={2}>
-                    {r.error || r.summary}
-                  </Text>
-                ) : null}
-              </Tap>
-            </View>
-          );
-        })}
-      </View>
-
-      <InputsSheet visible={asking} inputs={ctx.inputs} onClose={() => setAsking(false)} onRun={run} />
-    </ScrollView>
-  );
-}
-
-// The routine's inputs: choices as chips (several for multi inputs), free text otherwise.
-function InputsSheet({
-  visible,
-  inputs,
-  onClose,
-  onRun,
-}: {
-  visible: boolean;
-  inputs: RoutineInput[];
-  onClose: () => void;
-  onRun: (values: Record<string, string | string[]>) => void;
-}) {
-  const [values, setValues] = useState<Record<string, string | string[]>>(() =>
-    Object.fromEntries(inputs.map((i) => [i.name, i.default])),
-  );
-
-  const toggle = (input: RoutineInput, option: string) =>
+  const choose = (input: RoutineInput, option: string) =>
     setValues((v) => {
       if (!input.multi) return { ...v, [input.name]: option };
       const list = Array.isArray(v[input.name]) ? (v[input.name] as string[]) : [];
@@ -191,81 +83,188 @@ function InputsSheet({
       };
     });
 
-  return (
-    <Sheet visible={visible} title="Run with" onClose={onClose}>
-      <ScrollView style={{ maxHeight: 460 }} contentContainerStyle={{ gap: 14, paddingHorizontal: 4 }}>
-        {inputs.map((input) => (
-          <View key={input.name} style={{ gap: 6 }}>
-            <Text style={st.inputName}>{input.name}</Text>
-            {input.options.length ? (
-              <View style={st.options}>
-                {input.options.map((o) => {
-                  const v = values[input.name];
-                  const on = Array.isArray(v) ? v.includes(o) : v === o;
-                  return (
-                    <Tap key={o} onPress={() => toggle(input, o)} style={[st.option, on && st.optionOn]}>
-                      <Text style={[st.optionText, on && { color: color.accentInk }]}>{o}</Text>
-                    </Tap>
-                  );
-                })}
-              </View>
-            ) : (
-              <TextInput
-                value={String(values[input.name] ?? "")}
-                onChangeText={(t) => setValues((v) => ({ ...v, [input.name]: t }))}
-                style={st.field}
-                placeholderTextColor={color.faint}
-              />
-            )}
-          </View>
-        ))}
-        <Button label="Run" height={44} onPress={() => onRun(values)} />
-      </ScrollView>
-    </Sheet>
-  );
-}
+  const number = (r: Run) => (runs ? runs.length - runs.indexOf(r) : 0);
+  const past = (runs ?? []).filter((r) => r !== current);
 
-/** The last 20 runs as bars, oldest first: teal done (taller took longer), red failed, green running. */
-function History({ runs }: { runs: Run[] }) {
-  const last = runs.slice(0, 20).reverse();
-  const ms = (r: Run) => (r.finished ? Date.parse(r.finished) - Date.parse(r.started) : 0);
-  const longest = Math.max(1, ...last.map(ms));
-  const failed = last.filter((r) => r.status === "failed").length;
-  const done = last.filter((r) => r.status === "done").length;
   return (
-    <View style={st.history}>
-      <Text style={st.historyText}>Last {last.length} runs</Text>
-      <View style={st.bars}>
-        {last.map((r) => (
-          <View
-            key={r.id}
-            style={[
-              st.bar,
-              r.status === "failed"
-                ? { height: 10, backgroundColor: color.red }
-                : r.status === "done"
-                  ? { height: 12 + Math.round((10 * ms(r)) / longest), backgroundColor: color.teal }
-                  : { height: 22, backgroundColor: color.accent },
-            ]}
+    <ScrollView contentContainerStyle={st.body}>
+      {ctx.routine ? (
+        <View style={st.card}>
+          <View style={st.cardTop}>
+            <Text style={st.cardName}>{ctx.project.name}</Text>
+            <Text style={st.file}>routine.json</Text>
+          </View>
+          <Text style={st.prompt} selectable>
+            {ctx.routine.run}
+          </Text>
+          <ErrorLine message={ctx.routine.error} />
+          {ctx.inputs.map((input) => (
+            <View key={input.name} style={st.input}>
+              <Text style={st.inputName}>{input.name}</Text>
+              {input.options.length ? (
+                <View style={st.options}>
+                  {input.options.map((o) => {
+                    const v = values[input.name];
+                    const on = Array.isArray(v) ? v.includes(o) : v === o;
+                    return (
+                      <Tap key={o} onPress={() => choose(input, o)} style={[st.option, on && st.optionOn]}>
+                        <Text style={[st.optionText, on && { color: color.textStrong }]}>{o}</Text>
+                      </Tap>
+                    );
+                  })}
+                </View>
+              ) : (
+                <TextInput
+                  value={String(values[input.name] ?? "")}
+                  onChangeText={(t) => setValues((v) => ({ ...v, [input.name]: t }))}
+                  style={st.field}
+                  placeholderTextColor={color.faint}
+                />
+              )}
+            </View>
+          ))}
+          {current?.session_id ? (
+            <Button
+              label="Stop"
+              kind="secondary"
+              height={50}
+              onPress={() => stopRun(current.session_id!).catch((e) => setError(e.message))}
+            />
+          ) : (
+            <Button
+              label="Run now"
+              height={50}
+              busy={busy}
+              onPress={run}
+              icon={<Icon name="play" size={13} color={color.bg} />}
+              testID="run-routine"
+            />
+          )}
+        </View>
+      ) : null}
+      <ErrorLine message={error ?? loadError} />
+
+      {current ? (
+        <Tap
+          onPress={() => current.session_id && router.push(`/session/${current.session_id}`)}
+          style={st.live}
+        >
+          <View style={st.cardTop}>
+            <Text style={st.liveTitle}>Run #{number(current)}</Text>
+            <Text style={st.liveTime}>{duration(current.started)}</Text>
+          </View>
+          <Text style={st.prompt}>Working. Tap to follow along.</Text>
+        </Tap>
+      ) : null}
+
+      {sched ? (
+        <View style={st.sched}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={st.schedWhen}>{sched.when}</Text>
+            <Text style={st.schedMeta}>
+              schedules.json · {sched.scope === "me" ? "only you" : "team"}
+              {sched.owner ? ` · set by ${sched.owner}` : ""}
+            </Text>
+          </View>
+          <Toggle
+            value={!(paused[sched.key] ?? sched.paused)}
+            onChange={(on) => pause(sched, on)}
+            label={`Run ${sched.key} on schedule`}
           />
+        </View>
+      ) : scheds ? (
+        <Text style={st.noSched}>
+          No schedule yet. Ask in a chat, for example “run this every Monday at 07:00”.
+        </Text>
+      ) : null}
+
+      <Text style={st.heading}>History</Text>
+      {runs == null ? <Loading /> : null}
+      {runs && past.length === 0 ? <Text style={st.none}>No runs yet.</Text> : null}
+      <View>
+        {past.map((r) => (
+          <Tap
+            key={r.id}
+            kb="row"
+            onPress={() => r.session_id && router.push(`/session/${r.session_id}`)}
+            style={st.run}
+          >
+            <View style={st.runTop}>
+              <Text style={st.runTitle}>
+                #{number(r)} <Text style={{ color: statusTint(r.status) }}>{label(r.status)}</Text>
+              </Text>
+              <Text style={st.runMeta}>
+                {r.schedule_key === "manual" ? "manual" : "schedule"} · {duration(r.started, r.finished)} ·{" "}
+                {ago(r.started, true)}
+              </Text>
+            </View>
+            {r.error || r.summary || inputsLabel(r.inputs) ? (
+              <Text style={st.runSummary} numberOfLines={2}>
+                {r.error || r.summary || inputsLabel(r.inputs)}
+              </Text>
+            ) : null}
+          </Tap>
         ))}
       </View>
-      <Text style={st.historyText}>
-        {done} succeeded{failed ? ` · ${failed} failed` : ""}
-      </Text>
-    </View>
+    </ScrollView>
   );
 }
 
 const st = StyleSheet.create({
-  history: { flexDirection: "row", alignItems: "center", gap: 16 },
-  historyText: { fontSize: 12, color: color.muted },
-  bars: { flexDirection: "row", alignItems: "flex-end", gap: 3, height: 22 },
-  bar: { width: 8, borderRadius: 2 },
-  body: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40, gap: 14 },
-  cardHead: { flexDirection: "row", justifyContent: "space-between" },
-  cardTitle: { fontSize: 14, fontWeight: "600", color: color.text },
-  cardBody: { fontSize: 14, color: color.textDim },
+  body: { paddingHorizontal: 18, paddingTop: 8, paddingBottom: 40, gap: 14, maxWidth: 760, width: "100%" },
+  card: { padding: 16, borderRadius: 16, backgroundColor: color.card, gap: 12 },
+  cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", gap: 8 },
+  cardName: { fontSize: 17, fontWeight: "600", color: color.text },
+  file: { fontSize: 11, fontFamily: font.mono, color: color.faint },
+  prompt: { fontSize: 14, lineHeight: 20, color: color.textDim },
+  input: { gap: 8, minHeight: 40, justifyContent: "center" },
+  inputName: { fontSize: 15, color: color.textSoft },
+  options: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
+  option: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 9, backgroundColor: color.raised },
+  optionOn: { backgroundColor: color.pill },
+  optionText: { fontSize: 14, color: color.textDim },
+  field: {
+    height: 36,
+    borderRadius: 9,
+    backgroundColor: color.raised,
+    paddingHorizontal: 10,
+    color: color.text,
+    fontSize: 15,
+    outlineStyle: "none",
+  } as any,
+  live: {
+    gap: 8,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: color.accentBorder,
+    backgroundColor: color.card,
+  },
+  liveTitle: { fontSize: 14, fontWeight: "600", color: color.text },
+  liveTime: { fontSize: 14, color: color.accentText, fontVariant: ["tabular-nums"] },
+  sched: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: color.card,
+  },
+  schedWhen: { fontSize: 15, color: color.text },
+  schedMeta: { fontSize: 12, color: color.muted },
+  noSched: {
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: color.outline,
+    fontSize: 13,
+    lineHeight: 19,
+    color: color.muted,
+  },
+  heading: { fontSize: 13, color: color.muted, marginTop: 4 },
+  none: { fontSize: 14, color: color.faint },
   run: {
     paddingVertical: 12,
     paddingHorizontal: 2,
@@ -275,28 +274,6 @@ const st = StyleSheet.create({
   },
   runTop: { flexDirection: "row", justifyContent: "space-between", gap: 10 },
   runTitle: { fontSize: 15, color: color.text },
-  runMeta: { fontSize: 13, color: color.muted },
+  runMeta: { fontSize: 12, color: color.muted },
   runSummary: { fontSize: 13, color: color.textDim },
-  search: {
-    height: 38,
-    borderRadius: 10,
-    backgroundColor: color.field,
-    paddingHorizontal: 12,
-    color: color.text,
-    fontSize: 14,
-  },
-  day: { fontSize: 12, color: color.muted, paddingTop: 14, paddingBottom: 2 },
-  inputName: { fontSize: 13, color: color.muted },
-  options: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
-  option: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14, backgroundColor: color.field },
-  optionOn: { backgroundColor: color.accent },
-  optionText: { fontSize: 13, color: color.text },
-  field: {
-    height: 40,
-    borderRadius: 10,
-    backgroundColor: color.field,
-    paddingHorizontal: 12,
-    color: color.text,
-    fontSize: 14,
-  },
 });

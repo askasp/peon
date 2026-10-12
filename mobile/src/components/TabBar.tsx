@@ -11,12 +11,12 @@ import { useWide } from "@/lib/useWide";
 
 const tabs: { route: string; label: string; icon: IconName }[] = [
   { route: "index", label: "Inbox", icon: "inbox" },
-  { route: "projects", label: "Projects", icon: "folder" },
-  { route: "routines", label: "Routines", icon: "clock" },
+  { route: "projects", label: "Folders", icon: "folder" },
+  { route: "schedules", label: "Schedules", icon: "clock" },
   { route: "settings", label: "Settings", icon: "sliders" },
 ];
 
-// Four tabs around the green mic: tap it for the composer, hold it to talk.
+// Four tabs around the green +: a new chat in the Folder you're in, or Home.
 export function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const current = state.routes[state.index]?.name;
@@ -40,7 +40,11 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
       >
         <View>
           <Icon name={t.icon} size={24} color={tint} />
-          {t.route === "index" && waiting > 0 ? <View style={st.badge} /> : null}
+          {t.route === "index" && waiting > 0 ? (
+            <View style={st.badge}>
+              <Text style={st.badgeText}>{waiting}</Text>
+            </View>
+          ) : null}
         </View>
         <Text style={[st.label, { color: tint }]}>{t.label}</Text>
       </Pressable>
@@ -59,13 +63,8 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
             router.push("/compose");
           }}
-          onLongPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-            router.push({ pathname: "/compose", params: { listen: "1" } });
-          }}
-          delayLongPress={250}
         >
-          <Icon name="mic" size={22} color={color.accentInk} />
+          <Icon name="plus" size={22} color={color.accentInk} strokeWidth={2.4} />
         </Tap>
       </View>
       {tab(tabs[2])}
@@ -77,6 +76,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
 const st = StyleSheet.create({
   bar: {
     flexDirection: "row",
+    alignItems: "flex-start",
     borderTopWidth: 1,
     borderTopColor: "#222228",
     backgroundColor: color.bar,
@@ -100,13 +100,15 @@ const st = StyleSheet.create({
   },
   badge: {
     position: "absolute",
-    top: -1,
-    right: -3,
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: color.accent,
-    borderWidth: 1.5,
-    borderColor: color.bar,
+    top: -3,
+    left: 18,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    backgroundColor: color.needs,
+    alignItems: "center",
+    justifyContent: "center",
   },
+  badgeText: { fontSize: 11, fontWeight: "700", color: "#1e140b" },
 });

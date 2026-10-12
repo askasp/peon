@@ -34,10 +34,31 @@ defmodule BeamcodeWeb.ComposerChannelTest do
 
         {"POST", "/api/session"} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
+          body = Jason.decode!(body)
 
-          if String.ends_with?(Jason.decode!(body)["location"]["directory"], "/.composer"),
-            do: data(conn, %{"id" => "ses_router"}),
-            else: data(conn, %{"id" => "ses_1", "location" => %{"directory" => "/srv/amino"}})
+          if String.ends_with?(body["location"]["directory"], "/.composer") do
+            data(conn, %{"id" => "ses_router"})
+          else
+            send(test, {:create_session, body})
+            data(conn, %{"id" => "ses_1", "location" => %{"directory" => "/srv/amino"}})
+          end
+
+        {"GET", "/api/model"} ->
+          data(conn, [
+            %{
+              "providerID" => "anthropic",
+              "id" => "claude-opus-4-1",
+              "name" => "Claude Opus 4.1"
+            },
+            %{"providerID" => "openai", "id" => "gpt-5", "name" => "GPT-5"}
+          ])
+
+        {"GET", "/api/agent"} ->
+          data(conn, [
+            %{"id" => "build"},
+            %{"id" => "plan"},
+            %{"id" => "explore", "mode" => "subagent"}
+          ])
 
         {"POST", "/api/session/ses_router/prompt"} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
@@ -110,6 +131,28 @@ defmodule BeamcodeWeb.ComposerChannelTest do
     ref = push(socket, "compose:submit", %{"text" => line})
     assert_reply ref, :ok, %{result: %{kind: "navigate", session_id: "ses_1"}}, 1000
     assert_received {:prompt, %{"text" => "fix checkout", "skills" => [%{"id" => "e2e-debug"}]}}
+  end
+
+  test "a model and agent in the line are shown, and the session starts with them",
+       %{socket: socket} do
+    line = "new session in amino monorepo with the plan agent, fix checkout using opus"
+
+    ref = push(socket, "compose:preview", %{"text" => line})
+    assert_reply ref, :ok, %{preview: preview}
+    assert ["Model", "Claude Opus 4.1"] in preview.rows
+    assert ["Agent", "plan"] in preview.rows
+    assert ["Task", "fix checkout"] in preview.rows
+
+    ref = push(socket, "compose:submit", %{"text" => line})
+    assert_reply ref, :ok, %{result: %{kind: "navigate", session_id: "ses_1"}}, 1000
+
+    assert_received {:create_session,
+                     %{
+                       "model" => %{"providerID" => "anthropic", "id" => "claude-opus-4-1"},
+                       "agent" => "plan"
+                     }}
+
+    assert_received {:prompt, %{"text" => "fix checkout"}}
   end
 
   test "answers a status question in place, without starting a session", %{socket: socket} do

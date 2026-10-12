@@ -3,6 +3,10 @@ import Svg, { Circle, Path, Rect } from "react-native-svg";
 export type IconName =
   | "inbox"
   | "folder"
+  | "file"
+  | "external"
+  | "compose"
+  | "plus"
   | "mic"
   | "micOff"
   | "clock"
@@ -48,6 +52,33 @@ export function Icon({ name, size = 24, color = "currentColor", strokeWidth }: P
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24">
           <Path d="M3 6h6l2 2h10v11H3z" {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+        </Svg>
+      );
+    case "file":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M6 3h8l4 4v14H6z" {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+          <Path d="M14 3v4h4" {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+        </Svg>
+      );
+    case "external":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M14 4h6v6M20 4l-9 9" {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+          <Path d="M18 14v6H4V6h6" {...stroke} strokeWidth={strokeWidth ?? 1.8} />
+        </Svg>
+      );
+    case "plus":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M12 5v14M5 12h14" {...stroke} strokeWidth={strokeWidth ?? 2.4} />
+        </Svg>
+      );
+    case "compose":
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24">
+          <Path d="M4 20h4L19 9l-4-4L4 16z" {...stroke} strokeWidth={strokeWidth ?? 2} />
+          <Path d="M13.5 6.5l4 4" {...stroke} strokeWidth={strokeWidth ?? 2} />
         </Svg>
       );
     case "clock":

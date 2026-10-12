@@ -6,7 +6,7 @@ defmodule Beamcode.Composer.Plan do
 
   A plan is a map with `action` and the fields that action needs:
 
-    * `:session` / `:chat` – `project`, `task`, `skill`
+    * `:session` / `:chat` – `project`, `task`, `skill`, `use_model`, `agent`
     * `:send` – `session` (%{id, title, project}), `text`
     * `:run` – `project` (the routine), `inputs`
     * `:status` – `project` or nil, `status` (:latest | :overview)
@@ -17,7 +17,8 @@ defmodule Beamcode.Composer.Plan do
   plus `summary` (the model's one-liner) and `model`.
   """
   alias Beamcode.{Composer, Connectors, Opencode, Routines, Sessions, Workspace}
-  alias Beamcode.Composer.{Router, Status}
+  alias Beamcode.Composer.{Catalog, Router, Status}
+  alias Beamcode.Projects.Project
   alias Beamcode.Opencode.Events
 
   @recent 12
@@ -29,7 +30,7 @@ defmodule Beamcode.Composer.Plan do
   `current` is `%{project: project | nil, session_id: id | nil}`.
   """
   def context(user, projects, current \\ %{}) do
-    places = Enum.filter(projects, &(&1.kind in ~w(code chat)))
+    places = Enum.filter(projects, &(&1.kind == "code" or Project.chat_like?(&1)))
     routines = Enum.filter(projects, &(&1.kind == "routine"))
 
     inputs = Task.async(fn -> routine_inputs(routines) end)
@@ -44,6 +45,7 @@ defmodule Beamcode.Composer.Plan do
       connectors: Task.await(connectors, 20_000),
       sessions: Task.await(sessions, 20_000),
       perms: Task.await(perms, 20_000),
+      catalog: Catalog.get(),
       current: current
     }
   end
@@ -66,6 +68,8 @@ defmodule Beamcode.Composer.Plan do
           }
         end),
       connectors: ctx.connectors,
+      agents: catalog(ctx).agents,
+      models: catalog(ctx).models |> Enum.map(& &1.name) |> Enum.uniq() |> Enum.take(80),
       recent_sessions:
         Enum.map(ctx.sessions, fn s ->
           %{
@@ -84,6 +88,9 @@ defmodule Beamcode.Composer.Plan do
       }
     }
   end
+
+  defp catalog(ctx),
+    do: Map.merge(%{models: [], agents: [], default_provider: nil}, ctx[:catalog] || %{})
 
   defp routine_inputs(routines) do
     routines
@@ -133,8 +140,13 @@ defmodule Beamcode.Composer.Plan do
 
   defp resolve_action("start_session", json, ctx) do
     with {:ok, project} <- named(ctx.projects, json["project"], "project"),
-         {:ok, task} <- present(json["task"], "what to do") do
-      {:ok, %{action: :session, project: project, task: task, skill: blank_nil(json["skill"])}}
+         {:ok, task} <- present(json["task"], "what to do"),
+         {:ok, picks} <- model_and_agent(json, ctx) do
+      {:ok,
+       Map.merge(
+         %{action: :session, project: project, task: task, skill: blank_nil(json["skill"])},
+         picks
+       )}
     end
   end
 
@@ -155,7 +167,7 @@ defmodule Beamcode.Composer.Plan do
   end
 
   defp resolve_action("run_routine", json, ctx) do
-    with {:ok, routine} <- named(ctx.routines, json["routine"], "routine") do
+    with {:ok, routine} <- named(ctx.routines, json["routine"], "procedure") do
       known = MapSet.new(ctx.inputs[routine.name] || [], & &1.name)
 
       inputs =
@@ -182,7 +194,7 @@ defmodule Beamcode.Composer.Plan do
           # Said a name we don't have: say so rather than answer about another.
           {:error, _} ->
             {:ok,
-             %{action: :unclear, question: "There’s no project or routine called “#{name}”."}}
+             %{action: :unclear, question: "There’s no project or procedure called “#{name}”."}}
         end
     end
   end
@@ -203,9 +215,9 @@ defmodule Beamcode.Composer.Plan do
       )
       |> Enum.uniq_by(&String.downcase/1)
 
-    with {:ok, brief} <- present(json["brief"], "what the routine should do") do
+    with {:ok, brief} <- present(json["brief"], "what the procedure should do") do
       if name == "",
-        do: {:error, "The routine needs a name."},
+        do: {:error, "The procedure needs a name."},
         else:
           {:ok,
            %{
@@ -228,10 +240,14 @@ defmodule Beamcode.Composer.Plan do
   end
 
   defp resolve_action("chat", json, ctx) do
-    with {:ok, text} <- present(json["text"], "what to ask") do
-      case Enum.find(ctx.projects, &(&1.kind == "chat")) do
-        nil -> {:error, "There is no chat project. Name a project to ask in."}
-        project -> {:ok, %{action: :chat, project: project, task: text, skill: nil}}
+    with {:ok, text} <- present(json["text"], "what to ask"),
+         {:ok, picks} <- model_and_agent(json, ctx) do
+      case Beamcode.Composer.chat_place(ctx.projects) do
+        nil ->
+          {:error, "There is no Home folder yet. Name a folder to ask in."}
+
+        project ->
+          {:ok, Map.merge(%{action: :chat, project: project, task: text, skill: nil}, picks)}
       end
     end
   end
@@ -241,6 +257,37 @@ defmodule Beamcode.Composer.Plan do
 
   defp resolve_action(other, _json, _ctx),
     do: {:error, "The model answered with an unknown action (#{inspect(other)})."}
+
+  # The model and agent the person asked for, checked against what OpenCode has.
+  defp model_and_agent(json, ctx) do
+    %{models: models, agents: agents, default_provider: default} = catalog(ctx)
+
+    use_model =
+      case str(json["model"]) do
+        nil ->
+          {:ok, nil}
+
+        name ->
+          found(
+            Composer.resolve_model(name, models, default),
+            "No model called #{inspect(name)}."
+          )
+      end
+
+    agent =
+      case str(json["agent"]) do
+        nil ->
+          {:ok, nil}
+
+        name ->
+          found(Enum.find(agents, &(norm(&1) == norm(name))), "No agent called #{inspect(name)}.")
+      end
+
+    with {:ok, m} <- use_model, {:ok, a} <- agent, do: {:ok, %{use_model: m, agent: a}}
+  end
+
+  defp found(nil, message), do: {:error, message}
+  defp found(value, _message), do: {:ok, value}
 
   # Exact name first, then the same with spaces/dashes ignored.
   defp named(list, name, what) do
@@ -363,10 +410,12 @@ defmodule Beamcode.Composer.Plan do
   def rows(%{action: :session} = p),
     do:
       [{"Action", "New session"}, {"Project", p.project.name}] ++
-        skill_row(p) ++ [{"Task", p.task}]
+        skill_row(p) ++ pick_rows(p) ++ [{"Task", p.task}]
 
   def rows(%{action: :chat} = p),
-    do: [{"Action", "Chat"}, {"Project", p.project.name}, {"Message", p.task}]
+    do:
+      [{"Action", "Chat"}, {"Project", p.project.name}] ++
+        pick_rows(p) ++ [{"Message", p.task}]
 
   def rows(%{action: :send} = p),
     do: [
@@ -377,7 +426,7 @@ defmodule Beamcode.Composer.Plan do
 
   def rows(%{action: :run} = p),
     do:
-      [{"Action", "Run routine"}, {"Routine", p.project.name}] ++
+      [{"Action", "Run procedure"}, {"Procedure", p.project.name}] ++
         for({k, v} <- p.inputs, do: {k, v |> List.wrap() |> Enum.join(", ")})
 
   def rows(%{action: :status} = p),
@@ -388,7 +437,7 @@ defmodule Beamcode.Composer.Plan do
 
   def rows(%{action: :create_routine} = p),
     do:
-      [{"Action", "Create routine"}, {"Name", p.name}, {"Job", p.brief}] ++
+      [{"Action", "Create procedure"}, {"Name", p.name}, {"Job", p.brief}] ++
         if(p.connectors == [], do: [], else: [{"Connectors", Enum.join(p.connectors, ", ")}]) ++
         missing_row(p[:missing] || [])
 
@@ -406,8 +455,13 @@ defmodule Beamcode.Composer.Plan do
   defp missing_row(names),
     do: [
       {"Not connected",
-       "#{Enum.join(names, ", ")}: add it on Connectors, or the routine can’t reach it"}
+       "#{Enum.join(names, ", ")}: add it on Connectors, or the procedure can’t reach it"}
     ]
+
+  defp pick_rows(p),
+    do:
+      if(p[:use_model], do: [{"Model", p.use_model.name}], else: []) ++
+        if(p[:agent], do: [{"Agent", p.agent}], else: [])
 
   defp skill_row(%{skill: nil}), do: []
   defp skill_row(%{skill: s}), do: [{"Skill", s}]
