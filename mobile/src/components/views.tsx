@@ -81,12 +81,25 @@ const ZOOMS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.9, 1, 1.25, 1.5, 2, 3];
 
 const SIZES = { phone: { w: 390, h: 844 }, desktop: { w: 1280, h: 800 } } as const;
 
+// Web: the canvas is panned, not scrolled, so its scrollbars stay out of sight.
+let scrollbarsHidden = false;
+function hideScrollbars() {
+  if (scrollbarsHidden || typeof document === "undefined") return;
+  scrollbarsHidden = true;
+  const tag = document.createElement("style");
+  tag.textContent = ".peon-canvas::-webkit-scrollbar{width:0;height:0;display:none}";
+  document.head.appendChild(tag);
+}
+
 /**
  * A design on a pannable canvas: the phone and the desktop layout side by side,
  * with no device chrome, so the design fills the pane. It opens fitted to the
- * pane's height; scrolling moves between the phone and the desktop, − / + (or
- * ctrl/⌘ + scroll and trackpad pinch on the web) zoom it, anchored on the point
- * under the pointer so zooming doesn't jump.
+ * pane's height.
+ *
+ * On the web it works like Figma: drag anywhere to pan, scroll (or a trackpad
+ * pinch, or ctrl/⌘ + scroll) to zoom in on the point under the pointer, shift +
+ * scroll to move sideways, and − / + / Fit (or +, −, shift+0, shift+1) to change
+ * the zoom. On a phone the same canvas pans with a finger.
  */
 export function Canvas({ url, version, mode = "both" }: { url: string; version: number; mode?: Device }) {
   const [box, setBox] = useState({ w: 0, h: 0 });
@@ -98,17 +111,10 @@ export function Canvas({ url, version, mode = "both" }: { url: string; version: 
     mode === "phone" ? ["phone"] : mode === "desktop" ? ["desktop"] : ["desktop", "phone"];
   const tallest = Math.max(...devices.map((d) => SIZES[d].h));
   // Fit the tallest design to the pane's height: the design fills the view, and
-  // scrolling left/right swings between the phone and the desktop.
+  // dragging (or shifting the wheel) swings between the phone and the desktop.
   const base = box.h > 0 ? Math.min(1.5, (box.h - pad * 2) / tallest) : 1;
   const scale = zoom ?? base;
 
-  const step = (dir: 1 | -1) => {
-    const next =
-      dir > 0 ? ZOOMS.find((z) => z > scale + 0.001) : [...ZOOMS].reverse().find((z) => z < scale - 0.001);
-    setZoom(next ?? (dir > 0 ? ZOOMS[ZOOMS.length - 1] : ZOOMS[0]));
-  };
-
-  const outer = useRef<View>(null);
   const vref = useRef<ScrollView>(null);
   const href = useRef<ScrollView>(null);
   const scaleRef = useRef(scale);
@@ -117,40 +123,182 @@ export function Canvas({ url, version, mode = "both" }: { url: string; version: 
   }, [scale]);
   const ready = box.w > 0;
 
-  // Web: ctrl/⌘ + wheel, or a trackpad pinch, zooms the canvas (not the page),
-  // anchored on the point under the pointer.
-  useEffect(() => {
-    const el = outer.current as unknown as HTMLElement | null;
-    if (Platform.OS !== "web" || !ready || !el?.addEventListener) return;
-    const scrollNode = (r: typeof vref) =>
-      (r.current as unknown as { getScrollableNode?: () => HTMLElement })?.getScrollableNode?.();
-    const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const prev = scaleRef.current;
-      const next = Math.min(3, Math.max(0.1, prev * Math.exp(-e.deltaY * 0.01)));
-      if (next === prev) return;
-      const rect = el.getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const py = e.clientY - rect.top;
-      const v = scrollNode(vref);
-      const h = scrollNode(href);
-      const cx = ((h?.scrollLeft ?? 0) + px) * (next / prev);
-      const cy = ((v?.scrollTop ?? 0) + py) * (next / prev);
+  const node = (r: typeof vref) =>
+    (r.current as unknown as { getScrollableNode?: () => HTMLElement })?.getScrollableNode?.();
+
+  // The drawn content's size at a zoom (the sheets scaled, plus their padding).
+  const contentAt = (z: number) => ({
+    w: pad * 2 + devices.reduce((s, d) => s + SIZES[d].w * z, 0) + gap * (devices.length - 1),
+    h: pad * 2 + tallest * z,
+  });
+
+  // Zoom to `z`, keeping the point under (clientX, clientY) still — the pointer
+  // for a wheel or a pinch, the pane's centre for the − / + buttons.
+  const zoomTo = (z: number, clientX?: number, clientY?: number) => {
+    const next = Math.min(3, Math.max(0.1, z));
+    const prev = scaleRef.current;
+    scaleRef.current = next;
+    const v = node(vref);
+    const h = node(href);
+    if (next === prev || !v || typeof v.getBoundingClientRect !== "function") {
       setZoom(next);
-      // Keep the point that was under the pointer in place after the zoom.
-      requestAnimationFrame(() => {
-        if (h) h.scrollLeft = cx - px;
-        if (v) v.scrollTop = cy - py;
-      });
+      return;
+    }
+    const rect = v.getBoundingClientRect();
+    const px = (clientX ?? rect.left + rect.width / 2) - rect.left;
+    const py = (clientY ?? rect.top + rect.height / 2) - rect.top;
+    const vw = box.w || rect.width;
+    const vh = box.h || rect.height;
+    // Until the content overflows the pane it is centred; allow for that so the
+    // anchored point doesn't drift at small zooms.
+    const before = contentAt(prev);
+    const after = contentAt(next);
+    const offX = Math.max(0, (vw - before.w) / 2);
+    const offY = Math.max(0, (vh - before.h) / 2);
+    const offX2 = Math.max(0, (vw - after.w) / 2);
+    const offY2 = Math.max(0, (vh - after.h) / 2);
+    const cx = (px + (h?.scrollLeft ?? 0) - offX) / prev;
+    const cy = (py + v.scrollTop - offY) / prev;
+    setZoom(next);
+    requestAnimationFrame(() => {
+      if (h) h.scrollLeft = cx * next + offX2 - px;
+      v.scrollTop = cy * next + offY2 - py;
+    });
+  };
+
+  const fit = () => {
+    setZoom(null);
+    if (Platform.OS !== "web") return;
+    requestAnimationFrame(() => {
+      const v = node(vref);
+      const h = node(href);
+      if (h) h.scrollLeft = 0;
+      if (v) v.scrollTop = 0;
+    });
+  };
+
+  const step = (dir: 1 | -1) => {
+    const cur = scaleRef.current;
+    const next =
+      dir > 0 ? ZOOMS.find((z) => z > cur + 0.001) : [...ZOOMS].reverse().find((z) => z < cur - 0.001);
+    zoomTo(next ?? (dir > 0 ? ZOOMS[ZOOMS.length - 1] : ZOOMS[0]));
+  };
+
+  // Web: a Figma-style canvas. Drag pans it, the wheel (or a pinch) zooms it on
+  // the point under the pointer, and +, −, shift+0 and shift+1 set the zoom.
+  useEffect(() => {
+    if (Platform.OS !== "web" || !ready) return;
+    const v = node(vref);
+    if (!v || typeof v.getBoundingClientRect !== "function") return;
+    const h = node(href);
+    // Panning, not scrolling: no scrollbars over the design.
+    v.classList.add("peon-canvas");
+    (v.style as any).scrollbarWidth = "none";
+    if (h) {
+      h.classList.add("peon-canvas");
+      (h.style as any).scrollbarWidth = "none";
+    }
+    hideScrollbars();
+    v.style.cursor = "grab";
+
+    let drag: { id: number; x: number; y: number; top: number; left: number } | null = null;
+    let over = false;
+
+    const down = (e: PointerEvent) => {
+      if (e.button !== 0 && e.button !== 1) return;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, top: v.scrollTop, left: h?.scrollLeft ?? 0 };
+      try {
+        v.setPointerCapture(e.pointerId);
+      } catch {
+        // Not capturable; the drag still works while the pointer stays inside.
+      }
+      v.style.cursor = "grabbing";
+      v.style.userSelect = "none";
+      e.preventDefault();
     };
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [ready]);
+    const move = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      v.scrollTop = drag.top - (e.clientY - drag.y);
+      if (h) h.scrollLeft = drag.left - (e.clientX - drag.x);
+      e.preventDefault();
+    };
+    const up = (e: PointerEvent) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      drag = null;
+      try {
+        v.releasePointerCapture(e.pointerId);
+      } catch {
+        // It was never captured.
+      }
+      v.style.cursor = over ? "grab" : "";
+      v.style.userSelect = "";
+    };
+    const wheel = (e: WheelEvent) => {
+      // A trackpad's sideways swipe, or shift + the wheel, moves the canvas.
+      if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY) + 0.5) {
+        e.preventDefault();
+        if (h) h.scrollLeft += e.deltaX || e.deltaY;
+        else v.scrollTop += e.deltaY;
+        return;
+      }
+      // Otherwise zoom, on the point under the pointer. A pinch arrives as
+      // ctrl + wheel and steps faster than the wheel does.
+      e.preventDefault();
+      const lines = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1;
+      const k = e.ctrlKey || e.metaKey ? 0.02 : 0.0018;
+      zoomTo(scaleRef.current * Math.exp(-e.deltaY * lines * k), e.clientX, e.clientY);
+    };
+    const enter = () => {
+      over = true;
+      if (!drag) v.style.cursor = "grab";
+    };
+    const leave = () => {
+      over = false;
+      if (!drag) v.style.cursor = "";
+    };
+    // Figma's zoom keys, while the pointer is over the canvas.
+    const key = (e: KeyboardEvent) => {
+      if (!over || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+      const mod = e.metaKey || e.ctrlKey;
+      const zero = e.code === "Digit0" || e.code === "Numpad0" || e.key === "0";
+      const one = e.code === "Digit1" || e.code === "Numpad1" || e.key === "1";
+      if (zero && (mod || e.shiftKey)) zoomTo(1);
+      else if (one && (mod || e.shiftKey)) fit();
+      else if ((e.key === "+" || e.key === "=" || e.code === "NumpadAdd") && (mod || e.shiftKey))
+        zoomTo(scaleRef.current * 1.25);
+      else if ((e.key === "-" || e.key === "_" || e.code === "NumpadSubtract") && (mod || e.shiftKey))
+        zoomTo(scaleRef.current / 1.25);
+      else return;
+      e.preventDefault();
+    };
+
+    v.addEventListener("pointerdown", down);
+    v.addEventListener("pointermove", move);
+    v.addEventListener("pointerup", up);
+    v.addEventListener("pointercancel", up);
+    v.addEventListener("wheel", wheel, { passive: false });
+    v.addEventListener("pointerenter", enter);
+    v.addEventListener("pointerleave", leave);
+    window.addEventListener("keydown", key);
+    return () => {
+      v.removeEventListener("pointerdown", down);
+      v.removeEventListener("pointermove", move);
+      v.removeEventListener("pointerup", up);
+      v.removeEventListener("pointercancel", up);
+      v.removeEventListener("wheel", wheel);
+      v.removeEventListener("pointerenter", enter);
+      v.removeEventListener("pointerleave", leave);
+      window.removeEventListener("keydown", key);
+    };
+    // Re-subscribes only when the pane resizes; the handlers read the zoom from
+    // `scaleRef`, so a burst of wheel events never falls behind.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, box.w, box.h]);
 
   return (
     <View
-      ref={outer}
       style={[st.canvas, Platform.OS === "web" && (st.dots as any)]}
       onLayout={(e) => setBox({ w: e.nativeEvent.layout.width, h: e.nativeEvent.layout.height })}
     >
@@ -172,7 +320,7 @@ export function Canvas({ url, version, mode = "both" }: { url: string; version: 
               {devices.map((d) => (
                 <View key={d} style={[st.sheet, { width: SIZES[d].w * scale, height: SIZES[d].h * scale }]}>
                   <Frame url={url} width={SIZES[d].w} height={SIZES[d].h} scale={scale} version={version} />
-                  {/* A preview: the cover takes scrolls and drags for the canvas,
+                  {/* A preview: the cover takes drags and scrolls for the canvas,
                       so panning and zooming work over the design, not in it. */}
                   <View style={StyleSheet.absoluteFill} />
                 </View>
@@ -187,7 +335,7 @@ export function Canvas({ url, version, mode = "both" }: { url: string; version: 
             <Text style={st.zoomKeyText}>−</Text>
           </Tap>
           <Tap
-            onPress={() => setZoom(zoom === 1 ? null : 1)}
+            onPress={() => (zoom === 1 ? fit() : zoomTo(1))}
             style={st.zoomPct}
             aria-label={zoom === 1 ? "Fit" : "Actual size"}
             id="canvas-zoom-reset"
@@ -199,7 +347,7 @@ export function Canvas({ url, version, mode = "both" }: { url: string; version: 
           </Tap>
           <View style={st.zoomSep} />
           <Tap
-            onPress={() => setZoom(null)}
+            onPress={fit}
             disabled={zoom == null}
             style={st.zoomFit}
             aria-label="Fit to canvas"
