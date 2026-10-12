@@ -19,7 +19,10 @@ defmodule BeamcodeWeb.AppChannel do
     * `save_keys` `{prefs?, binds?}` → `{keys}`: keymap preferences and in-session shortcuts
     * `new_project_options` → `{known_repos, known_routines, connectors}` for the new-project form
     * `create_project` `{params}` → `{project_id, session_id?, note?}`; a new routine opens a
-      session that drafts its instructions (`session_id`)
+      session that drafts its instructions (`session_id`); a Dataset with
+      `source: {connector, choice}` is synced from that service
+    * `source_connectors` → `{connectors}`; `source_choices` `{connector}` → `{account, choices}`
+      (projects, inboxes); `source_connect` `{connector, token}` → `{account}` (admins)
     * `compose:preview` `{text}` → `{preview}`: the rule reading, while typing or talking
     * `compose:submit` `{text}` → `{plan}` to confirm, or `{result}` when it was done right away
     * `compose:confirm` → `{result}`, carrying out the last plan
@@ -37,6 +40,7 @@ defmodule BeamcodeWeb.AppChannel do
   alias Beamcode.{
     Composer,
     Connectors,
+    DataSources,
     Inbox,
     Keybinds,
     Opencode,
@@ -267,6 +271,35 @@ defmodule BeamcodeWeb.AppChannel do
     end)
   end
 
+  def handle_in("source_connectors", _params, socket),
+    do: {:reply, {:ok, %{connectors: DataSources.connector_list()}}, socket}
+
+  def handle_in("source_choices", %{"connector" => id}, socket) when is_binary(id) do
+    ChannelTasks.reply_async(socket, fn ->
+      case DataSources.choices(id) do
+        {:ok, result} -> {:ok, result}
+        {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
+  def handle_in("source_connect", %{"connector" => id, "token" => token}, socket)
+      when is_binary(id) and is_binary(token) do
+    user = socket.assigns.user
+
+    if user.admin do
+      ChannelTasks.reply_async(socket, fn ->
+        case DataSources.connect(id, token, user) do
+          {:ok, account} -> {:ok, %{account: account}}
+          {:error, reason} -> error(reason)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "An admin connects services (Settings → Connectors)."}},
+       socket}
+    end
+  end
+
   # Only these can be made from the app; "system" projects (setup) get every connector.
   @creatable ~w(code routine chat document design dataset)
 
@@ -280,6 +313,12 @@ defmodule BeamcodeWeb.AppChannel do
 
     params =
       Map.take(raw, ~w(kind name source github_token always_worktree scope description import))
+
+    # A Dataset's source is a connector, not a repository.
+    params =
+      if raw["kind"] == "dataset",
+        do: Map.put(params, "source", if(is_map(raw["source"]), do: raw["source"])),
+        else: params
 
     ChannelTasks.reply_async(socket, fn -> create_project(params, granted, user) end)
   end
@@ -448,7 +487,34 @@ defmodule BeamcodeWeb.AppChannel do
 
   ## New projects
 
+  defp create_project(
+         %{"kind" => "dataset", "source" => %{"connector" => id} = source} = params,
+         _granted,
+         user
+       ) do
+    case create_project(Map.delete(params, "source"), [], user) do
+      {:ok, %{project_id: project_id} = reply} ->
+        project = Projects.get_project(project_id)
+
+        note =
+          with {:ok, name} <- DataSources.add(project, id, source["choice"]),
+               :ok <- DataSources.refresh(project, name) do
+            nil
+          else
+            {:error, reason} ->
+              "Created, but the first sync failed: #{ChannelTasks.error_message(reason)}"
+          end
+
+        {:ok, if(note, do: Map.put(reply, :note, note), else: reply)}
+
+      error ->
+        error
+    end
+  end
+
   defp create_project(params, granted, user) do
+    params = if params["kind"] == "dataset", do: Map.delete(params, "source"), else: params
+
     case Workspace.create_project(params, user) do
       {:ok, project} ->
         if project.kind == "routine" and granted != [] do

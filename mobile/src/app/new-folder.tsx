@@ -1,8 +1,9 @@
 import { useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "@/components/Icon";
+import { SourcePicker, type Picked } from "@/components/SourcePicker";
 import { ErrorLine, Tap } from "@/components/ui";
 import { folderHref, slugName, templates } from "@/lib/folders";
 import { notify } from "@/lib/notice";
@@ -46,9 +47,22 @@ export default function NewFolder() {
   const [scope, setScope] = useState<"private" | "team">("private");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A Dataset's source: None, or a service to sync from.
+  const [source, setSource] = useState<Picked>(null);
   const t = templates.find((x) => x.kind === kind);
-  const ex = kind ? extra[kind] : undefined;
+  const synced = kind === "dataset" && source != null;
+  const ex =
+    kind && synced
+      ? {
+          label: "What should it be for?",
+          placeholder: "e.g. plan the week and move my tasks along",
+          param: "description",
+        }
+      : kind
+        ? extra[kind]
+        : undefined;
   const final = slugName(name);
+  const ready = !!final && !source?.pending;
 
   async function create() {
     if (!kind || !final) return;
@@ -57,7 +71,15 @@ export default function NewFolder() {
     try {
       const r = await ask<{ project_id: number; session_id?: string; note?: string }>(
         "create_project",
-        { params: { kind, name: final, scope, ...(ex && more.trim() ? { [ex.param]: more.trim() } : {}) } },
+        {
+          params: {
+            kind,
+            name: final,
+            scope,
+            ...(ex && more.trim() ? { [ex.param]: more.trim() } : {}),
+            ...(synced ? { source: { connector: source.connector, choice: source.choice } } : {}),
+          },
+        },
         180000,
       );
       if (r.note) notify(r.note);
@@ -132,6 +154,14 @@ export default function NewFolder() {
               />
               <Text style={st.path}>{where(t.kind, final || "name")}</Text>
             </View>
+            {kind === "dataset" ? (
+              <View style={st.field}>
+                <Text style={st.label}>Source</Text>
+                <ScrollView style={{ maxHeight: wide ? 360 : 300 }} keyboardShouldPersistTaps="handled">
+                  <SourcePicker value={source} onChange={setSource} />
+                </ScrollView>
+              </View>
+            ) : null}
             {ex ? (
               <View style={st.field}>
                 <Text style={st.label}>{ex.label}</Text>
@@ -155,7 +185,9 @@ export default function NewFolder() {
               ))}
             </View>
             <View style={st.foot}>
-              <Text style={[st.rowSub, { flex: 1 }]}>{t.detail}</Text>
+              <Text style={[st.rowSub, { flex: 1 }]}>
+                {synced ? "Creates data.sqlite, sources.json and app/" : t.detail}
+              </Text>
               {/* Private repos (a GitHub token), existing routine folders, connectors. */}
               {t.kind === "code" || t.kind === "routine" ? (
                 <Tap
@@ -171,10 +203,18 @@ export default function NewFolder() {
               testID="create-project"
               haptic
               onPress={create}
-              disabled={busy || !final}
-              style={[st.go, !final && { opacity: 0.4 }]}
+              disabled={busy || !ready}
+              style={[st.go, !ready && { opacity: 0.4 }]}
             >
-              <Text style={st.goText}>{busy ? "Creating…" : "Create Folder"}</Text>
+              <Text style={st.goText}>
+                {busy
+                  ? synced
+                    ? "Creating and syncing…"
+                    : "Creating…"
+                  : synced
+                    ? "Create and sync"
+                    : "Create Folder"}
+              </Text>
             </Tap>
           </>
         )}

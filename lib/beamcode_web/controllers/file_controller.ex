@@ -7,7 +7,9 @@ defmodule BeamcodeWeb.FileController do
 
   HTML pages also get `peon.query(sql, db = "data.sqlite")`, a read-only query on
   a SQLite file in the folder (`_query` under the same prefix), so an app an
-  agent writes over a dataset can show its data.
+  agent writes over a dataset can show its data, and `peon.act(action, row,
+  args, source)`, which queues a change for a synced source's service in the
+  Outbox (`_act`, see `Beamcode.Outbox`).
   """
   use BeamcodeWeb, :controller
   alias Beamcode.ProjectFiles
@@ -52,12 +54,40 @@ defmodule BeamcodeWeb.FileController do
   def query(conn, _),
     do: conn |> put_resp_header("access-control-allow-origin", "*") |> send_resp(400, "")
 
+  # `row` is the row's _remote_id (empty for create), `args` a JSON object,
+  # `from` the page that asked (shown in the Outbox).
+  def act(conn, %{"token" => token, "action" => action} = params) when is_binary(action) do
+    conn = put_resp_header(conn, "access-control-allow-origin", "*")
+
+    args =
+      case Jason.decode(params["args"] || "{}") do
+        {:ok, %{} = args} -> args
+        _ -> %{}
+      end
+
+    source = if params["source"] in [nil, ""], do: nil, else: params["source"]
+    row = if params["row"] in [nil, ""], do: nil, else: params["row"]
+    from = (params["from"] || "app") |> String.slice(0, 120)
+
+    with {:ok, user, project} <- BeamcodeWeb.FileToken.verify_user(token),
+         {:ok, entry} <-
+           Beamcode.Outbox.act(project, source, action, row, args, "#{from} · #{user.username}") do
+      json(conn, %{id: entry["id"], status: entry["status"], label: entry["label"]})
+    else
+      :error -> conn |> put_status(401) |> json(%{error: "This link has expired"})
+      {:error, reason} -> conn |> put_status(422) |> json(%{error: to_string(reason)})
+    end
+  end
+
+  def act(conn, _),
+    do: conn |> put_resp_header("access-control-allow-origin", "*") |> send_resp(400, "")
+
   # The page's origin is opaque (sandbox), so the query is a cross-origin POST;
   # a form body keeps it a simple request (no preflight). Storage throws in a
   # sandbox, so pages get an in-memory localStorage/sessionStorage instead.
   defp with_peon(html, token) do
     script = """
-    <script>["localStorage","sessionStorage"].forEach(function(k){try{window[k].length}catch(e){var m={};Object.defineProperty(window,k,{configurable:true,value:{getItem:function(i){return i in m?m[i]:null},setItem:function(i,v){m[i]=String(v)},removeItem:function(i){delete m[i]},clear:function(){m={}},key:function(n){return Object.keys(m)[n]||null},get length(){return Object.keys(m).length}}})}});window.peon={query:function(sql,db){return fetch("/files/#{token}/_query",{method:"POST",body:new URLSearchParams({sql:sql,db:db||"data.sqlite"})}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||r.statusText);return j.rows})})}};</script>
+    <script>["localStorage","sessionStorage"].forEach(function(k){try{window[k].length}catch(e){var m={};Object.defineProperty(window,k,{configurable:true,value:{getItem:function(i){return i in m?m[i]:null},setItem:function(i,v){m[i]=String(v)},removeItem:function(i){delete m[i]},clear:function(){m={}},key:function(n){return Object.keys(m)[n]||null},get length(){return Object.keys(m).length}}})}});function peonPost(p,b){return fetch("/files/#{token}/"+p,{method:"POST",body:new URLSearchParams(b)}).then(function(r){return r.json().then(function(j){if(!r.ok)throw new Error(j.error||r.statusText);return j})})}window.peon={query:function(sql,db){return peonPost("_query",{sql:sql,db:db||"data.sqlite"}).then(function(j){return j.rows})},act:function(action,row,args,source){var id=row&&typeof row==="object"?row._remote_id:row;source=source||(row&&typeof row==="object"?row._source:"");return peonPost("_act",{action:action,row:id||"",args:JSON.stringify(args||{}),source:source||"",from:location.pathname.split("/").slice(3).join("/")})}};</script>
     """
 
     case Regex.run(~r/<head[^>]*>/i, html, return: :index) do

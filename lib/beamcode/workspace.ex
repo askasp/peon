@@ -455,6 +455,27 @@ defmodule Beamcode.Workspace do
        never edit a synced table by hand: keep the user's own notes about its
        rows in a separate table that joins on the id. Apps over synced data show
        how old it is (`max(fetched_at)`).
+
+       ## Services Peon syncs (GitHub Projects, Front)
+
+       A source with `"connector"` in sources.json is synced by Peon every few
+       minutes; there is no script. Its table has `_remote_id`, `_source`,
+       `_synced_at` and `_pending` (1 while a change is posting) next to the
+       service's columns. `_fields` has each field's options in order (a
+       board's columns: `select options from _fields where col = 'status'`),
+       `_sources` when it last synced, `_outbox` every change posted back.
+
+       - Never update a synced column or sources.json yourself. To change
+         something on the service, call the `source_act` tool (action, row =
+         the row's `_remote_id`, args). Each action has a level the user sets:
+         direct posts at once, confirm waits for the user to press Post in the
+         Outbox (say so), off is refused.
+       - The user's own columns (notes, their order) are fine: `alter table
+         items add column note text`. Sync never writes columns it doesn't own.
+       - In apps, `peon.act(action, row, args)` does the same (`row` is a row
+         from `peon.query` or its `_remote_id`) and returns a promise of
+         `{status: "posting" | "waiting", label}`. Update the page at once, show
+         rows with `_pending = 1` as posting, and query again a few seconds later.
        """}
 
   defp folder_skill(_), do: nil
@@ -489,6 +510,8 @@ defmodule Beamcode.Workspace do
     standalone HTML files that read the data with `peon.query(sql)` (see the
     sqlite-schema skill). Data from an API comes in through a script in
     `sources/` listed in `sources.json` (see the skill), so it can be refreshed.
+    A source synced by Peon (GitHub Projects, Front) posts changes back only
+    through the `source_act` tool or `peon.act` in apps.
     Mention the path of every file you write.
     """
   end

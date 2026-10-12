@@ -77,7 +77,13 @@ defmodule Beamcode.ProjectFiles do
          {:ok, names} <-
            sql(project, path, "select name from sqlite_master where type='table' order by name") do
       names = for %{"name" => n} <- names, do: n
-      table = if table in names, do: table, else: List.first(names)
+      # Peon's own tables (_outbox…) and SQLite's open only when asked for.
+      table =
+        if table in names,
+          do: table,
+          else:
+            Enum.find(names, &(not String.starts_with?(&1, ["_", "sqlite_"]))) ||
+              List.first(names)
 
       counts =
         for n <- names do
@@ -112,6 +118,62 @@ defmodule Beamcode.ProjectFiles do
         do: {:error, "Only SQL, no dot commands"},
         else: sql(project, path, query)
     end
+  end
+
+  @exec_py ~S"""
+  import sqlite3, json, sys
+  job = json.load(open(sys.argv[1]))
+  c = sqlite3.connect(job["db"], timeout=30)
+  c.row_factory = sqlite3.Row
+  rows = []
+  with c:
+      for st in job["statements"]:
+          try:
+              cur = c.execute(st[0], st[1])
+          except sqlite3.OperationalError:
+              if len(st) > 2: continue
+              raise
+          rows = [dict(r) for r in cur.fetchall()] if cur.description else []
+  print(json.dumps(rows, default=str))
+  """
+
+  @doc """
+  Runs `statements` (`[{sql, params}]`, params a list; `{sql, params,
+  :ignore_error}` for one that may fail, like adding a column twice) in one transaction on a
+  SQLite file in the folder, with Python's sqlite3 module on the OpenCode server.
+  For Peon's own writes (dataset sources, the Outbox); the SQL is never user
+  input. The statements go through a file in `.peon/`, so a big sync isn't
+  limited by the command line. Returns `{:ok, rows}`: the rows of the last
+  statement, as maps.
+  """
+  def exec(%Project{} = project, path, statements) when is_list(statements) do
+    file = ".peon/sql-#{System.unique_integer([:positive])}.json"
+
+    with {:ok, path} <- clean(path),
+         true <- path != "." || {:error, :bad_path},
+         {:ok, _} <- Opencode.write_file(project.directory, file, exec_payload(path, statements)) do
+      cmd = "python3 -c #{q(@exec_py)} #{q(file)}; s=$?; rm -f #{q(file)}; exit $s"
+
+      case Opencode.run_shell(project.directory, cmd, 120_000) do
+        {:ok, 0, out} -> Jason.decode(out |> String.split("\n", trim: true) |> List.last("[]"))
+        {:ok, 127, _} -> {:error, "python3 is not installed on the server"}
+        {:ok, _, out} -> {:error, out |> String.trim() |> String.split("\n") |> List.last()}
+        error -> error
+      end
+    end
+  end
+
+  defp exec_payload(path, statements) do
+    Jason.encode!(%{
+      db: path,
+      statements:
+        for st <- statements do
+          case st do
+            {sql, params} -> [sql, params]
+            {sql, params, :ignore_error} -> [sql, params, true]
+          end
+        end
+    })
   end
 
   defp ident(name), do: ~s("#{String.replace(name, ~s("), ~s(""))}")

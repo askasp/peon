@@ -1,11 +1,11 @@
 defmodule BeamcodeWeb.McpController do
   @moduledoc """
   Minimal MCP server (streamable HTTP, JSON responses) that exposes connector
-  tools. The URL carries a signed project id, written into the project's
+  tools, and a synced Dataset's `source_act`/`source_sync` (`Beamcode.SourceTools`). The URL carries a signed project id, written into the project's
   opencode.json by `Beamcode.Workspace.sync_opencode_json/2`.
   """
   use BeamcodeWeb, :controller
-  alias Beamcode.{Connectors, Projects}
+  alias Beamcode.{Connectors, Projects, SourceTools}
 
   @protocol "2025-06-18"
 
@@ -44,7 +44,22 @@ defmodule BeamcodeWeb.McpController do
   defp rpc(_project, %{"id" => id, "method" => "ping"}), do: ok(id, %{})
 
   defp rpc(project, %{"id" => id, "method" => "tools/list"}),
-    do: ok(id, %{tools: Connectors.mcp_tools(project)})
+    do: ok(id, %{tools: Connectors.mcp_tools(project) ++ SourceTools.mcp_tools(project)})
+
+  defp rpc(project, %{
+         "id" => id,
+         "method" => "tools/call",
+         "params" => %{"name" => name} = params
+       })
+       when name in ["source_act", "source_sync"] do
+    {result, text} =
+      case SourceTools.call(project, name, params["arguments"] || %{}) do
+        {:ok, text} -> {false, text}
+        {:error, text} -> {true, text}
+      end
+
+    ok(id, %{content: [%{type: "text", text: text}], isError: result})
+  end
 
   defp rpc(project, %{"id" => id, "method" => "tools/call", "params" => params}) do
     case Connectors.call(project, params["name"], params["arguments"]) do

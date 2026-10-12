@@ -5,6 +5,7 @@ import { Button, ErrorLine, Group, Loading, SectionLabel, Segmented, Tap, Toggle
 import { templateName } from "@/lib/folders";
 import { useWide } from "@/lib/useWide";
 import { FileView } from "./FilesTab";
+import { SourceSettings } from "./SourceSettings";
 import { confirm } from "@/lib/confirm";
 import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
@@ -78,6 +79,8 @@ export function SettingsTab({
             : `Set up from the ${templateName[p.kind]} template. After that it works like any other Folder.`}
         </Text>
       </View>
+
+      {p.kind === "dataset" ? <SourceSettings ctx={ctx} /> : null}
 
       <Text style={st.heading}>Instructions</Text>
       <View style={st.group}>

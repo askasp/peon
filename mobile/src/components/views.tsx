@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Image, Platform, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { Frame } from "./Frame";
+import { Outbox, SourceBadge } from "./Outbox";
 import { ErrorLine, Loading, Tap } from "./ui";
 import { useLoad } from "@/lib/useLoad";
 import { ago } from "@/lib/time";
@@ -226,7 +227,22 @@ export function AppView({ url }: { url: string }) {
   );
 }
 
-type Source = { name: string; table: string; fetched_at: string | null; stale: boolean };
+type Source = {
+  name: string;
+  table: string;
+  fetched_at: string | null;
+  stale: boolean;
+  // Connector sources (synced by Peon: GitHub Projects, Front).
+  connector?: string;
+  connector_name?: string;
+  short?: string;
+  title?: string | null;
+  error?: string | null;
+  rows?: number | null;
+  waiting?: number;
+  posting?: number;
+  failed?: number;
+};
 
 /**
  * A dataset's sources (sources.json): where a table's data comes from, how old
@@ -264,7 +280,8 @@ function Sources({
   // One at a time (the server runs one per folder), and only once per source.
   useEffect(() => {
     if (!canRefresh || busy) return;
-    const next = sources.find((s) => s.stale && !tried.current.has(s.name));
+    // Synced services pull on their own every few minutes.
+    const next = sources.find((s) => !s.connector && s.stale && !tried.current.has(s.name));
     if (next) refresh(next.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sources, canRefresh, busy]);
@@ -274,13 +291,33 @@ function Sources({
       {sources.map((s) => {
         const on = busy === s.name;
         return (
-          <View key={s.name} style={st.source}>
-            <View style={[st.sourceDot, s.stale && !on && { backgroundColor: color.needs }]} />
+          <View key={s.name} style={st.source} testID={`source-${s.name}`}>
+            {s.short ? (
+              <SourceBadge short={s.short} />
+            ) : (
+              <View style={[st.sourceDot, s.stale && !on && { backgroundColor: color.needs }]} />
+            )}
             <Text style={st.sourceText} numberOfLines={1}>
-              {s.name} <Text style={{ color: color.faint }}>→ {s.table}</Text>
+              {s.connector ? s.title || s.connector_name : s.name}{" "}
+              <Text style={{ color: color.faint }}>→ {s.table}</Text>
             </Text>
+            {s.waiting ? (
+              <Text style={[st.sourceAge, { color: color.needs }]}>{s.waiting} waiting for you</Text>
+            ) : s.posting ? (
+              <Text style={[st.sourceAge, { color: color.accentText }]}>
+                Posting {s.posting} change{s.posting > 1 ? "s" : ""}
+              </Text>
+            ) : null}
             <Text style={st.sourceAge}>
-              {on ? "Refreshing…" : s.fetched_at ? ago(s.fetched_at, true) : "never fetched"}
+              {on
+                ? s.connector
+                  ? "Syncing…"
+                  : "Refreshing…"
+                : s.fetched_at
+                  ? `${s.connector ? "Synced " : ""}${ago(s.fetched_at, true)}`
+                  : s.connector
+                    ? "not synced yet"
+                    : "never fetched"}
             </Text>
             {canRefresh ? (
               <Tap
@@ -293,9 +330,9 @@ function Sources({
                 <Text style={[st.sourceKeyText, on && { color: color.accentText }]}>↻</Text>
               </Tap>
             ) : null}
-            {errors[s.name] ? (
+            {errors[s.name] || s.error ? (
               <Text style={st.sourceError} numberOfLines={2}>
-                {errors[s.name]}
+                {errors[s.name] || s.error}
               </Text>
             ) : null}
           </View>
@@ -317,9 +354,10 @@ export function Table({ call, path, text }: { call: Call; path: string; text: st
     rows: any[];
     table: string | null;
     sources?: Source[];
+    local?: string[];
     can_refresh?: boolean;
   }> => {
-    if (!csv) return call("table", { path, table }, 60000);
+    if (!csv) return call("table", { path, table: table === OUTBOX ? null : table }, 60000);
     const [head = [], ...rest] = parseCsv(text ?? "");
     return {
       tables: [],
@@ -351,15 +389,23 @@ export function Table({ call, path, text }: { call: Call; path: string; text: st
   if (error) return <ErrorLine message={error} />;
   if (!data) return <Loading />;
   const W = 150;
+  // Peon's own tables (_sources, _fields, _outbox) stay out of the tabs; the
+  // Outbox gets its own tab when a service is synced here.
+  const tables = data.tables.filter((t) => !t.name.startsWith("_") && !t.name.startsWith("sqlite_"));
+  const synced = (data.sources ?? []).filter((x) => x.connector);
+  const waiting = synced.reduce((n, x) => n + (x.waiting ?? 0) + (x.failed ?? 0), 0);
+  const showOutbox = table === OUTBOX && synced.length > 0;
+  const local = new Set(data.local ?? []);
+  const columns = data.columns.filter((c) => !c.startsWith("_"));
   return (
     <ScrollView contentContainerStyle={st.table}>
       {data.sources?.length ? (
         <Sources call={call} sources={data.sources} canRefresh={!!data.can_refresh} onDone={reload} />
       ) : null}
-      {data.tables.length > 1 ? (
+      {tables.length > 1 || synced.length ? (
         <View style={st.seg}>
-          {data.tables.map((t) => {
-            const on = t.name === data.table;
+          {tables.map((t) => {
+            const on = !showOutbox && t.name === data.table;
             return (
               <Tap key={t.name} onPress={() => setTable(t.name)} style={[st.segItem, on && st.segOn]}>
                 <Text style={[st.segText, on && { color: color.textStrong }]}>
@@ -368,54 +414,79 @@ export function Table({ call, path, text }: { call: Call; path: string; text: st
               </Tap>
             );
           })}
-        </View>
-      ) : null}
-      <TextInput
-        value={filter}
-        onChangeText={setFilter}
-        placeholder="Filter rows"
-        placeholderTextColor="#62626b"
-        autoCapitalize="none"
-        style={st.filter}
-      />
-      <Text style={st.where}>
-        {csv ? "CSV" : "SQLite"} · {rows.length} rows · swipe sideways for more columns
-      </Text>
-      <ScrollView horizontal style={st.grid} showsHorizontalScrollIndicator={false}>
-        <View>
-          <View style={[st.gridRow, st.gridHead]}>
-            {data.columns.map((c) => (
-              <Tap
-                key={c}
-                onPress={() => setSort(sort?.[0] === c ? (sort[1] === 1 ? [c, -1] : null) : [c, 1])}
-                style={[st.cell, { width: W }]}
-              >
-                <Text style={st.headText} numberOfLines={1}>
-                  {c} {sort?.[0] === c ? (sort[1] === 1 ? "↑" : "↓") : ""}
-                </Text>
-              </Tap>
-            ))}
-          </View>
-          {rows.map((r, i) => (
-            <View key={i} style={st.gridRow}>
-              {data.columns.map((c) => (
-                <View key={c} style={[st.cell, { width: W }]}>
-                  <Text style={st.cellText} numberOfLines={1}>
-                    {r[c] == null ? "" : String(r[c])}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ))}
-          {rows.length === 0 ? (
-            <Text style={[st.cellText, { padding: 12, color: color.faint }]}>No rows.</Text>
+          {synced.length ? (
+            <Tap
+              testID="outbox-tab"
+              onPress={() => setTable(OUTBOX)}
+              style={[st.segItem, showOutbox && st.segOn]}
+            >
+              <Text style={[st.segText, showOutbox && { color: color.textStrong }]}>
+                Outbox <Text style={{ color: waiting ? color.needs : color.faint }}>{waiting || ""}</Text>
+              </Text>
+            </Tap>
           ) : null}
         </View>
-      </ScrollView>
-      <Text style={st.faintSmall}>View only. Ask in a chat to add or change rows.</Text>
+      ) : null}
+      {showOutbox ? <Outbox call={call} onChange={reload} /> : null}
+      {showOutbox ? null : (
+        <>
+          <TextInput
+            value={filter}
+            onChangeText={setFilter}
+            placeholder="Filter rows"
+            placeholderTextColor="#62626b"
+            autoCapitalize="none"
+            style={st.filter}
+          />
+          <Text style={st.where}>
+            {csv ? "CSV" : "SQLite"} · {rows.length} rows · swipe sideways for more columns
+          </Text>
+          <ScrollView horizontal style={st.grid} showsHorizontalScrollIndicator={false}>
+            <View>
+              <View style={[st.gridRow, st.gridHead]}>
+                {columns.map((c) => (
+                  <Tap
+                    key={c}
+                    onPress={() => setSort(sort?.[0] === c ? (sort[1] === 1 ? [c, -1] : null) : [c, 1])}
+                    style={[st.cell, { width: W }]}
+                  >
+                    <Text style={st.headText} numberOfLines={1}>
+                      {c}
+                      {local.has(c) ? <Text style={st.localMark}> · local</Text> : null}{" "}
+                      {sort?.[0] === c ? (sort[1] === 1 ? "↑" : "↓") : ""}
+                    </Text>
+                  </Tap>
+                ))}
+              </View>
+              {rows.map((r, i) => (
+                <View key={i} style={[st.gridRow, r._pending ? { opacity: 0.55 } : null]}>
+                  {columns.map((c) => (
+                    <View key={c} style={[st.cell, { width: W }]}>
+                      <Text style={st.cellText} numberOfLines={1}>
+                        {r[c] == null ? "" : String(r[c])}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ))}
+              {rows.length === 0 ? (
+                <Text style={[st.cellText, { padding: 12, color: color.faint }]}>No rows.</Text>
+              ) : null}
+            </View>
+          </ScrollView>
+          <Text style={st.faintSmall}>
+            {synced.some((x) => x.table === data.table)
+              ? "Synced. Change rows from a view or the chat; the Outbox shows what's posted back."
+              : "View only. Ask in a chat to add or change rows."}
+          </Text>
+        </>
+      )}
     </ScrollView>
   );
 }
+
+// The Outbox's place among the table tabs.
+const OUTBOX = "\u0000outbox";
 
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
@@ -600,6 +671,7 @@ const st = StyleSheet.create({
   sourceKey: { width: 34, height: 34, alignItems: "center", justifyContent: "center", borderRadius: 8 },
   sourceKeyText: { fontSize: 18, lineHeight: 20, color: color.textSoft },
   sourceError: { width: "100%", paddingLeft: 17, paddingBottom: 8, fontSize: 12, color: color.red },
+  localMark: { fontWeight: "400", color: color.faint },
   filter: {
     height: 38,
     borderRadius: 10,

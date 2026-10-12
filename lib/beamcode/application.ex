@@ -30,7 +30,7 @@ defmodule Beamcode.Application do
 
   defp workers do
     if Application.get_env(:beamcode, :start_workers, true) do
-      [Beamcode.Opencode.Events, Beamcode.Schedules.Scheduler]
+      [Beamcode.Opencode.Events, Beamcode.Schedules.Scheduler, Beamcode.SourceSync.Ticker]
     else
       []
     end

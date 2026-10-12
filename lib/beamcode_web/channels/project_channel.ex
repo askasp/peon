@@ -24,6 +24,11 @@ defmodule BeamcodeWeb.ProjectChannel do
     * `schedules` → `{schedules, agents, models, blank}`; `describe_schedule` `{params}`
       → `{cron, when, next}`; `save_schedule` `{params}`; `delete_schedule` `{key}`;
       `run_schedule` `{key}` → `{session_id}`
+    * `sources` → `{sources, connectors}`: a Dataset's synced sources with their
+      action levels and local columns; `source_add` `{connector, choice}`;
+      `source_level` `{name, action, level}`; `source_remove` `{name}`
+    * `outbox` → `{entries}`; `outbox_post` `{id, args?}`, `outbox_skip`, `outbox_undo`,
+      `outbox_retry` `{id}` (see `Beamcode.Outbox`)
     * `settings` → `{directory, skills, settings, github, connectors}`; `save_settings` `{params}` → `{project, message}`;
       `grant` `{connector, granted}`; `github_save` `{token}`; `github_remove`; `remove`
 
@@ -36,6 +41,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     DataSources,
     GitTokens,
     Opencode,
+    Outbox,
     Projects,
     ProjectFiles,
     ProjectTools,
@@ -308,9 +314,19 @@ defmodule BeamcodeWeb.ProjectChannel do
            {:ok, data} <- ProjectFiles.table(project, path, params["table"]) do
         {:ok, clean} = ProjectFiles.clean_path(path)
 
+        # A synced table's own columns (notes…) are marked local in the view.
+        local =
+          case Enum.find(DataSources.connector_sources(project), fn {_, s} ->
+                 s.table == data.table and s.db == clean
+               end) do
+            {name, s} -> DataSources.local_columns(project, name, s)
+            nil -> []
+          end
+
         {:ok,
          Map.merge(data, %{
            sources: DataSources.list(project, clean),
+           local: local,
            can_refresh: ProjectTools.can_edit?(project, user)
          })}
       else
@@ -331,6 +347,66 @@ defmodule BeamcodeWeb.ProjectChannel do
         end
       else
         error("Only the folder's owner can refresh its sources.")
+      end
+    end)
+  end
+
+  ## Synced sources and the Outbox
+
+  def handle_in("sources", _params, socket) do
+    %{project: project, user: user} = socket.assigns
+    ChannelTasks.reply_async(socket, fn -> {:ok, sources(project, user)} end)
+  end
+
+  def handle_in("source_add", %{"connector" => id} = params, socket) when is_binary(id) do
+    edit(socket, fn project ->
+      with {:ok, name} <- DataSources.add(project, id, params["choice"]) do
+        # The first sync's error shows on the source; the source is added either way.
+        _ = DataSources.refresh(project, name)
+        :ok
+      end
+    end)
+  end
+
+  def handle_in("source_level", %{"name" => name, "action" => action, "level" => level}, socket)
+      when is_binary(name) and is_binary(action) and is_binary(level) do
+    edit(socket, &DataSources.set_level(&1, name, action, level))
+  end
+
+  def handle_in("source_remove", %{"name" => name}, socket) when is_binary(name) do
+    edit(socket, &DataSources.remove(&1, name))
+  end
+
+  def handle_in("outbox", params, socket) do
+    project = socket.assigns.project
+    db = params["db"] || "data.sqlite"
+    ChannelTasks.reply_async(socket, fn -> {:ok, %{entries: Outbox.list(project, db)}} end)
+  end
+
+  def handle_in("outbox_" <> op, %{"id" => id} = params, socket)
+      when op in ~w(post skip undo retry) and is_integer(id) do
+    project = socket.assigns.project
+    db = params["db"] || "data.sqlite"
+
+    ChannelTasks.reply_async(socket, fn ->
+      result =
+        case op do
+          "post" ->
+            Outbox.approve(project, db, id, if(is_map(params["args"]), do: params["args"]))
+
+          "skip" ->
+            Outbox.skip(project, db, id)
+
+          "undo" ->
+            Outbox.undo(project, db, id)
+
+          "retry" ->
+            Outbox.retry(project, db, id)
+        end
+
+      case result do
+        {:error, reason} -> error(reason)
+        _ -> {:ok, %{entries: Outbox.list(project, db)}}
       end
     end)
   end
@@ -610,6 +686,44 @@ defmodule BeamcodeWeb.ProjectChannel do
   end
 
   defp inputs(_, _config), do: %{}
+
+  # A change to the Folder's sources (owners and admins), replying with the new list.
+  defp edit(socket, fun) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      if ProjectTools.can_edit?(project, user) do
+        case fun.(project) do
+          {:error, reason} -> error(reason)
+          _ -> {:ok, sources(project, user)}
+        end
+      else
+        error("Only the folder's owner can change its sources.")
+      end
+    end)
+  end
+
+  defp sources(project, user) do
+    listed = DataSources.list(project) |> Enum.filter(&Map.has_key?(&1, :connector))
+    connected = DataSources.connector_sources(project)
+
+    %{
+      sources:
+        for src <- listed, s = connected[src.name] do
+          info = s.connector.info()
+
+          Map.merge(src, %{
+            actions:
+              for {name, a} <- Enum.sort(info.actions) do
+                %{name: name, label: a.label, level: DataSources.level(s, name)}
+              end,
+            local_columns: DataSources.local_columns(project, src.name, s)
+          })
+        end,
+      connectors: DataSources.connector_list(),
+      can_edit: ProjectTools.can_edit?(project, user)
+    }
+  end
 
   defp error(reason), do: {:error, %{message: ChannelTasks.error_message(reason)}}
 

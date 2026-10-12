@@ -30,6 +30,7 @@ defmodule BeamcodeWeb.Router do
   scope "/files", BeamcodeWeb do
     get "/:token/_query", FileController, :query
     post "/:token/_query", FileController, :query
+    post "/:token/_act", FileController, :act
     get "/:token/*path", FileController, :show
   end
 

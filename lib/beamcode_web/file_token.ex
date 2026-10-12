@@ -22,16 +22,21 @@ defmodule BeamcodeWeb.FileToken do
   `{:ok, project}` for a valid token whose user still sees the project, with
   `directory` set to the signed tree; else `:error`.
   """
-  def verify(token) when is_binary(token) do
+  def verify(token) do
+    with {:ok, _user, project} <- verify_user(token), do: {:ok, project}
+  end
+
+  @doc "Like `verify/1`, with the user the token was made for: `{:ok, user, project}`."
+  def verify_user(token) when is_binary(token) do
     with {:ok, {user_id, project_id, dir}} <-
            Phoenix.Token.verify(BeamcodeWeb.Endpoint, @salt, token, max_age: @max_age),
          %{} = user <- Accounts.get_user(user_id),
          %{} = project <- Enum.find(Projects.list_visible(user), &(&1.id == project_id)) do
-      {:ok, %{project | directory: dir}}
+      {:ok, user, %{project | directory: dir}}
     else
       _ -> :error
     end
   end
 
-  def verify(_), do: :error
+  def verify_user(_), do: :error
 end
