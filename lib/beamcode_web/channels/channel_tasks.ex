@@ -34,7 +34,13 @@ defmodule BeamcodeWeb.ChannelTasks do
 
   def reply_async(socket, fun, then \\ fn result, socket -> {result, socket} end) do
     ref = Phoenix.Channel.socket_ref(socket)
-    task = Task.Supervisor.async_nolink(Beamcode.TaskSupervisor, fun)
+    topic = socket.topic
+
+    task =
+      Task.Supervisor.async_nolink(Beamcode.TaskSupervisor, fn ->
+        Beamcode.Instrument.span("channel #{topic}", fun)
+      end)
+
     tasks = Map.put(socket.assigns[:tasks] || %{}, task.ref, {ref, then})
     {:noreply, Phoenix.Socket.assign(socket, :tasks, tasks)}
   end

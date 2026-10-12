@@ -63,6 +63,10 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# Spans (OpenCode calls, channel work) slower than this are logged as warnings.
+# See Beamcode.Instrument.
+config :beamcode, :log_slow_ms, 300
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

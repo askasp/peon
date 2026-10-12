@@ -85,13 +85,7 @@ defmodule Beamcode.ProjectFiles do
             Enum.find(names, &(not String.starts_with?(&1, ["_", "sqlite_"]))) ||
               List.first(names)
 
-      counts =
-        for n <- names do
-          case sql(project, path, "select count(*) as n from #{ident(n)}") do
-            {:ok, [%{"n" => c}]} -> %{name: n, rows: c}
-            _ -> %{name: n, rows: nil}
-          end
-        end
+      counts = table_counts(project, path, names)
 
       with {:ok, rows} <-
              (table && sql(project, path, "select * from #{ident(table)} limit #{limit}")) ||
@@ -175,6 +169,29 @@ defmodule Beamcode.ProjectFiles do
         end
     })
   end
+
+  # Every table's row count in one query, rather than one shell call per table:
+  # a dataset with many tables would otherwise take ~300 ms each (see
+  # `Beamcode.Opencode.run_shell`).
+  defp table_counts(_project, _path, []), do: []
+
+  defp table_counts(project, path, names) do
+    union =
+      Enum.map_join(names, " union all ", fn n ->
+        "select #{literal(n)} as name, count(*) as n from #{ident(n)}"
+      end)
+
+    case sql(project, path, union) do
+      {:ok, rows} ->
+        by_name = Map.new(rows, fn %{"name" => name, "n" => n} -> {name, n} end)
+        for n <- names, do: %{name: n, rows: Map.get(by_name, n)}
+
+      _ ->
+        for n <- names, do: %{name: n, rows: nil}
+    end
+  end
+
+  defp literal(s), do: "'" <> String.replace(to_string(s), "'", "''") <> "'"
 
   defp ident(name), do: ~s("#{String.replace(name, ~s("), ~s(""))}")
 

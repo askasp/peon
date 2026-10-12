@@ -42,47 +42,49 @@ defmodule BeamcodeWeb.SessionChannel do
     do: {:error, %{reason: "unauthorized"}}
 
   def join("session:" <> id, _params, socket) do
-    case Sessions.fetch_visible(id, socket.assigns.user) do
-      {:ok, session, project, record} ->
-        Events.subscribe_session(id)
-        Schedules.subscribe()
-        Beamcode.Projects.subscribe()
+    Beamcode.Instrument.span("channel session:join", %{session: id}, fn ->
+      case Sessions.fetch_visible(id, socket.assigns.user) do
+        {:ok, session, project, record} ->
+          Events.subscribe_session(id)
+          Schedules.subscribe()
+          Beamcode.Projects.subscribe()
 
-        socket =
-          socket
-          |> assign(
-            session_id: id,
-            session: session,
-            project: project,
-            record: record,
-            sent: %{},
-            refetch_ref: nil,
-            diff_ref: nil,
-            diff_again: false,
-            speak_next: nil,
-            status: Events.status(id),
-            diff: [],
-            tasks: %{}
-          )
+          socket =
+            socket
+            |> assign(
+              session_id: id,
+              session: session,
+              project: project,
+              record: record,
+              sent: %{},
+              refetch_ref: nil,
+              diff_ref: nil,
+              diff_again: false,
+              speak_next: nil,
+              status: Events.status(id),
+              diff: [],
+              tasks: %{}
+            )
 
-        {messages, socket} = load_messages(socket)
-        socket = assign(socket, diff: load_diff(id))
+          {messages, socket} = load_messages(socket)
+          socket = assign(socket, diff: load_diff(id))
 
-        {:ok,
-         %{
-           session: session_json(session, project, record),
-           project: AppJSON.project(project),
-           messages: messages,
-           status: socket.assigns.status,
-           perms: perms(id),
-           forms: forms(id),
-           run: run(id),
-           diff: socket.assigns.diff
-         }, socket}
+          {:ok,
+           %{
+             session: session_json(session, project, record),
+             project: AppJSON.project(project),
+             messages: messages,
+             status: socket.assigns.status,
+             perms: perms(id),
+             forms: forms(id),
+             run: run(id),
+             diff: socket.assigns.diff
+           }, socket}
 
-      :error ->
-        {:error, %{reason: "not_found"}}
-    end
+        :error ->
+          {:error, %{reason: "not_found"}}
+      end
+    end)
   end
 
   ## Requests
@@ -474,52 +476,58 @@ defmodule BeamcodeWeb.SessionChannel do
   # Messages oldest first, as the app shows them. With `:changed`, only those
   # that differ from what was last sent, plus the ids in order.
   defp load_messages(socket, mode \\ :all) do
-    case Opencode.messages(socket.assigns.session_id) do
-      {:ok, messages} ->
-        messages =
-          messages
-          |> Enum.reject(&(&1["type"] == "idle" and &1["outcome"] == "succeeded"))
-          |> Enum.map(&AppJSON.message/1)
+    Beamcode.Instrument.span("session:load_messages", %{mode: mode}, fn ->
+      case Opencode.messages(socket.assigns.session_id) do
+        {:ok, messages} ->
+          messages =
+            messages
+            |> Enum.reject(&(&1["type"] == "idle" and &1["outcome"] == "succeeded"))
+            |> Enum.map(&AppJSON.message/1)
 
-        sent = socket.assigns.sent
-        socket = assign(socket, sent: Map.new(messages, &{&1["id"], :erlang.phash2(&1)}))
+          sent = socket.assigns.sent
+          socket = assign(socket, sent: Map.new(messages, &{&1["id"], :erlang.phash2(&1)}))
 
-        case mode do
-          :all ->
-            {messages, socket}
+          case mode do
+            :all ->
+              {messages, socket}
 
-          :changed ->
-            upsert = Enum.filter(messages, &(sent[&1["id"]] != :erlang.phash2(&1)))
-            {%{upsert: upsert, ids: Enum.map(messages, & &1["id"])}, socket}
-        end
+            :changed ->
+              upsert = Enum.filter(messages, &(sent[&1["id"]] != :erlang.phash2(&1)))
+              {%{upsert: upsert, ids: Enum.map(messages, & &1["id"])}, socket}
+          end
 
-      {:error, _reason} ->
-        empty = if mode == :all, do: [], else: %{upsert: [], ids: Map.keys(socket.assigns.sent)}
-        {empty, socket}
-    end
+        {:error, _reason} ->
+          empty =
+            if mode == :all, do: [], else: %{upsert: [], ids: Map.keys(socket.assigns.sent)}
+
+          {empty, socket}
+      end
+    end)
   end
 
   # Each patch cut to its changes (OpenCode sends whole files), with `hidden`
   # lines left out past the cap.
   defp load_diff(sid) do
-    case Opencode.diff(sid) do
-      {:ok, files} when is_list(files) ->
-        for f <- files do
-          f = Map.take(f, ["file", "additions", "deletions", "patch", "status"])
+    Beamcode.Instrument.span("session:load_diff", %{session: sid}, fn ->
+      case Opencode.diff(sid) do
+        {:ok, files} when is_list(files) ->
+          for f <- files do
+            f = Map.take(f, ["file", "additions", "deletions", "patch", "status"])
 
-          case f["patch"] do
-            patch when is_binary(patch) ->
-              {patch, hidden} = Beamcode.Patch.trim(patch)
-              Map.merge(f, %{"patch" => patch, "hidden" => hidden})
+            case f["patch"] do
+              patch when is_binary(patch) ->
+                {patch, hidden} = Beamcode.Patch.trim(patch)
+                Map.merge(f, %{"patch" => patch, "hidden" => hidden})
 
-            _ ->
-              f
+              _ ->
+                f
+            end
           end
-        end
 
-      _ ->
-        []
-    end
+        _ ->
+          []
+      end
+    end)
   end
 
   defp schedule_refetch(%{assigns: %{refetch_ref: nil}} = socket),

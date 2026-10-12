@@ -27,17 +27,54 @@ defmodule Beamcode.Opencode do
   defp loc(dir), do: [{"location[directory]", dir}]
 
   defp request(method, path, opts) do
-    case Req.request(req(), [method: method, url: path] ++ opts) do
-      {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
-        {:ok, body}
+    start = System.monotonic_time()
 
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, {status, error_message(body)}}
+    {result, status, bytes} =
+      case Req.request(req(), [method: method, url: path] ++ opts) do
+        {:ok, %Req.Response{status: status, headers: headers, body: body}}
+        when status in 200..299 ->
+          {{:ok, body}, status, content_length(headers, body)}
 
-      {:error, exception} ->
-        {:error, {:transport, Exception.message(exception)}}
+        {:ok, %Req.Response{status: status, body: body}} ->
+          {{:error, {status, error_message(body)}}, status, nil}
+
+        {:error, exception} ->
+          {{:error, {:transport, Exception.message(exception)}}, :transport, nil}
+      end
+
+    Beamcode.Instrument.report(
+      "oc #{method |> to_string() |> String.upcase()} #{trim_path(path)}",
+      System.monotonic_time() - start,
+      meta_drop_nil(%{status: status, bytes: bytes})
+    )
+
+    result
+  end
+
+  # The response's size, from its `content-length` (JSON is already decoded to a
+  # map by the time we see it) or the raw body for streams like file reads.
+  defp content_length(headers, body) do
+    case Req.Response.get_header(%Req.Response{headers: headers}, "content-length") do
+      [value | _] ->
+        case Integer.parse(value) do
+          {n, ""} -> n
+          _ -> nil
+        end
+
+      _ ->
+        if is_binary(body), do: byte_size(body), else: nil
     end
   end
+
+  # Request logs stay short when a path carries a long file name or query.
+  defp trim_path(path) when is_binary(path) do
+    if byte_size(path) > 160, do: binary_part(path, 0, 160) <> "…", else: path
+  end
+
+  defp trim_path(path), do: inspect(path)
+
+  defp meta_drop_nil(meta),
+    do: for({k, v} <- meta, v != nil, into: %{}, do: {k, v})
 
   defp error_message(%{"message" => m}), do: m
   defp error_message(%{"_tag" => t}), do: t
@@ -227,17 +264,36 @@ defmodule Beamcode.Opencode do
   ## Files, shell, worktrees
 
   def read_file(dir, path) do
-    case Req.request(req(),
-           method: :get,
-           url: "/api/fs/read/" <> URI.encode(path),
-           params: loc(dir),
-           decode_body: false
-         ) do
-      {:ok, %Req.Response{status: 200, body: body}} -> {:ok, body}
-      {:ok, %Req.Response{status: 404}} -> {:error, :enoent}
-      {:ok, %Req.Response{status: s, body: b}} -> {:error, {s, error_message(b)}}
-      {:error, e} -> {:error, {:transport, Exception.message(e)}}
-    end
+    start = System.monotonic_time()
+
+    result =
+      case Req.request(req(),
+             method: :get,
+             url: "/api/fs/read/" <> URI.encode(path),
+             params: loc(dir),
+             decode_body: false
+           ) do
+        {:ok, %Req.Response{status: 200, body: body}} -> {:ok, body}
+        {:ok, %Req.Response{status: 404}} -> {:error, :enoent}
+        {:ok, %Req.Response{status: s, body: b}} -> {:error, {s, error_message(b)}}
+        {:error, e} -> {:error, {:transport, Exception.message(e)}}
+      end
+
+    {status, bytes} =
+      case result do
+        {:ok, body} -> {200, byte_size(body)}
+        {:error, :enoent} -> {404, nil}
+        {:error, {s, _}} -> {s, nil}
+        {:error, other} -> {other, nil}
+      end
+
+    Beamcode.Instrument.report(
+      "oc GET /api/fs/read #{trim_path(path)}",
+      System.monotonic_time() - start,
+      meta_drop_nil(%{status: status, bytes: bytes})
+    )
+
+    result
   end
 
   def write_file(dir, path, content) do
@@ -260,24 +316,31 @@ defmodule Beamcode.Opencode do
 
   @doc "Runs a shell command at `dir` and waits for it to finish. Returns {:ok, exit, output}."
   def run_shell(dir, command, timeout_ms \\ 120_000) do
-    with {:ok, %{"id" => id}} <-
-           request(:post, "/api/shell",
-             params: loc(dir),
-             json: %{command: command, timeout: timeout_ms}
-           )
-           |> data() do
-      wait_shell(dir, id, System.monotonic_time(:millisecond) + timeout_ms + 5_000)
-    end
+    Beamcode.Instrument.span("oc shell #{trim_path(String.replace(command, ~r/\s+/, " "))}", fn ->
+      with {:ok, %{"id" => id}} <-
+             request(:post, "/api/shell",
+               params: loc(dir),
+               json: %{command: command, timeout: timeout_ms}
+             )
+             |> data() do
+        wait_shell(dir, id, System.monotonic_time(:millisecond) + timeout_ms + 5_000, 10)
+      end
+    end)
   end
 
-  defp wait_shell(dir, id, deadline) do
+  # Poll while the command runs, starting at `wait` ms and backing off to
+  # `@shell_poll_max`: a command that finishes in tens of ms (most of them)
+  # shouldn't wait a fixed 300 ms. The whole call is timed by `run_shell`.
+  @shell_poll_max 200
+
+  defp wait_shell(dir, id, deadline, wait) do
     case request(:get, "/api/shell/#{id}", params: loc(dir)) |> data() do
       {:ok, %{"status" => "running"}} ->
         if System.monotonic_time(:millisecond) > deadline do
           {:error, :timeout}
         else
-          Process.sleep(300)
-          wait_shell(dir, id, deadline)
+          Process.sleep(wait)
+          wait_shell(dir, id, deadline, min(wait * 2, @shell_poll_max))
         end
 
       {:ok, info} ->
