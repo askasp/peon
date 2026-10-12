@@ -24,7 +24,7 @@ import { Letter } from "@/components/desktop/Sidebar";
 import { PermResources } from "@/components/PermResources";
 import { FormCard } from "@/components/session/FormCard";
 import { SessionComposer } from "@/components/session/SessionComposer";
-import { QueueStrip, TasksCard, type QueueCard } from "@/components/session/QueueBits";
+import { QueueButton, QueueStrip, TasksCard, type QueueCard } from "@/components/session/QueueBits";
 import { useQueue } from "@/components/project/QueueTab";
 import { queueIntent } from "@/lib/queue";
 import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap, UnderlineTabs } from "@/components/ui";
@@ -599,6 +599,9 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
           {procedureChat ? <ProcedureChips procedures={procedures} onPick={setPicked} /> : null}
           <SessionComposer
             queued={s.run?.status === "running"}
+            hint={
+              queued ? (wide ? 'Message, or "queue …" to add a task' : 'Message, or "queue …"') : undefined
+            }
             busy={busy}
             options={options}
             agent={s.session?.agent ?? null}
@@ -775,6 +778,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
         </View>
         {wide && s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
         {wide && s.status === "running" ? <Badge label="Working" /> : null}
+        {queued ? <QueueButton tree={mine} open={qPanel} onPress={() => setQPanel(!qPanel)} /> : null}
         <Tap testID="session-menu" hitSlop={12} onPress={() => setMenu(true)} style={st.menuButton}>
           <Text style={st.menuDots}>⋯</Text>
         </Tap>

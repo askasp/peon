@@ -92,6 +92,31 @@ export function TasksCard({
   );
 }
 
+/** The header's way into this worktree's queue: ☰ and how many tasks are left. */
+export function QueueButton({
+  tree,
+  open,
+  onPress,
+}: {
+  tree: QueueTree | null;
+  open: boolean;
+  onPress: () => void;
+}) {
+  const left = tree ? tree.tickets.filter((t) => t.status !== "closed").length : 0;
+  return (
+    <Tap
+      onPress={onPress}
+      hitSlop={10}
+      style={[st.qButton, open && st.qButtonOpen]}
+      testID="queue-button"
+      aria-label={open ? "Hide the queue" : "Show the queue"}
+    >
+      <Text style={[st.qButtonIcon, open && { color: color.accentText }]}>☰</Text>
+      {left ? <Text style={st.qButtonCount}>{left}</Text> : null}
+    </Tap>
+  );
+}
+
 /**
  * Above the reply box in a worktree chat with tasks: what the queue is doing,
  * "Start next" when the chat is free, and the worktree's queue on demand.
@@ -117,7 +142,13 @@ export function QueueStrip({
 }) {
   const { running, needs, ready, blocked } = sortTree(tree);
   const live = running.length + needs.length + ready.length + blocked.length;
-  if (!live) return null;
+  // Nothing queued: only the panel, opened from the header, to add the first.
+  if (!live)
+    return panel ? (
+      <View style={st.stripWrap}>
+        <TreeCard tree={tree} act={act} folder={folder} canEdit={canEdit} inChat focusAdd />
+      </View>
+    ) : null;
   const next = nextTask(tree);
   const text = needs.length
     ? `${needs[0].id} needs you · ${next ? `${next.id} doesn't depend on it` : "the queued tasks wait on it"}`
@@ -251,4 +282,16 @@ const st = StyleSheet.create({
   },
   stripButtonText: { fontSize: 12, color: color.text },
   all: { fontSize: 12, color: color.muted },
+
+  qButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  qButtonOpen: { backgroundColor: color.divider },
+  qButtonIcon: { fontSize: 15, color: color.textDim },
+  qButtonCount: { fontSize: 12, color: color.textSoft, fontVariant: ["tabular-nums"] },
 });

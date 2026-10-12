@@ -33,8 +33,12 @@ defmodule Beamcode.TaskQueueTest do
         {"POST", "/api/shell"} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
 
+          # zsh when there is one, like OpenCode's shell: it's stricter (a glob
+          # that matches nothing is an error).
           {out, code} =
-            System.cmd("sh", ["-c", Jason.decode!(body)["command"]],
+            System.cmd(
+              System.find_executable("zsh") || "sh",
+              ["-c", Jason.decode!(body)["command"]],
               cd: at,
               stderr_to_stdout: true
             )

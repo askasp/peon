@@ -28,6 +28,8 @@ type Props = {
   busy: boolean;
   /** A routine run is working: what you send waits for it. */
   queued?: boolean;
+  /** The empty box's text when there's nothing else to say ("Message"). */
+  hint?: string;
   options: SessionOptions | null;
   agent: string | null;
   model: string | null;
@@ -168,7 +170,7 @@ export function SessionComposer(p: Props) {
             ? "Queue a follow-up…"
             : p.busy
               ? "Follow up"
-              : "Message"
+              : (p.hint ?? "Message")
       }
       placeholderTextColor={dictation.listening ? color.accentText : color.faint}
       multiline

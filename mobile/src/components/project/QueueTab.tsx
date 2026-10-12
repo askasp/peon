@@ -145,12 +145,14 @@ export function TreeCard({
   folder,
   canEdit,
   inChat = false,
+  focusAdd = false,
 }: {
   tree: QueueTree;
   act: QueueAct;
   folder: number;
   canEdit: boolean;
   inChat?: boolean;
+  focusAdd?: boolean;
 }) {
   const wide = useWide();
   const main = tree.ref === "main";
@@ -354,6 +356,7 @@ export function TreeCard({
             placeholder={`Add a task to ${main ? "main" : tree.worktree}`}
             placeholderTextColor={color.faint}
             returnKeyType="done"
+            autoFocus={focusAdd}
             style={st.addInput}
             testID={`queue-add-${tree.ref}`}
           />

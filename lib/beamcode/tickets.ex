@@ -110,10 +110,13 @@ defmodule Beamcode.Tickets do
   def list_trees(_project, []), do: %{}
 
   def list_trees(%Project{} = project, dirs) do
+    # `find`, not a glob: OpenCode's shell may be zsh, which aborts the whole
+    # script on a glob that matches nothing (a tree with no tasks yet).
     script =
       Enum.map_join(dirs, "\n", fn d ->
         "printf '\\036D %s\\n' #{q(d)}; " <>
-          "for f in #{q(d)}/#{@dir}/*.md; do [ -f \"$f\" ] && printf '\\036F\\n' && cat \"$f\"; done"
+          "find #{q(d)}/#{@dir} -maxdepth 1 -name '*.md' -type f 2>/dev/null | sort | " <>
+          "while IFS= read -r f; do printf '\\036F\\n'; cat \"$f\"; done"
       end)
 
     case Opencode.run_shell(project.directory, script <> "\ntrue", 30_000) do
