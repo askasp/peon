@@ -2,7 +2,7 @@ import { useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Button, ErrorLine, Group, Loading, SectionLabel, Segmented, Tap, Toggle } from "../ui";
-import { templateName } from "@/lib/folders";
+import { templateName, homeViewsFor } from "@/lib/folders";
 import { useWide } from "@/lib/useWide";
 import { FileView } from "./FilesTab";
 import { SourceSettings } from "./SourceSettings";
@@ -10,12 +10,18 @@ import { confirm } from "@/lib/confirm";
 import { useLoad } from "@/lib/useLoad";
 import { ago } from "@/lib/time";
 import { color, font } from "@/lib/theme";
+import type { HomeView } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
 type Settings = {
   directory: string;
   skills: { name: string; path: string }[];
-  settings: { scope: string; always_worktree: boolean; protect_default_branch: boolean };
+  settings: {
+    scope: string;
+    always_worktree: boolean;
+    protect_default_branch: boolean;
+    home_view: HomeView;
+  };
   github: { repo: string | null; hint: string | null } | null;
   secrets: { name: string; hint: string | null; set_by: string | null; updated_at: string }[];
   can_edit: boolean;
@@ -87,6 +93,20 @@ export function SettingsTab({
       </View>
 
       {p.kind === "dataset" ? <SourceSettings ctx={ctx} /> : null}
+
+      {homeViewsFor(p.kind).length > 1 ? (
+        <>
+          <Text style={st.heading}>Opens with</Text>
+          <Segmented
+            options={homeViewsFor(p.kind)}
+            value={s.home_view ?? "chat"}
+            onChange={(v) => edit && save({ home_view: v })}
+          />
+          <Text style={st.hint}>
+            What this Project shows when you open it. Its chat is always a tab.
+          </Text>
+        </>
+      ) : null}
 
       <Text style={st.heading}>Instructions</Text>
       <View style={st.group}>

@@ -1,6 +1,6 @@
 // A Project and the template it was made from.
 
-import type { Project } from "./types";
+import type { HomeView, Project } from "./types";
 
 type Kind = Project["kind"];
 
@@ -96,9 +96,62 @@ export const folderHref = (p: Pick<Project, "id" | "kind">) =>
  */
 export const singleChat = (kind: Kind) => kind === "document" || kind === "design" || kind === "dataset";
 
+/**
+ * The Views a single-chat Project can open on (`home_view`), by kind. The
+ * first is its chat; the rest are pinned to a file it makes here.
+ */
+export const homeViewsFor = (kind: Kind): { value: HomeView; label: string }[] =>
+  kind === "dataset"
+    ? [
+        { value: "chat", label: "Chat" },
+        { value: "app", label: "Design" },
+        { value: "table", label: "Data" },
+      ]
+    : kind === "design"
+      ? [
+          { value: "chat", label: "Chat" },
+          { value: "canvas", label: "Design" },
+        ]
+      : kind === "document"
+        ? [
+            { value: "chat", label: "Chat" },
+            { value: "doc", label: "Doc" },
+          ]
+        : [];
+
+/** A short name for an opening View, on the tab and in Settings. */
+export const homeLabel: Record<HomeView, string> = {
+  chat: "Chat",
+  files: "Files",
+  doc: "Doc",
+  canvas: "Design",
+  app: "Design",
+  table: "Data",
+};
+
+/** The file an opening View pins, first in `FolderPane.firstFile`. */
+export const homePattern: Record<HomeView, RegExp | null> = {
+  chat: null,
+  files: null,
+  doc: /\.md$/i,
+  canvas: /\.html?$/i,
+  app: /^app\/.*\.html?$/i,
+  table: /\.(sqlite|db|csv)$/i,
+};
+
+/** The View a single-chat Project actually opens on: its setting, or its chat. */
+export const opensWith = (kind: Kind, homeView?: string | null): HomeView =>
+  homeViewsFor(kind).some((v) => v.value === homeView) ? (homeView as HomeView) : "chat";
+
 /** Where a Project opens first. */
-export const firstTab = (kind: Kind) =>
-  kind === "routine" ? "procedures" : singleChat(kind) ? "chat" : "chats";
+export const firstTab = (kind: Kind, homeView?: string | null) =>
+  kind === "routine"
+    ? "procedures"
+    : singleChat(kind)
+      ? opensWith(kind, homeView) === "chat"
+        ? "chat"
+        : "home"
+      : "chats";
 
 export type ViewKind = "doc" | "canvas" | "app" | "table" | "image" | "code" | "diff";
 

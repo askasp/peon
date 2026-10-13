@@ -301,6 +301,21 @@ defmodule BeamcodeWeb.ProjectChannelTest do
     assert_reply ref, :ok, %{project: %{always_worktree: true}, message: "Saved."}
   end
 
+  test "a Project opens on the View it's set to", %{admin: admin, app: app} do
+    assert app.home_view == "chat"
+    {:ok, _, socket} = join_as(admin, app)
+
+    ref = push(socket, "save_settings", %{"params" => %{"home_view" => "table"}})
+    assert_reply ref, :ok, %{project: %{home_view: "table"}, message: "Saved."}
+
+    ref = push(socket, "settings", %{})
+    assert_reply ref, :ok, %{settings: %{home_view: "table"}}
+
+    # An unknown View doesn't save.
+    ref = push(socket, "save_settings", %{"params" => %{"home_view" => "nope"}})
+    assert_reply ref, :error, %{message: "Could not save."}
+  end
+
   test "runs list team runs and your own private ones only", %{admin: admin, user: user, app: app} do
     insert = fn owner, scope, summary ->
       Beamcode.Repo.insert!(%Beamcode.Schedules.Run{

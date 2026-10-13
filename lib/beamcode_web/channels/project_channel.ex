@@ -994,7 +994,13 @@ defmodule BeamcodeWeb.ProjectChannel do
 
   def handle_in("save_settings", %{"params" => params}, socket) when is_map(params) do
     params =
-      Map.take(params, ["scope", "always_worktree", "protect_default_branch", "queue_auto"])
+      Map.take(params, [
+        "scope",
+        "always_worktree",
+        "protect_default_branch",
+        "queue_auto",
+        "home_view"
+      ])
 
     case ProjectTools.update_settings(socket.assigns.project, params, socket.assigns.user) do
       {result, project, msg} when result in [:ok, :reverted] ->
@@ -1166,7 +1172,8 @@ defmodule BeamcodeWeb.ProjectChannel do
       settings: %{
         scope: project.scope,
         always_worktree: project.always_worktree,
-        protect_default_branch: project.protect_default_branch
+        protect_default_branch: project.protect_default_branch,
+        home_view: project.home_view
       },
       github:
         if(project.kind == "code",
