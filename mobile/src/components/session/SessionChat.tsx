@@ -382,8 +382,9 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const run = runLine(s.run);
   // Messages before the last compaction stay, faded: the agent works from its summary.
   const lastCompaction = blocks.map((b) => b.kind).lastIndexOf("compaction");
-  const current =
-    view && (view === "diff" ? changed > 0 : opened.includes(view)) ? view : changed ? "diff" : opened[0];
+  // Nothing opens by itself: the diff (and files) wait for a click on their card
+  // or tab, so a code chat doesn't shove its diff open the moment it changes.
+  const current = view && (view === "diff" ? changed > 0 : opened.includes(view)) ? view : opened[0];
   const pane = wide && (ops ? ops.side != null : inFolder ? true : !paneHidden && current != null);
   const folderName = s.project?.kind === "home" ? "Home" : s.project?.name;
   const goFolder = (tab: string) =>
@@ -504,6 +505,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
               onPress={openDiff}
               style={[st.diffCard, pane && current === "diff" && st.diffCardOn]}
               kb="row"
+              testID="diff-card"
             >
               <View style={st.diffTop}>
                 <Text style={st.diffBranch} numberOfLines={1}>
@@ -689,7 +691,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
             </View>
           ) : null}
           {current === "diff" ? (
-            <View style={st.diffPane}>
+            <View style={st.diffPane} testID="diff-pane">
               <View style={st.diffHead}>
                 <View style={st.kindChip}>
                   <Text style={st.kindText}>Diff</Text>

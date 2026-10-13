@@ -359,7 +359,19 @@ async function desktop() {
     await start.fill(`Create the file e2e-${stamp}.txt containing the word hello. Use the write tool.`);
     await start.press("Enter");
     await page.waitForURL(/\/app\/session\//, { timeout: 30000 });
-    await waitFor(async () => (await byText(page, "Changed files").count()) > 0, "no diff panel", 120000);
+    // The diff waits for a click: the card at the chat's end opens it.
+    await waitFor(
+      async () => (await visible(page, '[data-testid="diff-card"]').count()) > 0,
+      "no diff card",
+      120000,
+    );
+    expect((await visible(page, '[data-testid="diff-pane"]').count()) === 0, "diff opened by itself");
+    await visible(page, '[data-testid="diff-card"]').first().click();
+    await waitFor(
+      async () => (await visible(page, '[data-testid="diff-pane"]').count()) > 0,
+      "no diff panel",
+      30000,
+    );
     await waitFor(
       async () => (await page.getByText(new RegExp(`e2e-${stamp}\\.txt`)).count()) > 0,
       "file not in diff",
