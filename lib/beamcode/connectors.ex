@@ -345,6 +345,28 @@ defmodule Beamcode.Connectors do
     end
   end
 
+  @doc """
+  Whether the agent may send gateway tool `name` now. OpenCode asks a person
+  first for an `ask` call only once opencode.json has its rule; a file the
+  agent just wrote doesn't, so this writes the rules and refuses the call:
+  the next try waits for a person.
+  """
+  def gateway_ready?(project, name) do
+    asks =
+      Enum.any?(for_project(project), fn c ->
+        Enum.any?(c.tools, &(&1.permission == "ask" and tool_name(c, &1) == name))
+      end)
+
+    if asks and not Workspace.asks?(project, "#{Workspace.gateway_server()}_#{name}") do
+      sync_project(project)
+
+      {:error,
+       "#{name} needs a person's approval, which was only just set up. Call it again: they'll be asked first."}
+    else
+      :ok
+    end
+  end
+
   @doc "Sends call `t` of service `c`. Returns `{:ok, status, body}` or `{:error, message}`."
   def run(c, t, args) do
     params = path_params(t)

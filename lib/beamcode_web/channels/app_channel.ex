@@ -10,6 +10,8 @@ defmodule BeamcodeWeb.AppChannel do
     * `inbox` → `{items}`
     * `permission` `{session_id, id, decision}` → `{}` (decision: once | always | reject)
     * `dismiss_run` `{id}` → `{}`
+    * `inbox_continue` / `inbox_skip` `{id}` → `{}`: answers a waiting run from the
+      Inbox (a chained step has no chat to answer it in)
     * `new_session` `{project_id, text?, worktree?, branch?}` → `{session_id}`; `branch`
       continues that branch in its worktree (made when it has none)
     * `routine` `{project_id}` → `{project, runs}`
@@ -152,6 +154,27 @@ defmodule BeamcodeWeb.AppChannel do
       {:reply, {:ok, %{}}, socket}
     else
       {:reply, {:error, %{message: "Run not found."}}, socket}
+    end
+  end
+
+  def handle_in("inbox_" <> action, %{"id" => id}, socket) when action in ["continue", "skip"] do
+    user = socket.assigns.user
+
+    with %{status: "waiting"} = run <-
+           Enum.find(Schedules.inbox_runs(user, Projects.list_visible(user)), &(&1.id == id)),
+         %{} = project <- Projects.get_project(run.project_id),
+         true <- ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        result = if action == "continue", do: Runs.continue(run), else: Runs.skip(run)
+
+        case result do
+          {:ok, _} -> {:ok, %{}}
+          {:error, reason} -> error(reason)
+        end
+      end)
+    else
+      false -> {:reply, {:error, %{message: "You can't change this Project."}}, socket}
+      _ -> {:reply, {:error, %{message: "This run isn't waiting."}}, socket}
     end
   end
 

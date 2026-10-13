@@ -43,8 +43,12 @@ defmodule BeamcodeWeb.McpController do
 
   defp rpc(_project, %{"id" => id, "method" => "ping"}), do: ok(id, %{})
 
-  defp rpc(project, %{"id" => id, "method" => "tools/list"}),
-    do: ok(id, %{tools: Connectors.mcp_tools(project) ++ SourceTools.mcp_tools(project)})
+  # The agent may have just written an API call file: its permissions go
+  # into opencode.json before it sees the tools.
+  defp rpc(project, %{"id" => id, "method" => "tools/list"}) do
+    Connectors.sync_project(project)
+    ok(id, %{tools: Connectors.mcp_tools(project) ++ SourceTools.mcp_tools(project)})
+  end
 
   defp rpc(project, %{
          "id" => id,
@@ -62,7 +66,11 @@ defmodule BeamcodeWeb.McpController do
   end
 
   defp rpc(project, %{"id" => id, "method" => "tools/call", "params" => params}) do
-    case Connectors.call(project, params["name"], params["arguments"]) do
+    result =
+      with :ok <- Connectors.gateway_ready?(project, params["name"]),
+           do: Connectors.call(project, params["name"], params["arguments"])
+
+    case result do
       {:ok, status, body} ->
         ok(id, %{
           content: [%{type: "text", text: "HTTP #{status}\n#{body}"}],

@@ -158,4 +158,28 @@ defmodule Beamcode.ApiCallsTest do
     assert [%{name: "front", source: "project"}] =
              Enum.filter(Connectors.all_for(project), &(&1.name == "front"))
   end
+
+  test "an ask call the agent just wrote is refused until OpenCode will ask", %{
+    project: project,
+    files: files
+  } do
+    desk = ~s({"baseUrl": "https://desk.test", "auth": {"type": "none"},
+      "tools": {"comment": ["POST", "/comments", "ask"], "list": ["GET", "/m", "allow"]}})
+
+    Agent.update(files, &Map.put(&1, {@dir, ".peon/api/desk.json"}, desk))
+    Connectors.changed(project)
+
+    assert :ok = Connectors.gateway_ready?(project, "desk_list")
+    assert {:error, msg} = Connectors.gateway_ready?(project, "desk_comment")
+    assert msg =~ "approval"
+
+    config = Agent.get(files, &Map.get(&1, {@dir, "opencode.json"})) |> Jason.decode!()
+
+    assert Enum.any?(
+             config["permissions"],
+             &match?(%{"action" => "gateway_desk_comment", "effect" => "ask"}, &1)
+           )
+
+    assert :ok = Connectors.gateway_ready?(project, "desk_comment")
+  end
 end

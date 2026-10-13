@@ -208,13 +208,37 @@ function InboxCard({ item }: { item: InboxItem }) {
         </Text>
         <ErrorLine message={error} />
         <View style={st.actions}>
-          <Button
-            label="Open"
-            height={44}
-            style={{ flex: 1 }}
-            disabled={!run.session_id}
-            onPress={() => router.push(`/session/${run.session_id}`)}
-          />
+          {waiting && run.waiting?.kind === "before" ? (
+            <>
+              <Button
+                label="Go ahead"
+                height={44}
+                style={{ flex: 1 }}
+                busy={busy === "continue"}
+                onPress={() => act("continue", () => ask("inbox_continue", { id: run.id }))}
+                testID="inbox-continue"
+              />
+              <Button
+                label="Skip"
+                kind="secondary"
+                height={44}
+                style={{ flex: 1 }}
+                busy={busy === "skip"}
+                onPress={() => act("skip", () => ask("inbox_skip", { id: run.id }))}
+                testID="inbox-skip"
+              />
+            </>
+          ) : null}
+          {run.session_id || !waiting ? (
+            <Button
+              label="Open"
+              kind={waiting ? "secondary" : undefined}
+              height={44}
+              style={{ flex: 1 }}
+              disabled={!run.session_id}
+              onPress={() => router.push(`/session/${run.session_id}`)}
+            />
+          ) : null}
           <Button
             label="Dismiss"
             kind="secondary"

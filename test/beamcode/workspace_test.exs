@@ -50,4 +50,32 @@ defmodule Beamcode.WorkspaceTest do
     assert_received {:wrote, "/tmp/chatos-test/site/AGENTS.md", "# Designs" <> _}
     assert_received {:wrote, "/tmp/chatos-test/site/.opencode/skill/html-design/SKILL.md", _}
   end
+
+  test "the Procedures section Peon wrote is kept current, the rest stays" do
+    test = self()
+
+    old =
+      "# ops\n\nOur notes.\n\n## Procedures\n\nA procedure is one file, an old text.\n\n" <>
+        "### Blocks\n\nOld.\n\n## Tone\n\nBe brief.\n"
+
+    setup_stub(fn conn ->
+      case {conn.method, conn.request_path} do
+        {"GET", "/api/fs/read/AGENTS.md"} ->
+          Plug.Conn.send_resp(conn, 200, old)
+
+        {"POST", "/api/experimental/fs/write"} ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(test, {:wrote, body})
+          data(conn, %{})
+      end
+    end)
+
+    project = %Beamcode.Projects.Project{directory: "/srv/ops", kind: "routine"}
+    Workspace.refresh_conventions(project)
+    assert_received {:wrote, new}
+    assert new =~ "# ops\n\nOur notes.\n\n## Procedures\n\nA procedure is one file"
+    assert new =~ "### Since the last run"
+    assert String.ends_with?(new, "\n\n## Tone\n\nBe brief.\n")
+    refute new =~ "an old text"
+  end
 end

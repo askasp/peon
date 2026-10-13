@@ -40,8 +40,18 @@ defmodule Beamcode.Procedures.Runs do
     * `:key` — the schedule's name ("manual" otherwise), `:scope`
   """
   def start(%Project{} = project, user, procedure, inputs \\ %{}, opts \\ []) do
-    with {:ok, proc} <- resolve(project, procedure),
-         {:ok, sid} <- chat(project, user, proc, opts) do
+    with {:ok, proc} <- resolve(project, procedure) do
+      values = inputs(proc, inputs, project)
+
+      case done_before(project, proc, values, Keyword.get(opts, :trigger, "button")) do
+        nil -> launch(project, user, proc, values, opts)
+        prev -> {:ok, already_done(project, user, proc, values, prev, opts)}
+      end
+    end
+  end
+
+  defp launch(project, user, proc, values, opts) do
+    with {:ok, sid} <- chat(project, user, proc, opts) do
       trigger = Keyword.get(opts, :trigger, "button")
       parent = opts[:parent]
       key = Keyword.get(opts, :key, "manual")
@@ -55,7 +65,7 @@ defmodule Beamcode.Procedures.Runs do
           session_id: sid,
           procedure: proc.name,
           trigger: trigger,
-          inputs: inputs(proc, inputs, project),
+          inputs: values,
           ticket: opts[:ticket],
           parent_id: parent && parent.id,
           # Only scheduled runs come to the Inbox when they finish; a person
@@ -67,6 +77,59 @@ defmodule Beamcode.Procedures.Runs do
       changed(run)
       {:ok, step(run, proc, 0)}
     end
+  end
+
+  # A chain or a schedule never acts twice on the same key (a charge, a
+  # message): the last finished run for it, unless its steps were skipped. A
+  # person starting it by hand always can.
+  defp done_before(_project, %{key: nil}, _values, _trigger), do: nil
+
+  defp done_before(project, proc, values, trigger) when trigger in ["chain", "schedule"] do
+    case values[proc.key] do
+      v when is_binary(v) and v != "" ->
+        from(r in Run,
+          where:
+            r.project_id == ^project.id and r.procedure == ^proc.name and r.status == "done" and
+              fragment("?->>? = ?", r.inputs, ^proc.key, ^v) and
+              fragment(
+                "not exists (select 1 from unnest(?) s where s->>'status' = 'skipped')",
+                r.steps
+              ),
+          order_by: [desc: r.inserted_at],
+          limit: 1
+        )
+        |> Repo.one()
+
+      _ ->
+        nil
+    end
+  end
+
+  defp done_before(_project, _proc, _values, _trigger), do: nil
+
+  # A run that did nothing, so the chain sees why.
+  defp already_done(project, user, proc, values, prev, opts) do
+    parent = opts[:parent]
+
+    run =
+      Repo.insert!(%Run{
+        project_id: project.id,
+        owner_id: user && user.id,
+        schedule_key: Keyword.get(opts, :key, "manual"),
+        scope: Keyword.get(opts, :scope, "team"),
+        procedure: proc.name,
+        trigger: Keyword.get(opts, :trigger, "button"),
+        inputs: values,
+        parent_id: parent && parent.id,
+        seen: true,
+        status: "done",
+        summary: "Already done for #{proc.key} #{values[proc.key]} (run #{prev.id}).",
+        finished_at: DateTime.utc_now(:second),
+        steps: Enum.map(proc.steps, &%{"name" => &1.name, "status" => "skipped"})
+      })
+
+    changed(run)
+    run
   end
 
   defp resolve(project, name) when is_binary(name) or is_nil(name) do
@@ -404,6 +467,25 @@ defmodule Beamcode.Procedures.Runs do
 
   defp prompt_only(s, values), do: Procedures.fill(s.prompt || "Do the #{s.name} step.", values)
 
+  # Each value filled in. A value that is only a placeholder with no value is
+  # left out (an optional param); one inside text is an error, so a link never
+  # goes out with "{customer.id}" in it.
+  defp fill_map(map, values) do
+    Enum.reduce_while(map, {:ok, %{}}, fn {k, v}, {:ok, acc} ->
+      v = to_string(v)
+
+      case Procedures.fill_strict(v, values) do
+        {:ok, text} ->
+          {:cont, {:ok, Map.put(acc, k, text)}}
+
+        error ->
+          if Regex.match?(~r/^\{[\w.-]+\}$/, String.trim(v)),
+            do: {:cont, {:ok, acc}},
+            else: {:halt, error}
+      end
+    end)
+  end
+
   # Inputs and what earlier steps returned, for `{placeholders}`.
   defp fill_values(run), do: Map.merge(run.inputs || %{}, run.outputs || %{})
 
@@ -482,15 +564,17 @@ defmodule Beamcode.Procedures.Runs do
     end
   end
 
+  # `approved: [{ … }]` is a list of rows; `customer: { … }` is one object.
   defp returns(proc, name) do
     fields = Map.get(proc.outputs, name, [])
     shape = "{" <> Enum.map_join(fields, ", ", &~s("#{&1}": …)) <> "}"
+    one = is_map(get_in(proc.front, ["outputs", name]))
 
     """
     End your reply with the result as JSON in a peon-output block:
 
     ```peon-output
-    {"#{name}": [#{shape}, …]}
+    {"#{name}": #{if one, do: shape, else: "[#{shape}, …]"}}
     ```
     """
   end
@@ -594,15 +678,24 @@ defmodule Beamcode.Procedures.Runs do
 
     case st["pending"] || [] do
       [] ->
-        failed = Enum.count(st["results"] || [], &(&1["status"] == "failed"))
+        results = st["results"] || []
+        failed = Enum.count(results, &(&1["status"] == "failed"))
 
         text =
           "#{length(st["children"] || [])} run#{if(length(st["children"] || []) == 1, do: "", else: "s")}"
 
         text = if failed > 0, do: text <> " · #{failed} failed", else: text
 
+        # Every child skipped (by a person, or done before): so was this step.
+        status =
+          cond do
+            failed > 0 -> "partial"
+            results != [] and Enum.all?(results, & &1["skipped"]) -> "skipped"
+            true -> "done"
+          end
+
         done_step(run, proc, i, %{
-          "status" => if(failed > 0, do: "partial", else: "done"),
+          "status" => status,
           "text" => text,
           "finished" => now()
         })
@@ -612,14 +705,40 @@ defmodule Beamcode.Procedures.Runs do
         project = project(run)
         values = Map.merge(values(run), item || %{})
         fill = Map.merge(fill_values(run), item || %{})
-        with_values = Map.new(s.with, fn {k, v} -> {k, Procedures.fill(to_string(v), fill)} end)
 
-        case start(project, owner(run), s.run, Map.merge(values, with_values),
-               trigger: "chain",
-               parent: run,
-               key: run.schedule_key,
-               scope: run.scope
-             ) do
+        started =
+          with {:ok, with_values} <- fill_map(s.with, fill) do
+            start(project, owner(run), s.run, Map.merge(values, with_values),
+              trigger: "chain",
+              parent: run,
+              key: run.schedule_key,
+              scope: run.scope
+            )
+          end
+
+        case started do
+          # Done already (nothing to wait for, or done before): record it now,
+          # since it finished before this step knew about it.
+          {:ok, %Run{status: status} = child} when status in ["done", "failed"] ->
+            run =
+              run
+              |> take_outputs(child)
+              |> put_step(i, %{"children" => (st["children"] || []) ++ [child.id]})
+
+            child_done(
+              run,
+              proc,
+              i,
+              %{
+                "id" => child.id,
+                "status" => child.status,
+                "summary" => child.summary,
+                "error" => child.error,
+                "skipped" => skipped?(child)
+              },
+              rest
+            )
+
           {:ok, child} ->
             put_step(run, i, %{
               "pending" => rest,
@@ -640,13 +759,7 @@ defmodule Beamcode.Procedures.Runs do
          {:ok, proc} <- proc_for(parent),
          st when is_map(st) <- Enum.at(parent.steps, parent.step),
          true <- child.id in (st["children"] || []) do
-      # The child's outputs, as "<procedure>.<name>" and "<name>".
-      outputs =
-        for {k, v} <- child.outputs || %{}, reduce: parent.outputs || %{} do
-          acc -> acc |> Map.put("#{child.procedure}.#{k}", v) |> Map.put(k, v)
-        end
-
-      parent = save(parent, outputs: outputs)
+      parent = take_outputs(parent, child)
 
       child_done(
         parent,
@@ -656,11 +769,24 @@ defmodule Beamcode.Procedures.Runs do
           "id" => child.id,
           "status" => child.status,
           "summary" => child.summary,
-          "error" => child.error
+          "error" => child.error,
+          "skipped" => skipped?(child)
         },
         st["pending"] || []
       )
     end
+  end
+
+  defp skipped?(run), do: Enum.any?(run.steps || [], &(&1["status"] == "skipped"))
+
+  # The child's outputs, as "<procedure>.<name>" and "<name>".
+  defp take_outputs(parent, child) do
+    outputs =
+      for {k, v} <- child.outputs || %{}, reduce: parent.outputs || %{} do
+        acc -> acc |> Map.put("#{child.procedure}.#{k}", v) |> Map.put(k, v)
+      end
+
+    save(parent, outputs: outputs)
   end
 
   defp child_done(parent, proc, i, result, pending) do
@@ -927,8 +1053,8 @@ defmodule Beamcode.Procedures.Runs do
            if(t.permission == "deny",
              do: {:error, "#{connector} · #{tool} is denied."},
              else: :ok
-           ) do
-      params = Map.new(s.params, fn {k, v} -> {k, Procedures.fill(to_string(v), values)} end)
+           ),
+         {:ok, params} <- fill_map(s.params, values) do
       {idempotency, params} = Map.pop(params, "idempotency_key")
       placeholders = for [_, p] <- Regex.scan(~r/\{(\w+)\}/, t.path), do: p
       {path_args, rest} = Map.split(params, placeholders)

@@ -645,6 +645,16 @@ defmodule Beamcode.Workspace do
     end
   end
 
+  @doc "Whether the Project's opencode.json makes OpenCode ask before `action`."
+  def asks?(%Project{directory: dir}, action) do
+    with {:ok, body} when is_binary(body) <- Opencode.read_file(dir, "opencode.json"),
+         {:ok, %{"permissions" => rules}} when is_list(rules) <- Jason.decode(body) do
+      Enum.any?(rules, &(is_map(&1) and &1["action"] == action and &1["effect"] == "ask"))
+    else
+      _ -> false
+    end
+  end
+
   defp routines_agents_md do
     """
     # Routines

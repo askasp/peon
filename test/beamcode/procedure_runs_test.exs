@@ -2,6 +2,7 @@ defmodule Beamcode.ProcedureRunsTest do
   use Beamcode.DataCase, async: false
 
   import Beamcode.OpencodeStub
+  import Ecto.Query, only: [from: 2]
   import BeamcodeWeb.ChannelCase, only: [project_fixture: 2]
   import BeamcodeWeb.ConnCase, only: [user_fixture: 0]
   alias Beamcode.Procedures.Runs
@@ -151,6 +152,22 @@ defmodule Beamcode.ProcedureRunsTest do
   ---
   """
 
+  @comment_m1 """
+  ---
+  name: comment-m1
+  run: refund-one
+  with: { message: m1, email: "ola@x.no" }
+  ---
+  """
+
+  @pay_ch9 """
+  ---
+  name: pay-ch9
+  run: pay
+  with: { charge: ch_9, amount: "10" }
+  ---
+  """
+
   @stripe ~s({"name": "stripe", "baseUrl": "https://api.stripe.test",
     "auth": {"type": "bearer", "secret": "STRIPE_KEY"},
     "tools": {"refunds_create": ["POST", "/v1/refunds", "ask", "Refund a charge"],
@@ -189,6 +206,8 @@ defmodule Beamcode.ProcedureRunsTest do
       ".peon/procedures/pay.md" => @pay,
       ".peon/procedures/nuke.md" => @nuke,
       ".peon/procedures/refund-one.md" => @refund_one,
+      ".peon/procedures/comment-m1.md" => @comment_m1,
+      ".peon/procedures/pay-ch9.md" => @pay_ch9,
       "connectors/stripe.json" => @stripe
     }
 
@@ -455,6 +474,7 @@ defmodule Beamcode.ProcedureRunsTest do
         Agent.update(calls, &(&1 ++ [{conn.method, conn.request_path, sent, key}]))
 
         case conn.request_path do
+          "/v1/customers/search" when sent == %{"q" => "nobody@x.no"} -> Req.Test.json(conn, %{})
           "/v1/customers/search" -> Req.Test.json(conn, %{"id" => "cus_7", "name" => "Ola"})
           _ -> Req.Test.json(conn, %{"id" => "re_1", "status" => "succeeded"})
         end
@@ -502,6 +522,50 @@ defmodule Beamcode.ProcedureRunsTest do
              ] = Agent.get(calls, & &1)
 
       assert hd(run.steps)["text"] =~ "200 · cus_7\n\n```json"
+    end
+
+    test "a child that finishes at once moves the chain on; a chain never acts twice on a key",
+         %{user: user, folder: folder, calls: calls} do
+      {:ok, run} = Runs.start(folder, user, "comment-m1", %{})
+      assert %{status: "done", outputs: %{"customer" => %{"id" => "cus_7"}}} = reload(run)
+      assert length(Agent.get(calls, & &1)) == 2
+
+      {:ok, again} = Runs.start(folder, user, "comment-m1", %{})
+      assert %{status: "done"} = again = reload(again)
+      assert length(Agent.get(calls, & &1)) == 2
+
+      [child] = Repo.all(from r in Run, where: r.parent_id == ^again.id)
+      assert child.summary =~ "Already done for message m1"
+
+      # By hand it runs again.
+      {:ok, _} = Runs.start(folder, user, "refund-one", %{"message" => "m1", "email" => "a@b.no"})
+      assert length(Agent.get(calls, & &1)) == 4
+    end
+
+    test "a skipped child doesn't count as done", %{user: user, folder: folder, calls: calls} do
+      {:ok, run} = Runs.start(folder, user, "pay-ch9", %{})
+      [child] = Repo.all(from r in Run, where: r.parent_id == ^run.id)
+      assert child.status == "waiting"
+      {:ok, _} = Runs.skip(child)
+
+      assert %{status: "done", steps: [%{"status" => "skipped"}]} = reload(run)
+
+      {:ok, again} = Runs.start(folder, user, "pay-ch9", %{})
+      [child] = Repo.all(from r in Run, where: r.parent_id == ^again.id)
+      assert child.status == "waiting"
+      assert Agent.get(calls, & &1) == []
+    end
+
+    test "a placeholder with no value stops the call", %{
+      user: user,
+      folder: folder,
+      calls: calls
+    } do
+      {:ok, run} =
+        Runs.start(folder, user, "refund-one", %{"message" => "m1", "email" => "nobody@x.no"})
+
+      assert %{status: "failed", error: "Comment: No value for {customer.id}."} = run
+      assert [{"GET", "/v1/customers/search", _, _}] = Agent.get(calls, & &1)
     end
 
     test "a denied tool is never called", %{user: user, folder: folder, calls: calls} do

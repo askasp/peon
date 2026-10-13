@@ -763,13 +763,33 @@ defmodule Beamcode.Procedures do
   (seconds), `date` (2026-10-12) or `iso`. Unknown placeholders stay as they are.
   """
   def fill(text, values) do
-    Regex.replace(~r/\{([\w-]+(?:\.[\w-]+)*)\}/, text, fn whole, path ->
+    Regex.replace(placeholder(), text, fn whole, path ->
       case lookup(values, String.split(path, ".")) do
         {:ok, value} -> text(value)
         :error -> whole
       end
     end)
   end
+
+  @doc """
+  `fill/2` for what a step sends (API call params, a chained procedure's
+  inputs): `{:error, "No value for {customer.id}."}` when a placeholder has
+  none or a blank one, so nothing goes out with one in it.
+  """
+  def fill_strict(text, values) do
+    missing =
+      for [whole, path] <- Regex.scan(placeholder(), text),
+          lookup(values, String.split(path, ".")) in [:error, {:ok, ""}, {:ok, []}],
+          uniq: true,
+          do: whole
+
+    case missing do
+      [] -> {:ok, fill(text, values)}
+      _ -> {:error, "No value for #{Enum.join(missing, ", ")}."}
+    end
+  end
+
+  defp placeholder, do: ~r/\{([\w-]+(?:\.[\w-]+)*)\}/
 
   @modifiers ~w(minor unix date iso)
 
@@ -959,9 +979,11 @@ defmodule Beamcode.Procedures do
     `on_fail: continue`) runs another procedure; `queue: ship` with
     `for_each:` and `title:` adds tickets in a code Project; `call:
     stripe.create_refund` with `params:` and `confirm:` sends one of the
-    Project's API calls (`.peon/api/stripe.json`) with no model. `key` is the input that identifies the thing acted on
-    (a charge id, not a name): never act twice on the same key. Notes a step
-    can be handed live in `.peon/*.md`.
+    Project's API calls (`.peon/api/stripe.json`) with no model. `key` is
+    the input that identifies the thing acted on (a charge id, a message id,
+    not a name): a chain or schedule skips a key that already ran, so nothing
+    is done twice; a person can still run it by hand. Notes a step can be
+    handed live in `.peon/*.md`.
 
     ### Since the last run
 
@@ -1022,6 +1044,17 @@ defmodule Beamcode.Procedures do
 
     When a lookup can find nothing or several, put a prompt step between
     (`returns:` the one it picked) instead of trusting the first match.
+
+    A prompt step that works on what a call fetched (`{mail}`) should say to
+    use only that and not fetch more: an empty list means nothing is new.
+
+    ### API calls
+
+    #{String.trim_trailing(Connectors.format_doc())}
+
+    To add one: read the API's docs, write the file, then try one read call
+    through its gateway tool (never a write). Use `call:` steps for calls
+    that need no judgment; a prompt step can use the gateway tools.
 
     ### Starting the next procedure
 
