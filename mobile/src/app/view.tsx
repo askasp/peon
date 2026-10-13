@@ -34,7 +34,7 @@ export default function ViewScreen() {
   const ch = useChannel(`project:${project}`);
   const call = useMemo(() => treeCall(ch.call, tree), [ch.call, tree]);
   const folder = usePeon((s) => s.projects.find((p) => String(p.id) === project));
-  // A Code Folder's main changes through chats.
+  // A Code Project's main changes through chats.
   const readOnly = folder?.kind === "code" && tree === "main";
   const kind: ViewKind = diff ? "diff" : viewFor(path);
   const [editing, setEditing] = useState<string | null>(null);
@@ -139,7 +139,7 @@ export default function ViewScreen() {
         <View style={[st.ask, { paddingBottom: Math.max(insets.bottom, 12) + 10 }]}>
           <Tap
             onPress={() => {
-              // A single-chat Folder: back to its chat, the file in the composer.
+              // A single-chat Project: back to its chat, the file in the composer.
               if (folder && singleChat(folder.kind)) {
                 attachToChat(project, { path, view: null });
                 router.back();

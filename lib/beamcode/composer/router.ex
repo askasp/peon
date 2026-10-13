@@ -52,7 +52,7 @@ defmodule Beamcode.Composer.Router do
     Continue one of the recent sessions ("tell the checkout session to…",
     "in that session, also…", or a follow-up to the current session).
   - {"action": "run_routine", "routine": NAME, "procedure": NAME, "inputs": {INPUT: VALUE}}
-    Run one of a routine's procedures now (the routine is its Folder). Fill
+    Run one of a routine's procedures now (the routine is its Project). Fill
     inputs only from that procedure's listed inputs and options; leave the
     rest out.
   - {"action": "status", "project": NAME or null, "scope": "latest" or "overview"}
@@ -166,7 +166,7 @@ defmodule Beamcode.Composer.Router do
     end
   end
 
-  ## Folder and model
+  ## Project and model
 
   defp ensure_folder do
     root = Workspace.root()

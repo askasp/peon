@@ -39,7 +39,7 @@ defmodule Beamcode.SourceTools do
               args: %{type: "object"},
               source: %{
                 type: "string",
-                description: "Needed when the Folder has more than one source"
+                description: "Needed when the Project has more than one source"
               }
             },
             required: ["action"]

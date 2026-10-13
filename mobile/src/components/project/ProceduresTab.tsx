@@ -15,14 +15,14 @@ import type { ProjectCtx } from "./types";
 
 type Values = Record<string, string | string[]>;
 
-/** The procedure a schedule runs: its own, the one its prompt names, or the Folder's first. */
+/** The procedure a schedule runs: its own, the one its prompt names, or the Project's first. */
 export function scheduleProcedure(s: Schedule, procedures: Procedure[]) {
   const named = s.procedure || /^\/([\w.-]+)/.exec(s.prompt ?? "")?.[1];
   return named ?? (s.prompt?.trim() ? null : (procedures[0]?.name ?? null));
 }
 
 /**
- * A Folder's procedures (U1, U2): one row each with how it starts, its steps
+ * A Project's procedures (U1, U2): one row each with how it starts, its steps
  * and its last run; a row opens its steps (U3, U4). Below, the notes a step
  * can be handed and New procedure.
  */
@@ -37,7 +37,7 @@ export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => v
   const { data: runs } = useLoad(() => ctx.call<{ runs: Run[] }>("runs").then((r) => r.runs), [ctx.changed]);
   const single = singleChat(ctx.project.kind);
 
-  // Where a started run shows: the Folder's chat, or the new chat it made.
+  // Where a started run shows: the Project's chat, or the new chat it made.
   const ran = (sessionId: string | null | undefined) => {
     if (single) onRan?.();
     else if (sessionId) router.push(`/session/${sessionId}`);
@@ -87,7 +87,7 @@ export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => v
       )}
 
       <View style={st.foot}>
-        {notes?.length ? <Text style={st.footLabel}>Folder notes</Text> : null}
+        {notes?.length ? <Text style={st.footLabel}>Project notes</Text> : null}
         {(notes ?? []).map((n) => (
           <Text key={n} style={st.note}>
             {n}

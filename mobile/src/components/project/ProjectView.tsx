@@ -6,6 +6,7 @@ import { notify } from "@/lib/notice";
 import { Icon } from "../Icon";
 import { Letter } from "../desktop/Sidebar";
 import { FilesTab } from "./FilesTab";
+import { ApiCallsTab } from "./ApiCallsTab";
 import { ProceduresTab } from "./ProceduresTab";
 import { SchedulesTab } from "./SchedulesTab";
 import { SessionsTab } from "./SessionsTab";
@@ -26,7 +27,7 @@ import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
 import type { Project, SessionSummary } from "@/lib/types";
 
-type Tab = "chat" | "chats" | "files" | "procedures" | "queue" | "tasks" | "settings";
+type Tab = "chat" | "chats" | "files" | "procedures" | "api" | "queue" | "tasks" | "settings";
 type Section = "general" | "skills" | "schedules";
 
 // Old links (?tab=skills) land on the tab that has them now.
@@ -37,7 +38,7 @@ const legacy: Record<string, [Tab, Section?]> = {
   schedules: ["settings", "schedules"],
 };
 
-/** A Folder: the same four tabs whatever template it was made from. */
+/** A Project: the same four tabs whatever template it was made from. */
 export function ProjectView({
   id,
   initialTab,
@@ -59,6 +60,7 @@ export function ProjectView({
     admin: boolean;
     procedures: Procedure[];
     procedures_error: string | null;
+    api_calls?: number;
   }>(`project:${id}`, {
     changed: () => setChanged((n) => n + 1),
     project: ({ project }) => setProject(project),
@@ -67,7 +69,7 @@ export function ProjectView({
   const p = (project?.id === Number(id) ? project : null) ?? ch.reply?.project ?? stored;
   useCurrent(p?.id);
   const routine = p?.kind === "routine";
-  // Design, Document, Dataset and Operations Folders are one chat beside their files.
+  // Design, Document, Dataset and Operations Projects are one chat beside their files.
   const single = p ? singleChat(p.kind) : false;
   // The procedures it can run, as joined and when the chat may have added one.
   const [reloaded, setProcedures] = useState<{ list: Procedure[]; error: string | null } | null>(null);
@@ -79,34 +81,46 @@ export function ProjectView({
       .then((r) => setProcedures({ list: r.procedures, error: r.error }))
       .catch(() => {});
   }, [call]);
-  // Operations and Code Folders always have the tab; others once they have their own procedure.
+  // Operations and Code Projects always have the tab; others once they have their own procedure.
   const proceduresTab =
     routine || p?.kind === "code" || procedures.some((x) => x.source === "folder")
       ? [{ value: "procedures" as Tab, label: "Procedures" }]
+      : [];
+  const [from, fromSection] = legacy[initialTab ?? ""] ?? [initialTab as Tab | undefined];
+  const [picked, setTab] = useState<Tab | null>(from ?? null);
+  // Operations, Code and Dataset Projects always have API calls; others once
+  // they have one, or while it's open (from Settings).
+  const apiTab =
+    routine ||
+    p?.kind === "code" ||
+    p?.kind === "dataset" ||
+    (ch.reply?.api_calls ?? 0) > 0 ||
+    picked === "api"
+      ? [{ value: "api" as Tab, label: "API calls" }]
       : [];
   // Other schedules are under Settings.
   const tabs: { value: Tab; label: string }[] = single
     ? [
         { value: "chat", label: "Chat" },
         ...proceduresTab,
+        ...apiTab,
         { value: "files", label: "Files" },
         { value: "settings", label: "Settings" },
       ]
     : [
         { value: "chats", label: "Chats" },
         { value: "files", label: "Files" },
-        // Code Folders queue tasks by worktree; the others keep one list.
+        // Code Projects queue tasks by worktree; the others keep one list.
         p?.kind === "code" ? { value: "queue", label: "Queue" } : { value: "tasks", label: "Tasks" },
         ...proceduresTab,
+        ...apiTab,
         { value: "settings", label: "Settings" },
       ];
-  const [from, fromSection] = legacy[initialTab ?? ""] ?? [initialTab as Tab | undefined];
-  const [picked, setTab] = useState<Tab | null>(from ?? null);
   const [section, setSection] = useState<Section>(fromSection ?? "general");
   const tab =
     picked && tabs.some((t) => t.value === picked) ? picked : p ? (firstTab(p.kind) as Tab) : "chats";
 
-  // The one chat (made the first time), and the chats the Folder had before.
+  // The one chat (made the first time), and the chats the Project had before.
   const { data: chat, error: chatError } = useLoad(
     () =>
       single
@@ -150,7 +164,7 @@ export function ProjectView({
         }
       : null;
 
-  const name = p?.kind === "home" ? "Home" : (p?.name ?? "Folder");
+  const name = p?.kind === "home" ? "Home" : (p?.name ?? "Project");
   const sub = p
     ? [
         routine
@@ -184,12 +198,12 @@ export function ProjectView({
       ) : section === "schedules" ? (
         <SchedulesTab ctx={c} />
       ) : (
-        <SettingsTab ctx={c} onSection={setSection} />
+        <SettingsTab ctx={c} onSection={setSection} onApi={() => setTab("api")} />
       )}
     </View>
   );
 
-  // A single-chat Folder opens as its chat: beside its files on the desktop
+  // A single-chat Project opens as its chat: beside its files on the desktop
   // (Settings is a button), Chat · Files · Settings on the phone.
   if (single && p) {
     const settings = tab === "settings";
@@ -200,7 +214,7 @@ export function ProjectView({
           <View style={st.singleHead}>
             <Letter name={name} size={32} />
             <View style={{ gap: 1, minWidth: 0, flexShrink: 1 }}>
-              <Text style={st.crumb}>Folders › {templateName[p.kind]}</Text>
+              <Text style={st.crumb}>Projects › {templateName[p.kind]}</Text>
               <Text style={st.singleTitle} numberOfLines={1}>
                 {name}
               </Text>
@@ -216,6 +230,15 @@ export function ProjectView({
                 testID="folder-procedures"
               >
                 <Text style={st.settingsText}>{tab === "procedures" ? "Chat" : "Procedures"}</Text>
+              </Tap>
+            ) : null}
+            {apiTab.length ? (
+              <Tap
+                onPress={() => setTab(tab === "api" ? "chat" : "api")}
+                style={st.settingsButton}
+                testID="folder-api"
+              >
+                <Text style={st.settingsText}>{tab === "api" ? "Chat" : "API calls"}</Text>
               </Tap>
             ) : null}
             <Tap
@@ -234,7 +257,7 @@ export function ProjectView({
           </View>
         ) : (
           <>
-            <BackHeader label="Folders" />
+            <BackHeader label="Projects" />
             <View style={st.head}>
               <View style={st.titleRow}>
                 <Letter name={name} size={44} />
@@ -261,6 +284,8 @@ export function ProjectView({
           settingsView(ctx)
         ) : tab === "procedures" ? (
           <ProceduresTab ctx={ctx} onRan={() => setTab("chat")} />
+        ) : tab === "api" ? (
+          <ApiCallsTab ctx={ctx} onRan={() => setTab("chat")} />
         ) : tab === "files" && !wide ? (
           <FilesTab ctx={ctx} />
         ) : !chat ? (
@@ -286,7 +311,7 @@ export function ProjectView({
         <View style={st.wideHead}>
           <View style={st.headTop}>
             <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
-              <Text style={st.crumb}>Folders › {p ? templateName[p.kind] : ""}</Text>
+              <Text style={st.crumb}>Projects › {p ? templateName[p.kind] : ""}</Text>
               <View style={st.titleRow}>
                 {p ? (
                   <Letter name={name} system={p.kind === "system" || p.kind === "home"} size={34} />
@@ -317,7 +342,7 @@ export function ProjectView({
         </View>
       ) : (
         <>
-          <BackHeader label="Folders" />
+          <BackHeader label="Projects" />
           <View style={st.head}>
             <View style={st.titleRow}>
               {p ? <Letter name={name} system={p.kind === "system" || p.kind === "home"} size={44} /> : null}
@@ -350,10 +375,12 @@ export function ProjectView({
         <TasksTab ctx={ctx} />
       ) : tab === "procedures" ? (
         <ProceduresTab ctx={ctx} />
+      ) : tab === "api" ? (
+        <ApiCallsTab ctx={ctx} />
       ) : (
         settingsView(ctx)
       )}
-      {/* Phone: a new chat in this Folder, over the list (or the empty Files tab). */}
+      {/* Phone: a new chat in this Project, over the list (or the empty Files tab). */}
       {!wide && ctx && (tab === "chats" || tab === "files") ? (
         <Tap
           testID="new-session"

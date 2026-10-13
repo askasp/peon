@@ -11,12 +11,12 @@ import { useWide } from "@/lib/useWide";
 
 const tabs: { route: string; label: string; icon: IconName }[] = [
   { route: "index", label: "Inbox", icon: "inbox" },
-  { route: "projects", label: "Folders", icon: "folder" },
+  { route: "projects", label: "Projects", icon: "folder" },
   { route: "schedules", label: "Schedules", icon: "clock" },
   { route: "settings", label: "Settings", icon: "sliders" },
 ];
 
-// Four tabs around the green +: a new chat in the Folder you're in, or Home.
+// Four tabs around the green +: a new chat in the Project you're in, or Home.
 export function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const current = state.routes[state.index]?.name;

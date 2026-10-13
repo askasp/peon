@@ -10,7 +10,7 @@ export type Project = {
   kind: "code" | "chat" | "document" | "design" | "dataset" | "home" | "routine" | "system";
   scope: "team" | "private";
   always_worktree: boolean;
-  /** Code Folders: a worktree starts its next ready task when one finishes. */
+  /** Code Projects: a worktree starts its next ready task when one finishes. */
   queue_auto?: boolean;
   default_branch: string | null;
   schedule: string | null;
@@ -55,7 +55,7 @@ export type Run = {
   owner_id: number | null;
   inputs: Record<string, string | string[]>;
   schedule_key: string;
-  /** Which of the Folder's procedures ran. */
+  /** Which of the Project's procedures ran. */
   procedure?: string | null;
   session_id: string | null;
   status: "running" | "done" | "failed" | string;
@@ -133,7 +133,7 @@ export type Schedule = {
   scope: "team" | "me";
   owner: string | null;
   prompt: string;
-  /** In a Procedure Folder: the procedure a blank prompt runs. */
+  /** In a Procedure Project: the procedure a blank prompt runs. */
   procedure?: string | null;
   paused: boolean;
   next: string | null;
@@ -211,7 +211,7 @@ export type SessionOptions = {
   models: ModelOption[];
   /** The model used when none is picked. */
   default?: ModelOption | null;
-  /** `/` items; a Procedure Folder lists its procedures, with their inputs. */
+  /** `/` items; a Procedure Project lists its procedures, with their inputs. */
   slash: {
     name: string;
     description: string | null;
@@ -252,7 +252,7 @@ export type FormField = {
 };
 export type Form = { id: string; title: string; fields: FormField[] };
 
-/** A task a Folder tracks with `tk` (`.tickets/*.md`): its state and progress notes. */
+/** A task a Project tracks with `tk` (`.tickets/*.md`): its state and progress notes. */
 export type TicketNote = { at: string; text: string };
 export type Ticket = {
   id: string;
@@ -269,7 +269,7 @@ export type Ticket = {
   /** In a queue (`queue` request): open deps that hold it back, and whether it was paused. */
   blocked_by?: string[];
   paused?: boolean;
-  /** The procedure it runs through (else the Folder's Queue default), and its latest run. */
+  /** The procedure it runs through (else the Project's Queue default), and its latest run. */
   procedure?: string | null;
   run?: {
     id: number;
@@ -281,7 +281,7 @@ export type Ticket = {
   } | null;
 };
 
-/** One tree's tasks in a Code Folder's queue: main, or a chat's worktree (`ref` is the chat id). */
+/** One tree's tasks in a Code Project's queue: main, or a chat's worktree (`ref` is the chat id). */
 export type QueueTree = {
   ref: string;
   worktree: string;

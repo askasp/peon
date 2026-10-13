@@ -45,10 +45,10 @@ export type Procedure = {
   inputs: ProcedureInput[];
   /** The input that identifies what it acts on (a charge id), so a row can't run twice. */
   key: string | null;
-  /** folder: its own file; global: from setup, in every Folder; legacy: a skill from before files. */
+  /** folder: its own file; global: from setup, in every Project; legacy: a skill from before files. */
   source?: "folder" | "global" | "legacy";
   path?: string | null;
-  /** A Folder file that replaces a global one with its name. */
+  /** A Project file that replaces a global one with its name. */
   overrides?: boolean;
   /** "default": what the Queue runs a task through. */
   queue?: string | null;

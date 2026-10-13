@@ -8,7 +8,7 @@ import { ask, usePeon } from "@/lib/peon";
 import { color } from "@/lib/theme";
 import type { Schedule } from "@/lib/types";
 
-// Schedules across every Folder; each one lives in its Folder's schedules.json.
+// Schedules across every Project; each one lives in its Project's schedules.json.
 export default function Schedules() {
   const runsChanged = usePeon((s) => s.runsChanged);
   const schedulesChanged = usePeon((s) => s.schedulesChanged);
@@ -69,7 +69,7 @@ export default function Schedules() {
           </View>
         )}
         {list?.length ? (
-          <Text style={st.foot}>Each schedule lives in its Folder&apos;s schedules.json.</Text>
+          <Text style={st.foot}>Each schedule lives in its Project&apos;s schedules.json.</Text>
         ) : null}
       </ScrollView>
     </Screen>

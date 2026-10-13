@@ -14,7 +14,7 @@ import type { ProjectCtx } from "./types";
 
 type Entry = { name: string; path: string; type: "directory" | "file" };
 
-/** A chat's worktree with changes main doesn't have (Code Folders). */
+/** A chat's worktree with changes main doesn't have (Code Projects). */
 type Tree = { ref: string; title: string | null; worktree: string; changed: string[] };
 
 /** `call` with every request aimed at one tree: "main" or a chat id. */
@@ -29,14 +29,14 @@ type Shown = {
   /** Paths changed in the shown worktree; null on main. */
   changed: Set<string> | null;
   changesOnly: boolean;
-  /** A Code Folder's main: chats change it, not the editor. */
+  /** A Code Project's main: chats change it, not the editor. */
   readOnly: boolean;
   bar: React.ReactNode;
 };
 
 /**
- * The Folder's files: a tree beside the open file on the web, rows that open
- * the View on the phone. In a Code Folder a picker switches between main and
+ * The Project's files: a tree beside the open file on the web, rows that open
+ * the View on the phone. In a Code Project a picker switches between main and
  * each chat's worktree.
  */
 export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
@@ -91,7 +91,7 @@ export function FilesTab({ ctx }: { ctx: ProjectCtx }) {
           title="Show files from"
           onClose={() => setPicking(false)}
           items={[
-            { key: "main", label: "main", detail: "The Folder's files", active: main },
+            { key: "main", label: "main", detail: "The Project's files", active: main },
             ...(trees ?? []).map((t) => ({
               key: t.ref,
               label: t.title || t.worktree,
@@ -357,7 +357,7 @@ export function FileView({
   call: ProjectCtx["call"];
   path: string;
   version?: number;
-  /** No Edit: a Code Folder's main. */
+  /** No Edit: a Code Project's main. */
   readOnly?: boolean;
   onOpenInFiles?: () => void;
   onClose?: () => void;
@@ -365,7 +365,7 @@ export function FileView({
   onAsk?: (view: string | null) => void;
   /** Told how the file is shown ("Phone"), or null, when it changes. */
   onView?: (view: string | null) => void;
-  /** The path is a picker for the Folder's other files (`count` of them). */
+  /** The path is a picker for the Project's other files (`count` of them). */
   onPick?: () => void;
   count?: number;
 }) {

@@ -120,7 +120,7 @@ defmodule Beamcode.Composer.PlanTest do
              )
   end
 
-  test "run_routine without a procedure runs the Folder's first" do
+  test "run_routine without a procedure runs the Project's first" do
     assert {:ok, %{action: :run, procedure: "payouts", inputs: %{}}} =
              Plan.resolve(
                %{

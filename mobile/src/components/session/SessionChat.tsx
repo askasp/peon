@@ -57,11 +57,11 @@ const modelValue = (m: any): string | null =>
   m && typeof m === "object" && m.id ? `${m.providerID}/${m.id}` : typeof m === "string" ? m : null;
 
 /**
- * A single-chat Folder's chat (see `singleChat`): its screen has the header, the
- * pane shows the Folder's files, and the chats it had before sit above.
+ * A single-chat Project's chat (see `singleChat`): its screen has the header, the
+ * pane shows the Project's files, and the chats it had before sit above.
  */
 export type FolderChat = {
-  /** The Folder's channel, joined by its screen, and what it says changed. */
+  /** The Project's channel, joined by its screen, and what it says changed. */
   ctx: Pick<ProjectCtx, "call" | "changed" | "project" | "procedures" | "reloadProcedures">;
   earlier: SessionSummary[];
   /** "Chat about this": the file in the composer. */
@@ -116,7 +116,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
 
   const all = useMemo(() => toBlocks(s.items), [s.items]);
   const [full, setFull] = useState(false);
-  // An Operations Folder's chat: scheduled runs from before procedures ran in
+  // An Operations Project's chat: scheduled runs from before procedures ran in
   // chats show their result where they finished.
   const procedureChat = inFolder?.ctx.project.kind === "routine";
   const { data: scheduled } = useLoad(
@@ -154,11 +154,11 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
     return () => clearInterval(t);
   }, [s.run?.status]);
   const call = s.call;
-  // Files open through the Folder's channel.
+  // Files open through the Project's channel.
   const own = useChannel(s.project && !inFolder ? `project:${s.project.id}` : null);
   const folder = inFolder ? { joined: true, call: inFolder.ctx.call } : own;
   const dir = s.session?.directory ?? null;
-  // A chat in its own worktree: its files come from there, not the Folder's main.
+  // A chat in its own worktree: its files come from there, not the Project's main.
   const tree = s.session?.worktree ? id : "main";
   const folderCall = useMemo(() => treeCall(folder.call, tree), [folder.call, tree]);
 
@@ -226,7 +226,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
     setView(r);
     setPaneHidden(false);
   };
-  // In a Folder: the file beside the chat, and the newest one the agent wrote.
+  // In a Project: the file beside the chat, and the newest one the agent wrote.
   const [paneFile, setPaneFile] = useState<string | null>(null);
   // Desktop: what the pane shows goes along with each message, until ×.
   const [inView, setInView] = useState<Attached | null>(null);
@@ -243,16 +243,16 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const offset = useRef(0);
   const height = useRef(600);
   useCurrent(s.project?.id, id);
-  // A single-chat Folder's chat lives in the Folder, beside its files.
+  // A single-chat Project's chat lives in the Project, beside its files.
   const project = s.project;
-  // (A scheduled run in a Procedure Folder is its own session, opened from Show steps.)
+  // (A scheduled run in a Procedure Project is its own session, opened from Show steps.)
   const isRun = s.run != null;
   useEffect(() => {
     if (!inFolder && project && singleChat(project.kind) && !isRun)
       router.replace({ pathname: "/project/[id]", params: { id: String(project.id) } } as any);
   }, [inFolder, project, isRun]);
 
-  // Procedures: the Folder's, for keys and chips; reloaded when a turn ends,
+  // Procedures: the Project's, for keys and chips; reloaded when a turn ends,
   // since the chat may have added one.
   const procedures: Procedure[] = useMemo(
     () => inFolder?.ctx.procedures ?? (own.reply as any)?.procedures ?? [],
@@ -268,7 +268,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const [sendAll, setSendAll] = useState<OfferedRow[] | null>(null);
   const keys = useMemo(() => Object.fromEntries(procedures.map((p) => [p.name, p.key])), [procedures]);
   const stateOf = useMemo(() => rowStates(s.items, s.perms, keys), [s.items, s.perms, keys]);
-  // A procedure runs in this chat; from a scheduled run's own session, in the Folder's chat.
+  // A procedure runs in this chat; from a scheduled run's own session, in the Project's chat.
   const runIn = async (procedure: string, payload: object) => {
     follow.current = true;
     const here = !s.run;
@@ -634,7 +634,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
           />
         </View>
       </View>
-      {/* Desktop, in a Folder: its files beside the chat. */}
+      {/* Desktop, in a Project: its files beside the chat. */}
       {pane && inFolder ? (
         <View style={st.side}>
           <FolderPane
@@ -774,7 +774,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
               {subtitle}
             </Text>
           ) : s.project ? (
-            // Phone: which Folder (and worktree) this chat is in.
+            // Phone: which Project (and worktree) this chat is in.
             <View style={st.subRow}>
               <Letter name={folderName ?? ""} system={s.project.kind === "home"} size={13} />
               <Text style={st.headerSub} numberOfLines={1}>
@@ -829,7 +829,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
           {
             key: "files",
             label: "Open in Files",
-            detail: tree !== "main" ? "This chat's worktree" : "The Folder's files",
+            detail: tree !== "main" ? "This chat's worktree" : "The Project's files",
           },
           { key: "compact", label: "Compact the conversation", detail: "Summarize it to free up context" },
           { key: "handsfree", label: "Hands-free", detail: "Talk to this session" },
@@ -868,7 +868,7 @@ function contextUsed(items: Message[], options: SessionOptions | null, model: st
   return 0;
 }
 
-/** A Folder's chats from before it had one chat, oldest first, each opening to its messages. */
+/** A Project's chats from before it had one chat, oldest first, each opening to its messages. */
 function EarlierChats({ call, chats }: { call: FolderChat["ctx"]["call"]; chats: SessionSummary[] }) {
   return (
     <View style={st.earlier}>
@@ -1061,7 +1061,7 @@ const st = StyleSheet.create({
   conversation: { flex: 1, minWidth: 0 },
   queueStrip: { paddingHorizontal: 14 },
   // A session's own screen fills the content area; keep it as narrow as the
-  // Folder's chat list (SessionsTab) instead of stretching across a wide window.
+  // Project's chat list (SessionsTab) instead of stretching across a wide window.
   conversationWide: { flex: 1, width: "100%", maxWidth: 868, alignSelf: "center", minWidth: 0 },
   diffPane: { flex: 1, minHeight: 0, backgroundColor: "#0f0f12" },
   diffHead: {

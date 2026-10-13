@@ -13,7 +13,7 @@ type Entry = { name: string; path: string; type: "directory" | "file" };
 // Kept out of the picker: the agent's own files (under Settings) and build output.
 const hidden = new Set(["AGENTS.md", "opencode.json", "node_modules"]);
 
-/** Every file in the Folder, a few levels down, paths sorted. */
+/** Every file in the Project, a few levels down, paths sorted. */
 async function allFiles(call: ProjectCtx["call"], dir = ".", depth = 0): Promise<string[]> {
   const { entries } = await call<{ entries: Entry[] }>("list_files", { path: dir });
   const shown = entries.filter((e) => !hidden.has(e.name));
@@ -25,7 +25,7 @@ async function allFiles(call: ProjectCtx["call"], dir = ".", depth = 0): Promise
   return [...shown.filter((e) => e.type === "file").map((e) => e.path), ...nested.flat()].sort();
 }
 
-// The file a Folder opens on: its template's own folder first, then anything with a View.
+// The file a Project opens on: its template's own folder first, then anything with a View.
 const home: Record<string, RegExp> = {
   design: /^designs\/.*\.html?$/,
   document: /^docs\/.*\.md$/,
@@ -43,7 +43,7 @@ export function firstFile(kind: string, files: string[]) {
 }
 
 /**
- * A single-chat Folder's files beside its chat (desktop): one file in its View,
+ * A single-chat Project's files beside its chat (desktop): one file in its View,
  * the path a picker for the rest. A file the agent writes opens here (`file`),
  * and what is shown goes along with each message (`onShown`).
  */

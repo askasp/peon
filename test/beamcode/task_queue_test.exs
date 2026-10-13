@@ -9,7 +9,7 @@ defmodule Beamcode.TaskQueueTest do
   # Runs the real `tk` in temporary folders.
   if !System.find_executable("tk"), do: @moduletag(:skip)
 
-  # A Code Folder's main and one chat's worktree, with an OpenCode whose shell
+  # A Code Project's main and one chat's worktree, with an OpenCode whose shell
   # and files are those folders and whose chat records what it's told.
   setup %{tmp_dir: dir} do
     main = Path.join(dir, "main")
@@ -174,7 +174,7 @@ defmodule Beamcode.TaskQueueTest do
     refute File.exists?(Path.join(wt, ".tickets/#{b}.md"))
   end
 
-  test "a task runs through its procedure, else the Folder's Queue default", %{
+  test "a task runs through its procedure, else the Project's Queue default", %{
     project: project,
     wt: wt,
     told: told

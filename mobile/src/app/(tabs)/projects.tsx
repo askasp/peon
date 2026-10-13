@@ -10,8 +10,8 @@ import { ago } from "@/lib/time";
 import { color } from "@/lib/theme";
 import type { Project } from "@/lib/types";
 
-// Folders: Home, then every Folder, filtered by the template it was made from.
-export default function Folders() {
+// Projects: Home, then every Project, filtered by the template it was made from.
+export default function Projects() {
   const projects = usePeon((s) => s.projects);
   const running = usePeon((s) => s.running);
   const joined = usePeon((s) => s.joined);
@@ -19,7 +19,7 @@ export default function Folders() {
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Chat counts take a request per Folder, so they come separately.
+  // Chat counts take a request per Project, so they come separately.
   const { data, reload: load } = useLoad(async (): Promise<Record<number, Project>> => {
     if (!joined) return {};
     const r = await ask<{ projects: Project[] }>("projects", { stats: true });
@@ -27,7 +27,7 @@ export default function Folders() {
   }, [joined]);
   const stats = data ?? {};
 
-  // Per Folder: amber when a chat needs you, green while one works.
+  // Per Project: amber when a chat needs you, green while one works.
   const busy = useMemo(() => {
     const m = new Map<number, string>();
     for (const r of running) if (m.get(r.project.id) !== "waiting") m.set(r.project.id, r.status);
@@ -70,12 +70,12 @@ export default function Folders() {
             </Tap>
           }
         >
-          Folders
+          Projects
         </LargeTitle>
         <TextInput
           value={query}
           onChangeText={setQuery}
-          placeholder="Search Folders"
+          placeholder="Search Projects"
           placeholderTextColor="#62626b"
           autoCapitalize="none"
           autoCorrect={false}
@@ -111,14 +111,14 @@ export default function Folders() {
             </View>
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={st.name}>Home</Text>
-              <Text style={st.meta}>Private · chats without a Folder</Text>
+              <Text style={st.meta}>Private · chats without a Project</Text>
             </View>
             {dot(home)}
             <Text style={st.chev}>›</Text>
           </Tap>
         ) : null}
 
-        {!joined ? <Loading /> : folders.length === 0 ? <Empty title="No Folders match" /> : null}
+        {!joined ? <Loading /> : folders.length === 0 ? <Empty title="No Projects match" /> : null}
         {folders.length ? (
           <View style={st.group}>
             {folders.map((p, i) => (

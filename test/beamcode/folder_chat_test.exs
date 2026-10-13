@@ -33,7 +33,7 @@ defmodule Beamcode.FolderChatTest do
     %{user: user, project: project_fixture(%{name: "site", kind: "design"}, user)}
   end
 
-  test "a Folder's one chat is made once, then found again", %{user: user, project: project} do
+  test "a Project's one chat is made once, then found again", %{user: user, project: project} do
     store = stub_sessions([])
 
     assert {:ok, %{"id" => "new"}, []} = Sessions.folder_chat(project, user)
@@ -56,7 +56,7 @@ defmodule Beamcode.FolderChatTest do
     assert {:ok, %{"id" => "shared"}, [%{"id" => "mine"}]} = Sessions.folder_chat(project, user)
   end
 
-  test "new work in a single-chat Folder goes to its chat; code still starts one",
+  test "new work in a single-chat Project goes to its chat; code still starts one",
        %{user: user, project: project} do
     stub_sessions([session("one", 1, 1)])
     assert {:ok, %{"id" => "one"}} = Sessions.open(project, user)
@@ -65,7 +65,7 @@ defmodule Beamcode.FolderChatTest do
     assert {:ok, %{"id" => "new"}} = Sessions.open(code, user)
   end
 
-  test "a procedure runs in its Folder's one chat, a batch as one message", %{user: user} do
+  test "a procedure runs in its Project's one chat, a batch as one message", %{user: user} do
     folder = project_fixture(%{name: "amino-maintenance", kind: "routine"}, user)
     sent = start_supervised!({Agent, fn -> [] end})
 

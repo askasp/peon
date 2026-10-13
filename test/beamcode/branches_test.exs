@@ -63,7 +63,7 @@ defmodule Beamcode.BranchesTest do
     %{project: project, repo: repo, tmp: tmp}
   end
 
-  test "lists the branches a chat can continue, without the Folder's own", %{project: project} do
+  test "lists the branches a chat can continue, without the Project's own", %{project: project} do
     assert {:ok, [%{name: "feat/login", worktree: nil, remote: false}]} = Branches.list(project)
   end
 

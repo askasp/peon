@@ -3,15 +3,16 @@ defmodule BeamcodeWeb.ProjectChannel do
   One project for the app ("project:<id>"): its sessions, runs, skills,
   schedules and settings, through `Beamcode.ProjectTools`.
 
-  Join replies `{project, can_edit, admin, procedures, procedures_error}`
-  (the procedures the Folder can run, see `Beamcode.Procedures.list/1`).
+  Join replies `{project, can_edit, admin, procedures, procedures_error, api_calls}`
+  (the procedures the Project can run, see `Beamcode.Procedures.list/1`, and
+  how many API calls it has).
 
   Requests:
     * `sessions` → `{sessions}`; `runs` → `{runs}`
-    * `tickets` → `{tickets}`: the Folder's `tk` tasks. `ticket_create`
+    * `tickets` → `{tickets}`: the Project's `tk` tasks. `ticket_create`
       `{params}` queues one, `ticket_status` `{id, status}` moves it, and
       `ticket_note` `{id, text}` adds progress; each replies with `{tickets}`
-    * `queue` `{view?}` → `{queue}`: a Code Folder's tasks by tree (see
+    * `queue` `{view?}` → `{queue}`: a Code Project's tasks by tree (see
       `Beamcode.TaskQueue.board/3`; `view` is a chat whose tree to list even
       when empty). `queue_add` `{ref, titles, chain?}`, `queue_start`,
       `queue_pause`, `queue_cancel`, `queue_done`, `queue_delete` `{ref, id}`, `queue_edit`
@@ -19,13 +20,13 @@ defmodule BeamcodeWeb.ProjectChannel do
       `{on}` each reply with `{queue}` (and `ids` / `session_id`)
     * `procedures` → `{procedures, error}`
     * `run` `{procedure?, inputs? | rows?, session_id?}` → `{session_id, run}`: starts a
-      procedure (`Beamcode.Procedures.Runs.start/5`) in the Folder's chat (a new
-      worktree chat in a code Folder) or the chat given, once with `inputs` or
+      procedure (`Beamcode.Procedures.Runs.start/5`) in the Project's chat (a new
+      worktree chat in a code Project) or the chat given, once with `inputs` or
       once per row of `rows`
     * `run_continue` `{id, items?}`, `run_skip` `{id}`, `run_back` `{id, note}`,
       `run_stop` `{id}` → `{run}`: answer a run that waits for you, or stop it
     * `pause_schedule` `{procedure, paused}` → `{procedures}`: pause a procedure's schedule
-    * `run_result` `{id}` → `{text}`: a run's result, to show it in the Folder's chat
+    * `run_result` `{id}` → `{text}`: a run's result, to show it in the Project's chat
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
     * `slash` → `{slash}`: skills and commands for `/` completion (`Sessions.slash_items/2`)
@@ -37,7 +38,7 @@ defmodule BeamcodeWeb.ProjectChannel do
       `url` loads it under the signed `base`, see `BeamcodeWeb.FileToken`);
       `write_file` `{path, content}`; `table` `{path, table?}` → `{tables, table, columns, rows}`.
       Each takes `ref`: "main" (default) or a chat id for that chat's worktree.
-      A Code Folder's own folder is read-only here: chats change it.
+      A Code Project's own folder is read-only here: chats change it.
     * `schedules` → `{schedules, agents, models, blank}`; `describe_schedule` `{params}`
       → `{cron, when, next}`; `save_schedule` `{params}`; `delete_schedule` `{key}`;
       `run_schedule` `{key}` → `{session_id}`
@@ -46,6 +47,13 @@ defmodule BeamcodeWeb.ProjectChannel do
       `source_level` `{name, action, level}`; `source_remove` `{name}`
     * `outbox` → `{entries}`; `outbox_post` `{id, args?}`, `outbox_skip`, `outbox_undo`,
       `outbox_retry` `{id}` (see `Beamcode.Outbox`)
+    * `api_calls` → `{services, can_edit, admin}`: the Project's API calls by
+      service (`Beamcode.Connectors.all_for/2`). `api_try` `{service, call, args}` →
+      `{status, body, ms, url}` sends one by hand; `api_save` `{service, content}`
+      writes `.peon/api/<service>.json`; `api_delete` `{service}`; `api_move`
+      `{service}` moves a shared one in; `api_secret` `{name, value}` sets its
+      secret (each replies with `{services}`); `api_generate` `{description}` →
+      `{session_id}` has the chat write them
     * `settings` → `{directory, skills, settings, github, connectors}`; `save_settings` `{params}` → `{project, message}`;
       `grant` `{connector, granted}`; `github_save` `{token}`; `github_remove`; `remove`
 
@@ -113,7 +121,8 @@ defmodule BeamcodeWeb.ProjectChannel do
            can_edit: ProjectTools.can_edit?(project, user),
            admin: user.admin,
            procedures: procedures,
-           procedures_error: error
+           procedures_error: error,
+           api_calls: Connectors.all_for(project) |> Enum.map(&length(&1.tools)) |> Enum.sum()
          }, assign(socket, project: project, changed_ref: nil, tasks: %{})}
     end
   end
@@ -136,7 +145,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     end)
   end
 
-  # A single-chat Folder's one chat, and the chats it had before (see
+  # A single-chat Project's one chat, and the chats it had before (see
   # Sessions.folder_chat/2).
   def handle_in("folder_chat", _params, socket) do
     %{project: project, user: user} = socket.assigns
@@ -156,7 +165,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     end)
   end
 
-  # The messages of an earlier chat in this Folder, shown above its one chat.
+  # The messages of an earlier chat in this Project, shown above its one chat.
   def handle_in("chat_history", %{"session_id" => sid}, socket) when is_binary(sid) do
     %{project: project, user: user} = socket.assigns
 
@@ -167,7 +176,7 @@ defmodule BeamcodeWeb.ProjectChannel do
         {:ok, %{messages: Enum.map(messages, &AppJSON.message/1)}}
       else
         {:error, reason} -> error(reason)
-        _ -> error("That chat isn't in this Folder.")
+        _ -> error("That chat isn't in this Project.")
       end
     end)
   end
@@ -202,13 +211,11 @@ defmodule BeamcodeWeb.ProjectChannel do
         {:reply, {:error, %{message: "Say what it should do."}}, socket}
 
       not ProjectTools.can_edit?(project, user) ->
-        {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+        {:reply, {:error, %{message: "You can't change this Project."}}, socket}
 
       true ->
-        granted = for c <- Connectors.for_project(project), do: c.name
-
         ChannelTasks.reply_async(socket, fn ->
-          case Procedures.draft(project, user, text, granted) do
+          case Procedures.draft(project, user, text) do
             {:ok, session_id, _} -> {:ok, %{session_id: session_id}}
             {:error, reason} -> error(reason)
           end
@@ -232,7 +239,7 @@ defmodule BeamcodeWeb.ProjectChannel do
         end
       end)
     else
-      {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+      {:reply, {:error, %{message: "You can't change this Project."}}, socket}
     end
   end
 
@@ -310,7 +317,7 @@ defmodule BeamcodeWeb.ProjectChannel do
         end
       end)
     else
-      {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+      {:reply, {:error, %{message: "You can't change this Project."}}, socket}
     end
   end
 
@@ -332,7 +339,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     end
   end
 
-  ## Tasks (tk tickets in the Folder's .tickets/)
+  ## Tasks (tk tickets in the Project's .tickets/)
 
   def handle_in("tickets", _params, socket) do
     project = socket.assigns.project
@@ -353,7 +360,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     ticket_edit(socket, &Tickets.note(&1, id, text))
   end
 
-  ## Queue (tk tasks by worktree, Code Folders)
+  ## Queue (tk tasks by worktree, Code Projects)
 
   def handle_in("queue", params, socket) do
     %{project: project, user: user} = socket.assigns
@@ -448,7 +455,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     end)
   end
 
-  # The Folder's skills and commands, for `/` completion in the new-chat box.
+  # The Project's skills and commands, for `/` completion in the new-chat box.
   def handle_in("slash", _params, socket) do
     project = socket.assigns.project
 
@@ -758,6 +765,91 @@ defmodule BeamcodeWeb.ProjectChannel do
     ChannelTasks.reply_async(socket, fn -> {:ok, settings(project, user)} end)
   end
 
+  def handle_in("api_calls", _params, socket) do
+    %{project: project, user: user} = socket.assigns
+
+    ChannelTasks.reply_async(socket, fn ->
+      {:ok,
+       %{
+         services: api_services(project),
+         can_edit: ProjectTools.can_edit?(project, user),
+         admin: user.admin
+       }}
+    end)
+  end
+
+  def handle_in("api_try", %{"service" => service, "call" => call} = params, socket)
+      when is_binary(service) and is_binary(call) do
+    %{project: project, user: user} = socket.assigns
+
+    if ProjectTools.can_edit?(project, user) do
+      args = if is_map(params["args"]), do: params["args"], else: %{}
+
+      ChannelTasks.reply_async(socket, fn ->
+        case Connectors.try_call(project, service, call, args) do
+          {:ok, result} -> {:ok, result}
+          {:error, reason} -> error(reason)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "You can't change this Project."}}, socket}
+    end
+  end
+
+  def handle_in("api_save", %{"service" => service, "content" => content}, socket)
+      when is_binary(service) and is_binary(content) do
+    api_edit(socket, fn project -> Connectors.save(project, service, content) end)
+  end
+
+  def handle_in("api_delete", %{"service" => service}, socket) when is_binary(service) do
+    api_edit(socket, fn project -> Connectors.delete(project, service) end)
+  end
+
+  def handle_in("api_move", %{"service" => service}, socket) when is_binary(service) do
+    api_edit(socket, fn project -> Connectors.move_here(project, service) end)
+  end
+
+  # The vault is shared: an admin sets any secret, others only a new one.
+  def handle_in("api_secret", %{"name" => name, "value" => value}, socket)
+      when is_binary(name) and is_binary(value) do
+    %{user: user} = socket.assigns
+
+    cond do
+      not Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) or value == "" ->
+        {:reply, {:error, %{message: "Give it an UPPER_SNAKE name and a value."}}, socket}
+
+      not user.admin and MapSet.member?(Vault.names(), name) ->
+        {:reply, {:error, %{message: "#{name} is set already. An admin can replace it."}}, socket}
+
+      true ->
+        api_edit(socket, fn project ->
+          with {:ok, _} <- Vault.put(name, value, user) do
+            Connectors.sync_project(project)
+          end
+        end)
+    end
+  end
+
+  def handle_in("api_generate", %{"description" => text}, socket) when is_binary(text) do
+    %{project: project, user: user} = socket.assigns
+
+    cond do
+      String.trim(text) == "" ->
+        {:reply, {:error, %{message: "Say which API and what it should do."}}, socket}
+
+      not ProjectTools.can_edit?(project, user) ->
+        {:reply, {:error, %{message: "You can't change this Project."}}, socket}
+
+      true ->
+        ChannelTasks.reply_async(socket, fn ->
+          case Connectors.generate(project, user, text) do
+            {:ok, session_id} -> {:ok, %{session_id: session_id}}
+            {:error, reason} -> error(reason)
+          end
+        end)
+    end
+  end
+
   def handle_in("save_settings", %{"params" => params}, socket) when is_map(params) do
     params =
       Map.take(params, ["scope", "always_worktree", "protect_default_branch", "queue_auto"])
@@ -930,6 +1022,50 @@ defmodule BeamcodeWeb.ProjectChannel do
     }
   end
 
+  defp api_edit(socket, fun) do
+    %{project: project, user: user} = socket.assigns
+
+    if ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        case fun.(project) do
+          :ok -> {:ok, %{services: api_services(project)}}
+          {:error, reason} -> error(reason)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "You can't change this Project."}}, socket}
+    end
+  end
+
+  defp api_services(project) do
+    secrets = Vault.names()
+
+    for c <- Connectors.all_for(project) do
+      %{
+        name: c.name,
+        source: c.source,
+        path: c.path,
+        error: c.error,
+        base_url: c[:base_url],
+        auth: c[:auth],
+        secret: c[:secret],
+        ready: Connectors.ready?(c, secrets),
+        raw: c.raw,
+        calls:
+          for t <- c.tools do
+            %{
+              name: t.name,
+              method: t.method,
+              path: t.path,
+              permission: t.permission,
+              description: t.description,
+              params: Connectors.path_params(t)
+            }
+          end
+      }
+    end
+  end
+
   # A procedure's inputs from the app: strings, and lists for multi-choice ones.
   defp values(map) when is_map(map) do
     for {k, v} <- map, is_binary(k), into: %{} do
@@ -961,13 +1097,13 @@ defmodule BeamcodeWeb.ProjectChannel do
   defp list_or_nil(list) when is_list(list), do: Enum.filter(list, &is_map/1)
   defp list_or_nil(_), do: nil
 
-  # The Folder's tasks, to reply after any change.
+  # The Project's tasks, to reply after any change.
   defp ticket_reply(project) do
     {:ok, tickets} = Tickets.list(project)
     {:ok, %{tickets: tickets}}
   end
 
-  # A change to the Folder's tasks (owners and admins), replying with the new list.
+  # A change to the Project's tasks (owners and admins), replying with the new list.
   defp ticket_edit(socket, fun) do
     %{project: project, user: user} = socket.assigns
 
@@ -992,7 +1128,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     end
   end
 
-  # A change to the Folder's queue (owners and admins), replying with the new
+  # A change to the Project's queue (owners and admins), replying with the new
   # queue. `fun` gets the project and user: `:ok`, `{:ok, extra}` or an error.
   defp queue_edit(socket, params, fun) do
     %{project: project, user: user} = socket.assigns
@@ -1011,7 +1147,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     end)
   end
 
-  # A change to the Folder's sources (owners and admins), replying with the new list.
+  # A change to the Project's sources (owners and admins), replying with the new list.
   defp edit(socket, fun) do
     %{project: project, user: user} = socket.assigns
 

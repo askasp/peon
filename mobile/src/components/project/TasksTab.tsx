@@ -12,7 +12,7 @@ const tint = (s: string) =>
 const word = (s: string) => (s === "in_progress" ? "Doing" : s === "closed" ? "Done" : "Queued");
 
 /**
- * A Folder's tasks: the `tk` tickets in its `.tickets/` folder. Queue one here
+ * A Project's tasks: the `tk` tickets in its `.tickets/` folder. Queue one here
  * or from a chat; open one to read it, follow its notes, and move it along.
  */
 export function TasksTab({ ctx }: { ctx: ProjectCtx }) {
@@ -20,7 +20,7 @@ export function TasksTab({ ctx }: { ctx: ProjectCtx }) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const call = ctx.call;
 
-  // Refetched whenever the Folder pushes a change (its "changed" counter).
+  // Refetched whenever the Project pushes a change (its "changed" counter).
   useEffect(() => {
     let live = true;
     call<{ tickets: Ticket[] }>("tickets").then(

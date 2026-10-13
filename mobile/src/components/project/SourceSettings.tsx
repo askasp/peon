@@ -104,7 +104,7 @@ export function SourceSettings({ ctx }: { ctx: ProjectCtx }) {
 
           <View style={{ gap: 2 }}>
             <Text style={st.label}>Actions</Text>
-            <Text style={st.hint}>Applies to you, views and scheduled runs in this Folder.</Text>
+            <Text style={st.hint}>Applies to you, views and scheduled runs in this Project.</Text>
           </View>
           {s.actions.map((a) => (
             <View key={a.name} style={st.action} testID={`level-${s.name}-${a.name}`}>

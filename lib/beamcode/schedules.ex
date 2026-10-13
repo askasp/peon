@@ -182,7 +182,7 @@ defmodule Beamcode.Schedules do
 
     case String.trim(sched["prompt"] || "") do
       "" ->
-        # A procedure (the one named, else the Folder's first), run like any other.
+        # A procedure (the one named, else the Project's first), run like any other.
         Beamcode.Procedures.Runs.start(project, owner, sched["procedure"], sched["inputs"] || %{},
           trigger: "schedule",
           key: key,

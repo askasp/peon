@@ -1,4 +1,4 @@
-// A Procedure Folder's chat: chips above the composer that run a procedure
+// A Procedure Project's chat: chips above the composer that run a procedure
 // (with its inputs in a sheet), the Send all sheet, and scheduled results.
 
 import { useState } from "react";
@@ -14,7 +14,7 @@ import { color, font } from "@/lib/theme";
 import type { Run } from "@/lib/types";
 import type { OfferedRow } from "./RunRows";
 
-/** The Folder's procedures as chips above the composer (P1). */
+/** The Project's procedures as chips above the composer (P1). */
 export function ProcedureChips({
   procedures,
   onPick,
@@ -200,7 +200,7 @@ export function SendAllSheet({
 }
 
 /**
- * A scheduled run's result, shown in the Folder's chat where it finished
+ * A scheduled run's result, shown in the Project's chat where it finished
  * (change 5): its buttons work here. Show steps opens the run.
  */
 export function ScheduledResult({

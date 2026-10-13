@@ -10,7 +10,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index" />
       <Tabs.Screen name="projects" />
-      {/* Routines are Folders now; the old tab stays routable for links. */}
+      {/* Routines are Projects now; the old tab stays routable for links. */}
       <Tabs.Screen name="routines" options={{ href: null }} />
       <Tabs.Screen name="schedules" />
       <Tabs.Screen name="settings" />

@@ -4,6 +4,12 @@
     "slug": "peon",
     "scheme": "peon",
     "version": "1.0.0",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/93f24cab-d783-4954-9eda-583ac5fca992"
+    },
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

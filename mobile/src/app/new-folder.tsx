@@ -33,7 +33,7 @@ const extra: Partial<Record<Kind, { label: string; placeholder: string; param: s
 const where = (kind: Kind, name: string) =>
   kind === "code" ? `code/${name}/` : kind === "routine" ? `routines/${name}/` : `${name}/`;
 
-// New Folder: pick a template, then name it. The template only sets it up.
+// New Project: pick a template, then name it. The template only sets it up.
 export default function NewFolder() {
   const params = useLocalSearchParams<{ kind?: string }>();
   const insets = useSafeAreaInsets();
@@ -106,7 +106,7 @@ export default function NewFolder() {
         {!t ? (
           <>
             <View style={st.head}>
-              <Text style={st.title}>New Folder</Text>
+              <Text style={st.title}>New Project</Text>
               <Tap onPress={() => router.back()} hitSlop={10}>
                 <Text style={st.cancel}>Cancel</Text>
               </Tap>
@@ -213,7 +213,7 @@ export default function NewFolder() {
                     : "Creating…"
                   : synced
                     ? "Create and sync"
-                    : "Create Folder"}
+                    : "Create Project"}
               </Text>
             </Tap>
           </>

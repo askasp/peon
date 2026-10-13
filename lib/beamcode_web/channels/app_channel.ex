@@ -296,8 +296,7 @@ defmodule BeamcodeWeb.AppChannel do
         end
       end)
     else
-      {:reply, {:error, %{message: "An admin connects services (Settings → Connectors)."}},
-       socket}
+      {:reply, {:error, %{message: "An admin connects services (Settings → Secrets)."}}, socket}
     end
   end
 
@@ -523,15 +522,17 @@ defmodule BeamcodeWeb.AppChannel do
           Connectors.sync_all()
         end
 
-        # A described Procedure Folder starts by drafting its first procedure.
+        # A described Procedure Project starts by drafting its first procedure.
         if project.kind == "routine" and params["import"] != "true" and
              String.trim(params["description"] || "") != "" do
-          case Procedures.draft(project, user, params["description"] || "", granted) do
+          case Procedures.draft(project, user, params["description"] || "") do
             {:ok, session_id, []} ->
               {:ok, %{project_id: project.id, session_id: session_id}}
 
             {:ok, session_id, not_ready} ->
-              note = "#{Enum.join(not_ready, ", ")} needs its secret. Set it on Connectors."
+              note =
+                "#{Enum.join(not_ready, ", ")} needs its secret. Set it in the Project's API calls."
+
               {:ok, %{project_id: project.id, session_id: session_id, note: note}}
 
             {:error, reason} ->

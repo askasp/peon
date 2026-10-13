@@ -2,13 +2,13 @@ defmodule Beamcode.Projects.Project do
   use Ecto.Schema
   import Ecto.Changeset
 
-  # A project is a Folder in the app; its kind is the template it was made
+  # A project is a Project in the app; its kind is the template it was made
   # from. chat, document, design, dataset and home all behave like chat.
   @kinds ~w(code routine chat document design dataset home system)
   @chat_like ~w(chat document design dataset home)
   # One working copy of their files, so one continuous chat (code chats each
   # get a worktree; chat and home hold unrelated talks with no files to share).
-  # An Operations Folder's (routine) chat is where its procedures run.
+  # An Operations Project's (routine) chat is where its procedures run.
   @single_chat ~w(document design dataset routine)
   @scopes ~w(team private)
 
@@ -23,7 +23,7 @@ defmodule Beamcode.Projects.Project do
     # No pushes to main/master/default_branch (see Beamcode.BranchGuard).
     field :protect_default_branch, :boolean, default: false
     field :default_branch, :string
-    # Code Folders: a worktree starts its next ready task when one finishes.
+    # Code Projects: a worktree starts its next ready task when one finishes.
     field :queue_auto, :boolean, default: true
     # Procedures whose file schedule is paused (see Beamcode.Procedures.Schedule).
     field :paused_schedules, {:array, :string}, default: []
@@ -37,7 +37,7 @@ defmodule Beamcode.Projects.Project do
   def chat_like?(%__MODULE__{kind: kind}), do: kind in @chat_like
   def chat_like?(kind) when is_binary(kind), do: kind in @chat_like
 
-  @doc "Kinds whose Folder is one chat beside its files (see `Beamcode.Sessions.folder_chat/2`)."
+  @doc "Kinds whose Project is one chat beside its files (see `Beamcode.Sessions.folder_chat/2`)."
   def single_chat?(%__MODULE__{kind: kind}), do: kind in @single_chat
   def single_chat?(kind) when is_binary(kind), do: kind in @single_chat
 

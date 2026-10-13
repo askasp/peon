@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
-import { router } from "expo-router";
 import {
   BackHeader,
   Button,
@@ -34,8 +33,8 @@ type Connector = {
 type Secret = { name: string; hint: string | null; set_by: string | null; updated_at: string };
 type Data = { connectors: Connector[]; secrets: Secret[] };
 
-// Connectors (admins): HTTP APIs turned into tools for projects, and the
-// vault secrets they authenticate with.
+// Secrets (admins): the vault keys API calls authenticate with, and the older
+// shared API calls each Project moves in from its API calls tab.
 export default function Connectors() {
   const wide = useWide();
   const ch = useChannel("admin");
@@ -71,31 +70,15 @@ export default function Connectors() {
     <Screen>
       {!wide ? <BackHeader label="Settings" /> : null}
       <ScrollView contentContainerStyle={st.body}>
-        <LargeTitle
-          right={
-            <Button
-              label="+ New connector"
-              height={36}
-              busy={busy === "new"}
-              onPress={() =>
-                act("new", async () => {
-                  const { session_id } = await ch.call<{ session_id: string }>("new_connector", {}, 60000);
-                  router.push(`/session/${session_id}`);
-                })
-              }
-            />
-          }
-        >
-          Connectors
-        </LargeTitle>
-        <Text style={st.hint}>
-          A connector is a JSON file in the setup project. A new one opens a session there that writes it with
-          you.
-        </Text>
+        <LargeTitle>Secrets</LargeTitle>
         <ErrorLine message={ch.error ?? error} />
         {note ? <Text style={st.note}>{note}</Text> : null}
         {shown == null ? <Loading /> : null}
 
+        {shown?.connectors.length ? <SectionLabel>Shared API calls</SectionLabel> : null}
+        {shown?.connectors.length ? (
+          <Text style={st.hint}>Each Project moves these in from its API calls tab.</Text>
+        ) : null}
         {(shown?.connectors ?? []).map((c) => (
           <Card key={c.name}>
             <Tap onPress={() => setOpen(open === c.name ? null : c.name)} style={st.head}>
@@ -105,7 +88,7 @@ export default function Connectors() {
               </Text>
             </Tap>
             <Text style={st.meta}>
-              {c.tools.length} tools · {c.projects.length ? c.projects.join(", ") : "no projects yet"}
+              {c.tools.length} calls · {c.projects.length ? c.projects.join(", ") : "no projects left"}
             </Text>
             {c.error ? <Text style={[st.meta, { color: color.red }]}>{c.error}</Text> : null}
             {!c.ready && !c.error && c.secret ? (
@@ -133,7 +116,6 @@ export default function Connectors() {
           </Card>
         ))}
 
-        <SectionLabel style={{ paddingTop: 14 }}>Secrets</SectionLabel>
         <Group>
           {(shown?.secrets ?? []).map((s, i) => (
             <View key={s.name} style={[st.row, i > 0 && st.top]}>
@@ -150,7 +132,7 @@ export default function Connectors() {
                 height={30}
                 busy={busy === `del-${s.name}`}
                 onPress={async () => {
-                  if (await confirm(`Delete ${s.name}?`, "Connectors using it stop working.", "Delete"))
+                  if (await confirm(`Delete ${s.name}?`, "API calls using it stop working.", "Delete"))
                     act(
                       `del-${s.name}`,
                       () => ch.call<Data>("delete_secret", { name: s.name }, 60000),
@@ -198,13 +180,15 @@ export default function Connectors() {
             }
           />
         </Group>
-        <Button
-          label="Apply to projects"
-          kind="secondary"
-          height={40}
-          busy={busy === "apply"}
-          onPress={() => act("apply", () => ch.call<Data>("apply", {}, 60000), "Applied to projects.")}
-        />
+        {shown?.connectors.length ? (
+          <Button
+            label="Apply to projects"
+            kind="secondary"
+            height={40}
+            busy={busy === "apply"}
+            onPress={() => act("apply", () => ch.call<Data>("apply", {}, 60000), "Applied to projects.")}
+          />
+        ) : null}
       </ScrollView>
     </Screen>
   );

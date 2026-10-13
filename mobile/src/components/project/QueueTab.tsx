@@ -20,7 +20,7 @@ export type QueueAct = <T = object>(
 ) => Promise<(T & { queue: Queue }) | null>;
 
 /**
- * A Code Folder's queue, fetched again when the Folder changes. `view` is a
+ * A Code Project's queue, fetched again when the Project changes. `view` is a
  * chat whose worktree to list even while it has no tasks.
  */
 export function useQueue(call: Call | null, changed: unknown, view?: string) {
@@ -162,7 +162,7 @@ export function TreeCard({
   canEdit: boolean;
   inChat?: boolean;
   focusAdd?: boolean;
-  /** The Folder's procedures: a task can pick the one it runs through. */
+  /** The Project's procedures: a task can pick the one it runs through. */
   procedures?: Procedure[];
 }) {
   const wide = useWide();

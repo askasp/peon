@@ -1,17 +1,17 @@
 defmodule Beamcode.Worktrees do
   @moduledoc """
-  The trees a Folder's Files tab can show: its own folder ("main") and the git
+  The trees a Project's Files tab can show: its own folder ("main") and the git
   worktree of each chat that has one. A tree is named by a `ref`: "main", or
   the chat's session id.
 
-  Only Code Folders give chats worktrees (`Beamcode.Sessions.start/3`).
+  Only Code Projects give chats worktrees (`Beamcode.Sessions.start/3`).
   """
   alias Beamcode.{Opencode, Sessions}
   alias Beamcode.Projects.Project
 
   @doc """
   `project` with `directory` set to the tree `ref` names, when `user` may see
-  it: "main" (or nil) is the Folder's own folder, a chat id that chat's folder.
+  it: "main" (or nil) is the Project's own folder, a chat id that chat's folder.
   `{:ok, project}` or `{:error, :bad_ref}`.
   """
   def at(project, user, ref)
@@ -30,7 +30,7 @@ defmodule Beamcode.Worktrees do
 
   def at(_project, _user, _ref), do: {:error, :bad_ref}
 
-  @doc "Whether `project` (as returned by `at/3`) is the Folder's own folder of a Code Folder."
+  @doc "Whether `project` (as returned by `at/3`) is the Project's own folder of a Code Project."
   def code_main?(%Project{kind: "code"} = tree, %Project{} = project),
     do: tree.directory == project.directory
 
@@ -64,8 +64,8 @@ defmodule Beamcode.Worktrees do
 
   @doc """
   Files each worktree in `dirs` changed since it branched off the commit the
-  Folder's own folder has checked out, committed or not: `%{dir => [path]}`.
-  One shell call in the Folder's folder.
+  Project's own folder has checked out, committed or not: `%{dir => [path]}`.
+  One shell call in the Project's folder.
   """
   def changes(_project, []), do: %{}
 

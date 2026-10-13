@@ -1,4 +1,4 @@
-// A Code Folder's task queue (tk tickets by worktree): how to read a tree, and
+// A Code Project's task queue (tk tickets by worktree): how to read a tree, and
 // what in a chat message asks to queue tasks rather than do them now.
 
 import type { QueueTree, Ticket } from "./types";

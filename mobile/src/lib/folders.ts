@@ -1,4 +1,4 @@
-// A Folder (a project on the server) and the template it was made from.
+// A Project and the template it was made from.
 
 import type { Project } from "./types";
 
@@ -28,16 +28,16 @@ export const templateName: Record<Kind, string> = {
   system: "System",
 };
 
-/** The templates a new Folder can start from. */
+/** The templates a new Project can start from. */
 export const templates: { kind: Kind; label: string; detail: string; opens: string }[] = [
   { kind: "code", label: "Code", detail: "git clone or init, worktrees on", opens: "Chats" },
   { kind: "document", label: "Document", detail: "docs/ and a writing skill", opens: "Chat" },
   { kind: "design", label: "Design", detail: "designs/ and an HTML design skill", opens: "Chat" },
   { kind: "dataset", label: "Dataset", detail: "data.sqlite, a schema skill and app/", opens: "Chat" },
-  { kind: "routine", label: "Operations", detail: "procedures only, through connectors", opens: "Chat" },
+  { kind: "routine", label: "Operations", detail: "procedures and API calls, no repo", opens: "Chat" },
 ];
 
-/** A Folder name from free text: lowercase words joined by dashes. */
+/** A Project name from free text: lowercase words joined by dashes. */
 export const slugName = (s: string) =>
   s
     .toLowerCase()
@@ -51,7 +51,7 @@ const filler = new Set(
   ),
 );
 
-/** A name for a Folder made straight from a chat: a few words of the task, not taken yet. */
+/** A name for a Project made straight from a chat: a few words of the task, not taken yet. */
 export function newFolderName(task: string, kind: Kind, projects: Project[]) {
   const words = task
     .toLowerCase()
@@ -74,7 +74,7 @@ export const filters: { key: string; label: string; kinds: Kind[] | null }[] = [
   { key: "routine", label: "Operations", kinds: ["routine"] },
 ];
 
-/** The user's Home (private, so only ever their own), and every other Folder (system last), filtered by a chip. */
+/** The user's Home (private, so only ever their own), and every other Project (system last), filtered by a chip. */
 export function sortFolders(projects: Project[], filter = "all") {
   const kinds = filters.find((f) => f.key === filter)?.kinds ?? null;
   const home = projects.find((p) => p.kind === "home") ?? null;
@@ -90,14 +90,14 @@ export const folderHref = (p: Pick<Project, "id" | "kind">) =>
   p.kind === "routine" ? `/routine/${p.id}` : `/project/${p.id}`;
 
 /**
- * Folders with one working copy of their files, so one continuous chat beside
+ * Projects with one working copy of their files, so one continuous chat beside
  * them (Code chats each get a worktree; Chat and Home hold unrelated talks).
- * An Operations Folder's chat is where its procedures run.
+ * An Operations Project's chat is where its procedures run.
  */
 export const singleChat = (kind: Kind) =>
   kind === "document" || kind === "design" || kind === "dataset" || kind === "routine";
 
-/** Where a Folder opens first. */
+/** Where a Project opens first. */
 export const firstTab = (kind: Kind) => (singleChat(kind) ? "chat" : "chats");
 
 export type ViewKind = "doc" | "canvas" | "app" | "table" | "image" | "code" | "diff";

@@ -9,7 +9,7 @@ import { runLine, stopRun } from "@/lib/runs";
 import { color } from "@/lib/theme";
 import type { Project, Run } from "@/lib/types";
 
-// 06 · Operations Folders: each with its schedule and last run; stop a run that's going.
+// 06 · Operations Projects: each with its schedule and last run; stop a run that's going.
 export default function Routines() {
   const projects = usePeon((s) => s.projects);
   const runsChanged = usePeon((s) => s.runsChanged);
@@ -82,7 +82,7 @@ export default function Routines() {
         <ErrorLine message={error} />
         {routines.length === 0 ? (
           <Empty
-            title="No Operations Folders yet"
+            title="No Operations Projects yet"
             detail="Make one with +, or from the composer: “make a procedure that…”."
           />
         ) : null}

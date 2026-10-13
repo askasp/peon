@@ -78,14 +78,14 @@ function Num({ n }: { n: number }) {
 // React Native has a `window` but no `location`, so check for it.
 const host = (typeof window !== "undefined" && window.location?.hostname) || "connected";
 
-/** The templates a new Folder can start from, floating next to the sidebar. */
+/** The templates a new Project can start from, floating next to the sidebar. */
 export function TemplateMenu({ at, onClose }: { at: { x: number; y: number } | null; onClose: () => void }) {
   return (
     <Modal transparent visible={at != null} animationType="fade" onRequestClose={onClose}>
       <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
       {at ? (
         <View style={[st.menu, { left: at.x, top: Math.max(12, at.y - 140) }]}>
-          <Text style={st.menuTitle}>New Folder</Text>
+          <Text style={st.menuTitle}>New Project</Text>
           {templates.map((t) => (
             <Pressable
               key={t.kind}
@@ -109,7 +109,7 @@ export function TemplateMenu({ at, onClose }: { at: { x: number; y: number } | n
   );
 }
 
-// Folders (Home first, filtered by template), then the app's places.
+// Projects (Home first, filtered by template), then the app's places.
 export function Sidebar() {
   const path = usePathname();
   const projects = usePeon((s) => s.projects);
@@ -183,7 +183,7 @@ export function Sidebar() {
   return (
     <View style={st.side}>
       <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingTop: 10, paddingBottom: 16 }}>
-        <Text style={st.section}>Folders</Text>
+        <Text style={st.section}>Projects</Text>
         <View style={st.chips}>
           {filters.map((f) => (
             <Pressable
@@ -208,7 +208,7 @@ export function Sidebar() {
               <View style={st.plus}>
                 <Text style={st.plusText}>+</Text>
               </View>
-              <Text style={[st.rowLabel, { color: color.muted }]}>New Folder</Text>
+              <Text style={[st.rowLabel, { color: color.muted }]}>New Project</Text>
             </Pressable>
           </View>
         ) : null}
@@ -230,7 +230,7 @@ export function Sidebar() {
         />
         {user?.admin ? (
           <NavRow
-            label="Connectors"
+            label="Secrets"
             href="/connectors"
             active={path === "/connectors"}
             gkey={gkey("/connectors")}

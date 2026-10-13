@@ -1,5 +1,5 @@
 // One procedure (U3, U4, C1): how it starts, its inputs and steps, its
-// schedule with Pause, and its recent runs. A Folder's own file can be edited
+// schedule with Pause, and its recent runs. A Project's own file can be edited
 // here: each step's prompt, model, effort and session, adding and removing steps.
 
 import { useState } from "react";
@@ -113,7 +113,7 @@ export function ProcedureDetail({
       {p.description ? <Text style={st.desc}>{p.description}</Text> : null}
       {p.source === "global" ? (
         <Text style={st.meta}>
-          Global: from the setup Folder, in every Folder. A file here with this name replaces it.
+          Global: from the setup Project, in every Project. A file here with this name replaces it.
         </Text>
       ) : p.source === "legacy" ? (
         <Text style={st.meta}>

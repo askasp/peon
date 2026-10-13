@@ -223,7 +223,7 @@ defmodule BeamcodeWeb.SessionChannel do
             nil
         end
 
-      # Procedures first; an Operations Folder's `/` lists only those.
+      # Procedures first; an Operations Project's `/` lists only those.
       procedures = Procedures.slash_items(socket.assigns.project)
       names = MapSet.new(procedures, & &1.name)
 
@@ -374,7 +374,7 @@ defmodule BeamcodeWeb.SessionChannel do
             end
           end)
         else
-          {:reply, {:error, %{message: "You can't change this Folder."}}, socket}
+          {:reply, {:error, %{message: "You can't change this Project."}}, socket}
         end
     end
   end

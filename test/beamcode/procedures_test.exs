@@ -60,7 +60,7 @@ defmodule Beamcode.ProceduresTest do
   Check each request against refund-policy.md and Stripe.
 
   ## Post
-  Post the approved requests to the Folder chat.
+  Post the approved requests to the Project chat.
   """
 
   @ship """
@@ -235,7 +235,7 @@ defmodule Beamcode.ProceduresTest do
     assert Procedures.model_label("opus") == "Opus"
   end
 
-  describe "legacy prompts (Folders from before the file format)" do
+  describe "legacy prompts (Projects from before the file format)" do
     @digest %{
       name: "digest",
       source: "legacy",
@@ -341,7 +341,7 @@ defmodule Beamcode.ProceduresTest do
     defp folder(kind \\ "routine"),
       do: %Project{name: "amino-maintenance", kind: kind, directory: @dir}
 
-    test "the Folder's files, its legacy skills, and global ones it doesn't replace" do
+    test "the Project's files, its legacy skills, and global ones it doesn't replace" do
       stub(%{
         (@dir <> "/.peon/procedures/email-refunds.md") => @email_refunds,
         (@dir <> "/procedures.json") =>
@@ -367,7 +367,7 @@ defmodule Beamcode.ProceduresTest do
       assert Procedures.error(folder()) == nil
     end
 
-    test "a code Folder lists its files and the global ones, not its skills" do
+    test "a code Project lists its files and the global ones, not its skills" do
       stub(%{(@setup <> "/procedures/explain.md") => "Explain the code."})
       assert [%{name: "explain"}] = Procedures.list(folder("code"))
     end

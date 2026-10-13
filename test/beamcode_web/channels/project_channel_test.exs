@@ -96,7 +96,7 @@ defmodule BeamcodeWeb.ProjectChannelTest do
     assert_reply ref, :error, %{message: "That file can't be saved here."}
   end
 
-  test "slash lists the Folder's skills and commands", %{user: user, app: app} do
+  test "slash lists the Project's skills and commands", %{user: user, app: app} do
     setup_stub(fn conn ->
       case conn.request_path do
         "/api/skill" -> data(conn, [%{"id" => "hello", "description" => "Says hello"}])
@@ -139,7 +139,7 @@ defmodule BeamcodeWeb.ProjectChannelTest do
     end
   end
 
-  test "files: a chat's worktree by ref; a Code Folder's main is read-only", %{
+  test "files: a chat's worktree by ref; a Code Project's main is read-only", %{
     admin: admin,
     user: user,
     app: app,
@@ -260,6 +260,31 @@ defmodule BeamcodeWeb.ProjectChannelTest do
 
     assert_push "gone", %{}
     assert_receive {:DOWN, ^ref, :process, _, :normal}
+  end
+
+  test "API calls: editors save a service file once it parses; others can't", %{
+    admin: admin,
+    user: user,
+    app: app,
+    files: files
+  } do
+    {:ok, %{api_calls: 0}, socket} = join_as(admin, app)
+    ref = push(socket, "api_calls", %{})
+    assert_reply ref, :ok, %{services: [], can_edit: true}, 5000
+
+    ref = push(socket, "api_save", %{"service" => "github", "content" => "{nope"})
+    assert_reply ref, :error, %{message: _}, 5000
+
+    good = ~s({"baseUrl": "https://api.github.com", "tools": {"me": ["GET", "/user", "allow"]}})
+    ref = push(socket, "api_save", %{"service" => "github", "content" => good})
+    assert_reply ref, :ok, %{services: _}, 5000
+    assert Agent.get(files, &Map.get(&1, ".peon/api/github.json")) == good
+
+    {:ok, _, other} = join_as(user, app)
+    ref = push(other, "api_save", %{"service" => "github", "content" => good})
+    assert_reply ref, :error, %{message: "You can't change this Project."}
+    ref = push(other, "api_try", %{"service" => "github", "call" => "me"})
+    assert_reply ref, :error, %{message: "You can't change this Project."}
   end
 
   test "settings are for the owner or an admin; removing is for admins", %{user: user, app: app} do

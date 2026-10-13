@@ -201,7 +201,7 @@ export const prefixLabel = (p: string) =>
     "ctrl+a": isMac ? "⌃A" : "Ctrl+A",
   })[p] ?? p;
 
-/** Sidebar order: Home, then every other Folder (system last), as the sidebar lists them. */
+/** Sidebar order: Home, then every other Project (system last), as the sidebar lists them. */
 export function sidebarItems(projects: Project[]): { project: Project; href: string }[] {
   const { home, folders } = sortFolders(projects);
   return [...(home ? [home] : []), ...folders].map((p) => ({ project: p, href: folderHref(p) }));

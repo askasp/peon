@@ -1,6 +1,6 @@
 defmodule Beamcode.Procedures do
   @moduledoc """
-  Procedures: named steps with inputs, in any Folder. Each is one file,
+  Procedures: named steps with inputs, in any Project. Each is one file,
   `.peon/procedures/<name>.md`: settings in the front matter, one `## Step`
   section per step for its prompt.
 
@@ -29,12 +29,12 @@ defmodule Beamcode.Procedures do
       Read support mail since {since}. …
 
   Without `steps:` a procedure is one step: the body is its prompt, or the
-  top-level `call:`/`params:`/`confirm:` make it one connector call with no
+  top-level `call:`/`params:`/`confirm:` make it one API call with no
   model. A step can instead `run:` another procedure (`for_each:` item of an
-  earlier step's output), `queue:` tickets in a code Folder, or just `wait: me`.
+  earlier step's output), `queue:` tickets in a code Project, or just `wait: me`.
 
-  Global procedures are `procedures/*.md` in the setup Folder and show in every
-  Folder; a Folder's own one with the same name replaces it. Folders made
+  Global procedures are `procedures/*.md` in the setup Project and show in every
+  Project; a Project's own one with the same name replaces it. Projects made
   before this format (kind "routine") also list their own skills, with inputs
   from `procedures.json` or `routine.json`; those are read, never written.
 
@@ -55,12 +55,12 @@ defmodule Beamcode.Procedures do
   ## Listing
 
   @doc """
-  The procedures a Folder can run, by name: its own files, its legacy skills,
+  The procedures a Project can run, by name: its own files, its legacy skills,
   then the global ones it doesn't replace. Each is a map, see `from_front/4`.
   """
   def list(project), do: project |> load() |> elem(0)
 
-  @doc "What's wrong with the Folder's procedure files, or nil."
+  @doc "What's wrong with the Project's procedure files, or nil."
   def error(project) do
     case project |> load() |> elem(1) do
       [] -> nil
@@ -68,7 +68,7 @@ defmodule Beamcode.Procedures do
     end
   end
 
-  @doc "One procedure by name; a blank name means the Folder's first one."
+  @doc "One procedure by name; a blank name means the Project's first one."
   def find(project, name) do
     list = list(project)
 
@@ -78,12 +78,12 @@ defmodule Beamcode.Procedures do
     end
   end
 
-  @doc "`{procedures, errors}` for a Folder (kept a few seconds, see `Procedures.Cache`)."
+  @doc "`{procedures, errors}` for a Project (kept a few seconds, see `Procedures.Cache`)."
   def load(project) do
     Cache.fetch({project.directory, project.kind}, fn -> read(project) end)
   end
 
-  @doc "Forgets a Folder's cached procedures, after a file changed."
+  @doc "Forgets a Project's cached procedures, after a file changed."
   def changed(project), do: Cache.drop({project.directory, project.kind})
 
   defp read(project) do
@@ -148,7 +148,7 @@ defmodule Beamcode.Procedures do
     end
   end
 
-  @doc "The Folder's notes a step can be handed: `.peon/*.md`."
+  @doc "The Project's notes a step can be handed: `.peon/*.md`."
   def notes(project) do
     case Opencode.list_dir(project.directory, ".peon") do
       {:ok, entries} when is_list(entries) ->
@@ -430,7 +430,7 @@ defmodule Beamcode.Procedures do
                 uses hand_over on_changes back_to returns offers on_fail skill)
 
   @doc """
-  Changes a Folder's own procedure file. `edit` is one of
+  Changes a Project's own procedure file. `edit` is one of
   `%{"op" => "step", "index" => i, "attrs" => %{...}}` (a step's prompt,
   model, effort, session or wait; "" removes one), `%{"op" => "add_step"}`,
   `%{"op" => "remove_step", "index" => i}` or `%{"op" => "use_prompt", "index" => i}`
@@ -449,7 +449,7 @@ defmodule Beamcode.Procedures do
       :ok
     else
       %{source: "global"} ->
-        {:error, "This one is global: change it in the setup Folder's procedures."}
+        {:error, "This one is global: change it in the setup Project's procedures."}
 
       %{source: "legacy"} ->
         {:error,
@@ -556,7 +556,7 @@ defmodule Beamcode.Procedures do
     Map.put(front, :order, keys)
   end
 
-  ## Folders made before the file format (kind "routine")
+  ## Projects made before the file format (kind "routine")
 
   defp legacy(%Project{kind: "routine"} = project) do
     skills = own_skills(project.directory)
@@ -598,7 +598,7 @@ defmodule Beamcode.Procedures do
     }
   end
 
-  # procedures.json, or else routine.json as one entry for the Folder's skill.
+  # procedures.json, or else routine.json as one entry for the Project's skill.
   defp legacy_specs(project, skills) do
     case read_json(project, @legacy_json) do
       {:ok, map} ->
@@ -638,7 +638,7 @@ defmodule Beamcode.Procedures do
     end
   end
 
-  # The skill a routine.json runs: the one its prompt names, else the Folder's.
+  # The skill a routine.json runs: the one its prompt names, else the Project's.
   defp legacy_name(project, skills, run) do
     own = Enum.map(skills, & &1.name)
     preferred = skill_name(project.name)
@@ -649,7 +649,7 @@ defmodule Beamcode.Procedures do
     end
   end
 
-  # The skills in the Folder itself. OpenCode loads a folder's skills lazily,
+  # The skills in the Project itself. OpenCode loads a folder's skills lazily,
   # answering [] the first time, so an empty answer is asked once more.
   defp own_skills(dir, tries \\ 2) do
     case Opencode.skills(dir) do
@@ -699,7 +699,7 @@ defmodule Beamcode.Procedures do
 
   @doc """
   The message that runs a one-step procedure with `values` (defaults for
-  missing ones). A Folder from before the file format runs its skill: its
+  missing ones). A Project from before the file format runs its skill: its
   `run` prompt with `{input}` placeholders filled in, or else `/name` and the
   values as `name: value` pairs. A file procedure's step prompt comes after a
   `/name values` line, so the chat says what ran.
@@ -798,7 +798,7 @@ defmodule Beamcode.Procedures do
 
   def multi_step?(_), do: true
 
-  @doc "`/` completion: the Folder's procedures, with their inputs."
+  @doc "`/` completion: the Project's procedures, with their inputs."
   def slash_items(project) do
     for p <- list(project) do
       %{
@@ -814,7 +814,7 @@ defmodule Beamcode.Procedures do
   def skill_name(name), do: name |> String.split("-") |> List.last()
 
   @doc """
-  How procedures work, for a Folder's AGENTS.md and the agent that drafts
+  How procedures work, for a Project's AGENTS.md and the agent that drafts
   one: the file, run-links to start the next one, and the hidden blocks a
   step's reply ends with.
   """
@@ -861,9 +861,9 @@ defmodule Beamcode.Procedures do
 
     Other step kinds: `run: refund` (with `for_each: approved`, `with:`,
     `on_fail: continue`) runs another procedure; `queue: ship` with
-    `for_each:` and `title:` adds tickets in a code Folder; `call:
-    stripe.refunds.create` with `params:` and `confirm:` makes one connector
-    call with no model. `key` is the input that identifies the thing acted on
+    `for_each:` and `title:` adds tickets in a code Project; `call:
+    stripe.create_refund` with `params:` and `confirm:` sends one of the
+    Project's API calls (`.peon/api/stripe.json`) with no model. `key` is the input that identifies the thing acted on
     (a charge id, not a name): never act twice on the same key. Notes a step
     can be handed live in `.peon/*.md`.
 
@@ -876,7 +876,7 @@ defmodule Beamcode.Procedures do
     ```
 
     The app shows each as a button, and "Send all" when there are several.
-    URL-encode values. Use only procedures this Folder has.
+    URL-encode values. Use only procedures this Project has.
 
     ### Blocks a reply ends with (hidden in the app)
 
@@ -899,31 +899,33 @@ defmodule Beamcode.Procedures do
   end
 
   @doc """
-  Starts drafting a new procedure in the Folder's chat from `description`
-  (the user's words). `granted` are connector names it may use. Returns
-  `{:ok, session_id, not_ready}` where `not_ready` are granted connectors
-  still missing their secret.
+  Starts drafting a new procedure in the Project's chat from `description`
+  (the user's words). Returns `{:ok, session_id, not_ready}` where
+  `not_ready` are its API services still missing their secret.
   """
-  def draft(project, user, description, granted) do
-    connectors = Enum.filter(Connectors.list(), &(&1.error == nil and &1.name in granted))
+  def draft(project, user, description) do
+    services = Enum.filter(Connectors.all_for(project), &(&1.error == nil))
     secrets = Vault.names()
 
-    tools =
-      for c <- connectors,
+    calls =
+      for c <- services,
           t <- c.tools,
           t.permission != "deny",
-          do: Connectors.tool_name(c, t)
+          do: "#{c.name}.#{t.name}"
 
-    not_ready = for c <- connectors, not Connectors.ready?(c, secrets), do: c.name
+    not_ready = for c <- services, not Connectors.ready?(c, secrets), do: c.name
 
     connector_hint =
       cond do
-        tools == [] -> "It has no connectors yet."
-        true -> "It may use these MCP tools from the gateway server: #{Enum.join(tools, ", ")}."
+        calls == [] ->
+          "It has no API calls yet (.peon/api/)."
+
+        true ->
+          "Its API calls (a `call:` step, or the gateway tool `<service>_<call>`): #{Enum.join(calls, ", ")}."
       end
 
     prompt = """
-    Add a procedure to this Folder (#{project.name}). Its job, in the user's words:
+    Add a procedure to this Project (#{project.name}). Its job, in the user's words:
 
     #{description}
 
@@ -947,7 +949,7 @@ defmodule Beamcode.Procedures do
   @doc """
   The OpenCode model a step names: `provider/id`, an id, or a short name like
   `opus` (its newest match, from `prefer`'s provider first: the one the
-  Folder's default model comes from). Effort becomes the model's variant when
+  Project's default model comes from). Effort becomes the model's variant when
   it has one. Returns `%{"id", "providerID", ["variant"]}` or nil.
   """
   def resolve_model(name, effort, models, prefer \\ nil)

@@ -20,7 +20,7 @@ defmodule Beamcode.Outbox do
 
   @doc """
   Queues an action on row `remote_id` (nil for one that makes a row, like
-  create) of source `name` (nil when the Folder has one): `{:ok, entry}`.
+  create) of source `name` (nil when the Project has one): `{:ok, entry}`.
   """
   def act(%Project{} = project, name, action, remote_id, args, origin, opts \\ []) do
     args = if is_map(args), do: args, else: %{}
@@ -259,7 +259,7 @@ defmodule Beamcode.Outbox do
 
     case {name, Map.to_list(sources)} do
       {nil, [{name, s}]} -> {:ok, name, s}
-      {nil, []} -> {:error, "This Folder has no synced source"}
+      {nil, []} -> {:error, "This Project has no synced source"}
       {nil, _} -> {:error, "Say which source: #{sources |> Map.keys() |> Enum.join(", ")}"}
       {name, _} -> if s = sources[name], do: {:ok, name, s}, else: {:error, "No source #{name}"}
     end
@@ -274,7 +274,7 @@ defmodule Beamcode.Outbox do
          "#{info.name} has no action #{action}. Actions: #{info.actions |> Map.keys() |> Enum.join(", ")}"}
 
       "off" ->
-        {:error, "#{info.actions[action].label} is off for this Folder (Settings → Source)"}
+        {:error, "#{info.actions[action].label} is off for this Project (Settings → Source)"}
 
       level ->
         {:ok, level}

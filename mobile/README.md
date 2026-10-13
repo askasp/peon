@@ -35,6 +35,15 @@ Needs macOS, or an EAS cloud build (`npx eas-cli build --profile development --p
 plus an Apple developer account. `UIBackgroundModes: audio` is set, so hands-free keeps
 listening with the screen locked.
 
+## Updates over the air
+
+Builds take JS updates from EAS Update (`expo-updates`). Each build profile has a channel
+(`development`, `preview`, `production`; TestFlight builds are `production`). Ship a JS change
+with `npm run update -- --message "…"`: the app downloads it on launch and runs it on the
+launch after. `runtimeVersion` uses the `fingerprint` policy, so an update only reaches builds
+with the same native code: after adding a native module, a config plugin, or changing native
+fields in `app.json`, make a new build.
+
 ## Web
 
 Phoenix serves the web build at `/app` (`BeamcodeWeb.AppController`), logged in with the web

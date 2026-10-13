@@ -131,8 +131,7 @@ defmodule Beamcode.DataSources do
         {:ok, token}
 
       _ ->
-        {:error,
-         "#{info.name} isn't connected. Connect it in Settings → Connectors (#{info.secret})."}
+        {:error, "#{info.name} isn't connected. Set it in Settings → Secrets (#{info.secret})."}
     end
   end
 

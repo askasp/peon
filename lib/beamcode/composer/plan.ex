@@ -8,7 +8,7 @@ defmodule Beamcode.Composer.Plan do
 
     * `:session` / `:chat` – `project`, `task`, `skill`, `use_model`, `agent`
     * `:send` – `session` (%{id, title, project}), `text`
-    * `:run` – `project` (the Operations Folder), `procedure`, `inputs`
+    * `:run` – `project` (the Operations Project), `procedure`, `inputs`
     * `:status` – `project` or nil, `status` (:latest | :overview)
     * `:create_routine` – `name`, `brief`, `connectors`
     * `:permission` – `perm`, `decision`
@@ -390,7 +390,7 @@ defmodule Beamcode.Composer.Plan do
         Connectors.sync_all()
       end
 
-      case Procedures.draft(project, user, plan.brief, plan.connectors) do
+      case Procedures.draft(project, user, plan.brief) do
         {:ok, session_id, _not_ready} -> {:navigate, session_id}
         error -> error
       end
@@ -450,7 +450,7 @@ defmodule Beamcode.Composer.Plan do
   def rows(%{action: :create_routine} = p),
     do:
       [{"Action", "Create procedure"}, {"Name", p.name}, {"Job", p.brief}] ++
-        if(p.connectors == [], do: [], else: [{"Connectors", Enum.join(p.connectors, ", ")}]) ++
+        if(p.connectors == [], do: [], else: [{"API calls", Enum.join(p.connectors, ", ")}]) ++
         missing_row(p[:missing] || [])
 
   def rows(%{action: :permission} = p),
@@ -467,7 +467,7 @@ defmodule Beamcode.Composer.Plan do
   defp missing_row(names),
     do: [
       {"Not connected",
-       "#{Enum.join(names, ", ")}: add it on Connectors, or the procedure can’t reach it"}
+       "#{Enum.join(names, ", ")}: add it in the Project’s API calls, or the procedure can’t reach it"}
     ]
 
   defp pick_rows(p),

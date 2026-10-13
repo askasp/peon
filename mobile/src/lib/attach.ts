@@ -1,5 +1,5 @@
 // "Chat about this": a file, and how it was being viewed, handed from Files to
-// a single-chat Folder's composer. The phone's View is its own screen, so it
+// a single-chat Project's composer. The phone's View is its own screen, so it
 // goes through here rather than props.
 
 import { useSyncExternalStore } from "react";
@@ -13,13 +13,13 @@ const subscribe = (l: () => void) => {
   return () => listeners.delete(l);
 };
 
-/** Puts `file` in Folder `project`'s composer (null takes it out). */
+/** Puts `file` in Project `project`'s composer (null takes it out). */
 export function attachToChat(project: string | number, file: Attached | null) {
   pending = { project: String(project), file };
   listeners.forEach((l) => l());
 }
 
-/** What is attached to Folder `project`'s composer. */
+/** What is attached to Project `project`'s composer. */
 export function useAttached(project: string | number): Attached | null {
   const p = useSyncExternalStore(subscribe, () => pending);
   return p.project === String(project) ? p.file : null;

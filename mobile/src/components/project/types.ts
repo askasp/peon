@@ -6,7 +6,7 @@ export type ProjectCtx = {
   project: Project;
   canEdit: boolean;
   admin: boolean;
-  /** The procedures the Folder can run (its own, legacy and global), and what's wrong with their files. */
+  /** The procedures the Project can run (its own, legacy and global), and what's wrong with their files. */
   procedures: Procedure[];
   proceduresError: string | null;
   /** Asks the server again (after the chat may have added one). */

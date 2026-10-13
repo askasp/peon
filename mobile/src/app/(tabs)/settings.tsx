@@ -66,7 +66,7 @@ export default function Settings() {
             <Text style={st.value}>{user?.username}</Text>
           </View>
           <View style={[st.row, st.top]}>
-            <Text style={st.label}>Home Folder</Text>
+            <Text style={st.label}>Home Project</Text>
             <Text style={[st.value, st.mono]}>home/{user?.username}/</Text>
           </View>
           {!connected ? (
@@ -81,7 +81,7 @@ export default function Settings() {
         <Group>
           <View style={st.row}>
             <Text style={st.label}>New chats go to</Text>
-            <Text style={st.value}>Current Folder, else Home</Text>
+            <Text style={st.value}>Current Project, else Home</Text>
           </View>
         </Group>
 
@@ -149,7 +149,7 @@ export default function Settings() {
             <Group>
               {[
                 { href: "/users", label: "Users" },
-                { href: "/connectors", label: "Connectors" },
+                { href: "/connectors", label: "Secrets" },
                 { href: "/models", label: "Models" },
               ].map((l, i) => (
                 <Tap

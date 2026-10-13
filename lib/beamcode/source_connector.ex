@@ -8,7 +8,7 @@ defmodule Beamcode.SourceConnector do
   The token comes from the Vault secret named in `info().secret`.
   """
 
-  @typedoc "One action: what the Folder settings show, and its level when nothing is set."
+  @typedoc "One action: what the Project settings show, and its level when nothing is set."
   @type action :: %{label: String.t(), default: String.t(), needs_row: boolean()}
 
   @typedoc """

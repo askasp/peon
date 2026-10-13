@@ -1,6 +1,6 @@
 defmodule Beamcode.Tickets do
   @moduledoc """
-  The tasks a Folder tracks with `tk`: markdown files in `.tickets/` next to
+  The tasks a Project tracks with `tk`: markdown files in `.tickets/` next to
   its code. They are read here, and created and moved with the `tk` command on
   the OpenCode server, so the files stay exactly what the agents read and write.
   """
@@ -11,7 +11,7 @@ defmodule Beamcode.Tickets do
   @types ~w(bug feature task epic chore)
   @statuses ~w(open in_progress closed)
 
-  @doc "The Folder's tasks, active first, then by priority and age. `{:ok, [ticket]}`."
+  @doc "The Project's tasks, active first, then by priority and age. `{:ok, [ticket]}`."
   def list(%Project{} = project) do
     case Opencode.list_dir(project.directory, @dir) do
       {:ok, entries} ->
@@ -29,7 +29,7 @@ defmodule Beamcode.Tickets do
 
         {:ok, tickets}
 
-      # A Folder that doesn't use tickets yet (no `.tickets/`): none.
+      # A Project that doesn't use tickets yet (no `.tickets/`): none.
       _ ->
         {:ok, []}
     end
@@ -104,7 +104,7 @@ defmodule Beamcode.Tickets do
   end
 
   @doc """
-  The tasks in each folder of `dirs` (a Folder's main and its worktrees), read
+  The tasks in each folder of `dirs` (a Project's main and its worktrees), read
   in one shell call: `%{dir => [ticket]}`, each list sorted like `list/1`.
   """
   def list_trees(_project, []), do: %{}

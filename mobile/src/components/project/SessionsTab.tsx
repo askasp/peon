@@ -28,20 +28,20 @@ function dayLabel(ms: number | null): string {
 
 type Branch = { name: string; worktree: string | null; remote: boolean; updated: number };
 
-// Where a new chat starts: a fresh worktree, the Folder itself, or a branch's worktree.
+// Where a new chat starts: a fresh worktree, the Project itself, or a branch's worktree.
 const NEW = "\u0000new";
 const MAIN = "\u0000main";
 
 type Row = { kind: "day"; key: string; label: string } | { kind: "session"; key: string; s: SessionSummary };
 
-/** A Folder's chats, newest first by day, under a box that starts a new one. */
+/** A Project's chats, newest first by day, under a box that starts a new one. */
 export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
   const insets = useSafeAreaInsets();
   const wide = useWide();
   const [text, setText] = useState("");
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Code Folders: null follows the header's "New worktree" switch.
+  // Code Projects: null follows the header's "New worktree" switch.
   const code = ctx.project.kind === "code";
   const [picked, setWhere] = useState<string | null>(null);
   const where = picked ?? (ctx.project.always_worktree ? NEW : MAIN);
@@ -59,7 +59,7 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
       });
   }
   const whereLabel = where === NEW ? "New worktree" : where === MAIN ? main : where;
-  // `/` completes from the Folder's skills and commands, fetched when the box is focused.
+  // `/` completes from the Project's skills and commands, fetched when the box is focused.
   const input = useRef<TextInput>(null);
   const [slash, setSlash] = useState<{ project: number; items: SessionOptions["slash"] } | null>(null);
   function loadSlash() {
@@ -172,7 +172,7 @@ export function SessionsTab({ ctx }: { ctx: ProjectCtx }) {
         title="Start the chat on"
         items={[
           { key: NEW, label: "New worktree", detail: `from ${main}`, active: where === NEW },
-          { key: MAIN, label: main, detail: "the Folder itself, no worktree", active: where === MAIN },
+          { key: MAIN, label: main, detail: "the Project itself, no worktree", active: where === MAIN },
           ...(branches ?? []).map((b) => ({
             key: b.name,
             label: b.name,

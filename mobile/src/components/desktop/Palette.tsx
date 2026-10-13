@@ -84,7 +84,7 @@ export function usePaletteItems(mode: PaletteMode | null): Item[] {
       { key: "settings", group: "Go to", label: "Settings", run: () => go("/settings") },
       ...(user?.admin
         ? [
-            { key: "connectors", group: "Go to", label: "Connectors", run: () => go("/connectors") },
+            { key: "connectors", group: "Go to", label: "Secrets", run: () => go("/connectors") },
             { key: "models", group: "Go to", label: "Models", run: () => go("/models") },
             { key: "users", group: "Go to", label: "Users", run: () => go("/users") },
           ]

@@ -66,7 +66,7 @@ defmodule Beamcode.TicketsTest do
     }
   end
 
-  test "reads a Folder's tasks from .tickets/", %{project: project} do
+  test "reads a Project's tasks from .tickets/", %{project: project} do
     assert {:ok, [t]} = Tickets.list(project)
 
     assert t["id"] == "tkt-1"

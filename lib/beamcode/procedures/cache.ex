@@ -1,6 +1,6 @@
 defmodule Beamcode.Procedures.Cache do
   @moduledoc """
-  Keeps each Folder's procedure list for a few seconds, so a run's steps, `/`
+  Keeps each Project's procedure list for a few seconds, so a run's steps, `/`
   completion and the scheduler don't all re-read the files over OpenCode.
   `config :beamcode, :procedures_cache_ms` sets how long (0 turns it off).
   """

@@ -91,7 +91,7 @@ function KindTile({ glyph, tint, bg }: { glyph: string; tint: string; bg: string
   );
 }
 
-/** Where a card comes from: the Folder's letter and name, then a detail. */
+/** Where a card comes from: the Project's letter and name, then a detail. */
 function Source({ name, detail }: { name: string; detail: string }) {
   return (
     <View style={st.source}>

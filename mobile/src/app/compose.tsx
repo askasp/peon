@@ -16,10 +16,10 @@ import type { Project } from "@/lib/types";
 
 const folderName = (p: Project) => (p.kind === "home" ? "Home" : p.name);
 
-// Templates you can start a chat in straight away: the chat makes the Folder.
+// Templates you can start a chat in straight away: the chat makes the Project.
 const fresh = templates.filter((t) => ["design", "document", "dataset"].includes(t.kind));
 
-/** `@folder` picks a Folder, `/skill` a skill; the rest is the task. */
+/** `@folder` picks a Project, `/skill` a skill; the rest is the task. */
 function parse(text: string, projects: Project[]) {
   const at = /@([\w-]+)/.exec(text)?.[1]?.toLowerCase();
   const mentioned = at
@@ -34,9 +34,9 @@ function parse(text: string, projects: Project[]) {
   return { mentioned, skill, task };
 }
 
-// New chat: a sheet over whatever you were looking at. It goes to the Folder
+// New chat: a sheet over whatever you were looking at. It goes to the Project
 // you're in (or one you pick or @mention), else Home. "+ Design" and the like
-// make a new Folder from that template first.
+// make a new Project from that template first.
 export default function Compose() {
   const params = useLocalSearchParams<{ folder?: string; listen?: string; text?: string }>();
   const insets = useSafeAreaInsets();
@@ -64,7 +64,7 @@ export default function Compose() {
   const home = projects.find((p) => p.kind === "home");
   const { mentioned, skill, task } = parse(line, projects);
   const chosen = projects.find((p) => p.id === picked);
-  // A new Folder from a template, unless an @mention says otherwise.
+  // A new Project from a template, unless an @mention says otherwise.
   const template = mentioned ? null : fresh.find((t) => t.kind === kind);
   const newName = template ? newFolderName(task, template.kind, projects) : null;
   const folder = template ? undefined : (mentioned ?? chosen ?? here ?? home ?? projects[0]);
@@ -182,7 +182,7 @@ export default function Compose() {
 
         <View style={st.grid}>
           <View style={st.row}>
-            <Text style={st.key}>Folder</Text>
+            <Text style={st.key}>Project</Text>
             {template ? (
               <Text style={st.val}>
                 New {template.label} <Text style={st.faint}>{newName}</Text>

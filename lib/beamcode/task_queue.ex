@@ -1,6 +1,6 @@
 defmodule Beamcode.TaskQueue do
   @moduledoc """
-  A Code Folder's task queue, from `tk`: each tree (the Folder's main and every
+  A Code Project's task queue, from `tk`: each tree (the Project's main and every
   chat's worktree) has its own `.tickets/`, so a task belongs to the chat that
   owns the worktree and runs there, one at a time. A task on main starts in a
   new chat with a new worktree; its file moves there.
@@ -109,7 +109,7 @@ defmodule Beamcode.TaskQueue do
   @doc """
   Adds tasks to the tree `ref`, from `titles`. With `chain`, each waits on the
   one before. `procedure:` names the procedure they run through (else the
-  Folder's Queue default). Then, with `queue_auto`, an idle worktree starts
+  Project's Queue default). Then, with `queue_auto`, an idle worktree starts
   the first. `{:ok, ids}`.
   """
   def add(%Project{} = project, user, ref, titles, chain \\ false, opts \\ []) do
@@ -182,7 +182,7 @@ defmodule Beamcode.TaskQueue do
   end
 
   # Marks the task in progress and hands it to the chat: as a run of its
-  # procedure (the ticket's, else the Folder's Queue default), else as one
+  # procedure (the ticket's, else the Project's Queue default), else as one
   # message (`prompt/1`). A run closes the task when its last step is done.
   defp run(tree, session_id, ticket, user) do
     id = ticket["id"]
@@ -281,7 +281,7 @@ defmodule Beamcode.TaskQueue do
 
   @doc """
   A chat stopped (OpenCode's session.execution.succeeded). If it's a Code
-  Folder's worktree chat with `queue_auto` on and no task in progress there
+  Project's worktree chat with `queue_auto` on and no task in progress there
   any more, start the next ready one.
   """
   def finished(session_id) do

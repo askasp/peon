@@ -23,7 +23,7 @@ const slug = (s: string) =>
 const validName = (s: string) => /^[a-z0-9][a-z0-9-]*$/.test(s);
 const isGithub = (s: string) => /github\.com[/:][^/\s]+\/[^/\s]+/.test(s);
 
-// New Folder from a template: code (clone or new repo), document, design, dataset, or routine (drafted by a session).
+// New Project from a template: code (clone or new repo), document, design, dataset, or routine (drafted by a session).
 /** What creating the project makes, like the web shows it. */
 function willCreate(kind: Kind, name: string, source: string, token: string, importing: boolean): string {
   if (kind === "routine") {
@@ -33,7 +33,7 @@ function willCreate(kind: Kind, name: string, source: string, token: string, imp
       `routines/${name}/`,
       "  AGENTS.md                   drafted from your description",
       `  .opencode/skill/${skill}/SKILL.md`,
-      "  opencode.json               gateway connectors · permissions",
+      "  opencode.json               gateway API calls · permissions",
       "  schedules.json",
     ].join("\n");
   }
@@ -103,7 +103,7 @@ export default function NewProject() {
     <Screen>
       <BackHeader label="Back" />
       <ScrollView contentContainerStyle={st.body} keyboardShouldPersistTaps="handled">
-        <Text style={st.title}>New Folder</Text>
+        <Text style={st.title}>New Project</Text>
         <View style={st.kinds}>
           {templates.map((k) => (
             <Tap
@@ -123,7 +123,7 @@ export default function NewProject() {
 
         {kind === "routine" && options?.known_routines.length ? (
           <>
-            <SectionLabel>Add an existing procedure folder</SectionLabel>
+            <SectionLabel>Add an existing procedure project</SectionLabel>
             <View style={st.chips}>
               {options.known_routines.map((r) => (
                 <Tap
@@ -250,7 +250,7 @@ export default function NewProject() {
             </Text>
             {options?.connectors.length ? (
               <>
-                <SectionLabel>Connectors it may use</SectionLabel>
+                <SectionLabel>Shared API calls it may use</SectionLabel>
                 {options.connectors.map((c) => (
                   <View key={c.name} style={st.toggleRow}>
                     <View style={{ flex: 1 }}>

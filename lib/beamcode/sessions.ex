@@ -5,7 +5,7 @@ defmodule Beamcode.Sessions do
 
   @doc """
   Creates a session in the project's folder, or in a fresh git worktree when
-  `worktree: true` in a Code Folder (other Folders have one tree), or on an
+  `worktree: true` in a Code Project (other Projects have one tree), or on an
   existing branch with `branch: "name"` (its worktree, made when it has none).
   Records who started it.
 
@@ -38,7 +38,7 @@ defmodule Beamcode.Sessions do
   end
 
   @doc """
-  Where new work in a Folder goes: its one chat in a single-chat Folder
+  Where new work in a Project goes: its one chat in a single-chat Project
   (`Project.single_chat?/1`), else a new session (`start/3`).
   """
   def open(%Project{} = project, user, opts \\ []) do
@@ -50,8 +50,8 @@ defmodule Beamcode.Sessions do
   end
 
   @doc """
-  A single-chat Folder's one chat, made the first time: the team chat worked in
-  last. Chats from before Folders had one chat come back as `earlier`, oldest
+  A single-chat Project's one chat, made the first time: the team chat worked in
+  last. Chats from before Projects had one chat come back as `earlier`, oldest
   first, so the app can show them above it under their old titles:
   `{:ok, session, earlier}`.
   """

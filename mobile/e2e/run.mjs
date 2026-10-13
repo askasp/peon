@@ -621,12 +621,12 @@ async function iphone() {
     rmSync(f, { force: true });
   });
 
-  await step("iphone new chat sheet: + opens it, @folder picks the Folder", async () => {
+  await step("iphone new chat sheet: + opens it, @folder picks the Project", async () => {
     await page.goto(`${BASE}/app`);
     await click(page, "tab-mic");
     const box = page.locator('[data-testid="compose-input"]');
     await box.fill(`@${PROJECT} reply with exactly: sheet`);
-    await waitFor(async () => (await byText(page, PROJECT).count()) > 0, "no Folder picked");
+    await waitFor(async () => (await byText(page, PROJECT).count()) > 0, "no Project picked");
     await click(page, "compose-go");
     await page.waitForURL(/\/app\/session\//, { timeout: 60000 });
     await waitFor(async () => (await byText(page, "sheet").count()) > 0, "no reply", 90000);

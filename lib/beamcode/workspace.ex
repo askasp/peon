@@ -5,16 +5,17 @@ defmodule Beamcode.Workspace do
       <root>/
         setup/                 system project, admins only
           AGENTS.md
-          connectors/*.json    one file per connector
-          procedures/*.md      global procedures, in every Folder
+          connectors/*.json    older shared API calls (projects move them in)
+          procedures/*.md      global procedures, in every Project
         routines/
           AGENTS.md            shared by all routines
           .opencode/skill/     shared skills
-          <name>/              an Operations Folder = its own project
+          <name>/              an Operations Project = its own project
             AGENTS.md
-            .peon/procedures/  one file per procedure (any Folder can have these)
+            .peon/procedures/  one file per procedure (any Project can have these)
+            .peon/api/         one file per API service and its calls (any Project)
             .peon/*.md         notes a step can be handed
-            opencode.json      gateway MCP server + connector permissions
+            opencode.json      gateway MCP server + API call permissions
         code/<name>/           cloned or new git repos
         home/<username>/       each user's private Home folder
         <name>/                chat, document, design and dataset folders
@@ -138,7 +139,8 @@ defmodule Beamcode.Workspace do
     "b25b0784a6a43e68945b0171497b162826515e5616b1eebc7d61a917c88497c4",
     "e6cab37c52f5807af0ada75097013bffcc7797c5c235d81fb762f4941d908ba4",
     "e14f4c7410e79a5b7c8bcf832175c48c9bcc4045c5fa221dfe7fbb913015995b",
-    "3166a3f2888ce23b6be720a41e79238522ec23fa286adf92df1013352543569c"
+    "3166a3f2888ce23b6be720a41e79238522ec23fa286adf92df1013352543569c",
+    "3cd6b114579e837baf8f5a49ff88ceb44561155d7fbabc6b9a05f3b3b09d0f5b"
   ]
 
   defp write_managed(dir, path, content) do
@@ -180,7 +182,7 @@ defmodule Beamcode.Workspace do
     |> Enum.sort()
   end
 
-  @doc "Folders in routines/ that aren't Peon projects yet (e.g. made by a setup session)."
+  @doc "Projects in routines/ that aren't Peon projects yet (e.g. made by a setup session)."
   def unregistered_routines do
     with root when is_binary(root) <- root(),
          {:ok, entries} <- Opencode.list_dir(root, "routines") do
@@ -354,7 +356,7 @@ defmodule Beamcode.Workspace do
 
   defp q(s), do: "'" <> String.replace(s, "'", "'\\''") <> "'"
 
-  # An Operations Folder starts with no procedures: they're added in its chat.
+  # An Operations Project starts with no procedures: they're added in its chat.
   defp prepare_routine(root, dir, name, attrs) do
     rel = Path.relative_to(dir, root)
     desc = String.trim(attrs["description"] || "")
@@ -370,7 +372,7 @@ defmodule Beamcode.Workspace do
     write_new(root, Path.join(rel, "AGENTS.md"), agents)
   end
 
-  # AGENTS.md (with what the Folder is for, if given) and the template's skill.
+  # AGENTS.md (with what the Project is for, if given) and the template's skill.
   defp prepare_folder(root, dir, kind, description \\ nil) do
     rel = Path.relative_to(dir, root)
     desc = String.trim(description || "")
@@ -625,7 +627,7 @@ defmodule Beamcode.Workspace do
     """
     # Routines
 
-    Shared by all Operations Folders: company, tone, policies. Each folder here
+    Shared by all Operations Projects: company, tone, policies. Each folder here
     groups related procedures (`.peon/procedures/*.md`). Shared skills live in
     `.opencode/skill/`.
     """
@@ -635,73 +637,29 @@ defmodule Beamcode.Workspace do
     """
     # Setup
 
-    This is the setup project. Admins use sessions here to connect APIs (connectors)
-    and to set up routines. Be brief and concrete.
+    This is the setup project. Admins use sessions here to set up routines and
+    global procedures. Be brief and concrete.
 
-    ## Connectors
+    ## API calls
 
-    A connector is one JSON file: `connectors/<name>.json`. The gateway reads every file
-    in that folder and exposes each tool as an MCP tool to the projects listed in
-    `projects`. This setup project can always use every connector, so you can test it.
-    The tools show up from the `gateway` MCP server, named `<connector>_<tool>`.
+    A Project's API calls live in its own `.peon/api/<service>.json`. Write
+    them there, in the Project that uses them.
 
-    ```json
-    {
-      "name": "front",
-      "baseUrl": "https://api2.frontapp.com",
-      "auth": { "type": "bearer", "secret": "FRONT_TOKEN" },
-      "tools": {
-        "list_conversations": ["GET", "/inboxes/{inbox}/conversations", "allow", "List conversations in an inbox"],
-        "add_comment": ["POST", "/conversations/{id}/comments", "ask", "Add an internal comment"],
-        "archive": ["PATCH", "/conversations/{id}", "deny"]
-      },
-      "projects": ["front-digest"]
-    }
-    ```
-
-    - `auth.type`: `bearer`, `header` (add `"header": "X-Api-Key"`), `basic`
-      (secret holds `user:password`), `query` (add `"param": "api_key"`) or `none`.
-    - Each tool is `[method, path, permission, description]`. The description is all
-      a routine sees, so say exactly what values look like: date formats (Unix
-      seconds vs ISO), ID prefixes, query syntax, and how paging works.
-      Permission: `allow` runs, `ask` waits for a person to approve each call,
-      `deny` is never exposed. Default: reads allow, writes ask, destructive deny.
-    - `{placeholders}` in the path become required tool arguments. Every tool also
-      takes optional `query` and `body` objects.
-    - `name` must match the file name. Secret names are UPPER_SNAKE_CASE.
-    - Rate limits: look up the API's limit in its docs and set
-      `"rateLimit": {"perMinute": N}` a bit under it. The gateway paces every
-      call to that connector (all sessions together), and on HTTP 429 it waits
-      as long as the API asks and retries. Skills must not sleep or retry 429s
-      themselves.
-    - Verbose JSON: set `"compact": true` to drop `_links` and HTML `body`
-      fields that have a plain `text` copy. Responses over 60 KB are cut, so
-      prefer search endpoints and page sizes (`limit`) over listing everything.
-
-    ## Secrets
-
-    Never ask anyone to paste a token into this chat, and never write one to a file.
-    Tell them to open **Connectors** in the sidebar and set the secret named in
-    `auth.secret`. It goes to the vault. Then test the connector with a read call.
-
-    ## Setting up a connector
-
-    1. Read the API docs (webfetch).
-    2. Write `connectors/<name>.json` with the tools the user needs.
-    3. Ask the user to set the secret on the Connectors page.
-    4. Call one or two read tools to test it, and say what you found.
-    5. Ask which projects should get it and update `projects`.
+    #{Beamcode.Connectors.format_doc()}
+    Older shared files in `connectors/<name>.json` here still reach the
+    projects in their `"projects"` list, and this setup project can call every
+    one of them. A Project moves one in from its API calls tab.
 
     ## Procedures
 
-    A procedure is a file, `.peon/procedures/<name>.md`, in any Folder; it runs
-    as `/<name>` there. Operations Folders (procedures only, no repo) live in
+    A procedure is a file, `.peon/procedures/<name>.md`, in any Project; it runs
+    as `/<name>` there. Operations Projects (procedures only, no repo) live in
     `../routines/<name>/`. Their AGENTS.md explains the format: inputs, steps
     with their own model and session, schedules, run-links, and the blocks a
     step's reply ends with.
 
     Global procedures are `procedures/<name>.md` here in setup. They show up in
-    every Folder; a Folder's own file with the same name replaces one.
+    every Project; a Project's own file with the same name replaces one.
 
     Steps that read an API should narrow first (search by keywords, dates,
     status) and only then read details, one call per item. Reading everything
@@ -709,7 +667,7 @@ defmodule Beamcode.Workspace do
 
     A schedule goes in the procedure file (`schedule: Mon 07:00`, or
     `{ at: daily 02:00, tz: Europe/Oslo }`); pausing it is done in the app.
-    A Folder's `schedules.json` still runs plain prompts on a cron line:
+    A Project's `schedules.json` still runs plain prompts on a cron line:
 
     ```json
     { "morning-digest": { "cron": "0 8 * * 1-5", "prompt": "/digest since the last run",

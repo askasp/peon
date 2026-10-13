@@ -76,7 +76,7 @@ defmodule Beamcode.WorktreesTest do
     assert changes[merged] == []
   end
 
-  test "main is its own folder; a Code Folder's main is read-only", %{project: project} do
+  test "main is its own folder; a Code Project's main is read-only", %{project: project} do
     assert {:ok, ^project} = Worktrees.at(project, nil, "main")
     assert Worktrees.code_main?(project, project)
     refute Worktrees.code_main?(%{project | directory: "/elsewhere"}, project)

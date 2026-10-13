@@ -145,7 +145,7 @@ defmodule Beamcode.ProcedureRunsTest do
     %{"id" => "claude-sonnet-5-5", "providerID" => "anthropic"}
   ]
 
-  # A fake OpenCode: the Folder's chat "chat", sessions made on POST (s1, s2,
+  # A fake OpenCode: the Project's chat "chat", sessions made on POST (s1, s2,
   # …), and what each session last said (`reply/2`).
   setup do
     user = user_fixture()
@@ -214,7 +214,7 @@ defmodule Beamcode.ProcedureRunsTest do
         {"GET", ["api", "model"]} ->
           data(conn, @models)
 
-        # A shared skill, so the Folder's own (none) are known at once.
+        # A shared skill, so the Project's own (none) are known at once.
         {"GET", ["api", "skill"]} ->
           data(conn, [
             %{"name" => "shared", "path" => "/srv/routines/.opencode/skill/shared/SKILL.md"}

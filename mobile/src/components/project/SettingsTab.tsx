@@ -16,21 +16,23 @@ type Settings = {
   skills: { name: string; path: string }[];
   settings: { scope: string; always_worktree: boolean; protect_default_branch: boolean };
   github: { repo: string | null; hint: string | null } | null;
-  connectors: { name: string; tools: number; ready: boolean; granted: boolean }[];
   can_edit: boolean;
   admin: boolean;
 };
 
 /**
  * The template it came from, its instructions and skills, who sees it,
- * worktrees and branch protection, GitHub access, connectors.
+ * worktrees and branch protection, GitHub access, API calls.
  */
 export function SettingsTab({
   ctx,
   onSection,
+  onApi,
 }: {
   ctx: ProjectCtx;
   onSection: (s: "skills" | "schedules") => void;
+  /** Opens the API calls tab. */
+  onApi?: () => void;
 }) {
   const [version, setVersion] = useState(0);
   const wide = useWide();
@@ -75,8 +77,8 @@ export function SettingsTab({
         <Text style={st.cardTitle}>{p.kind === "home" ? "Home" : `${templateName[p.kind]} template`}</Text>
         <Text style={st.hint}>
           {p.kind === "home"
-            ? "Your private Folder. General chats and what they make live here."
-            : `Set up from the ${templateName[p.kind]} template. After that it works like any other Folder.`}
+            ? "Your private Project. General chats and what they make live here."
+            : `Set up from the ${templateName[p.kind]} template. After that it works like any other Project.`}
         </Text>
       </View>
 
@@ -207,33 +209,16 @@ export function SettingsTab({
         </>
       ) : null}
 
-      {data.connectors.length ? (
-        <>
-          <SectionLabel style={st.section}>Connectors</SectionLabel>
-          <Group>
-            {data.connectors.map((c, i) => (
-              <Row
-                key={c.name}
-                label={c.name}
-                detail={`${c.tools} tools${c.ready ? "" : " · secret not set"}`}
-                top={i > 0}
-              >
-                {data.admin ? (
-                  <Toggle
-                    value={c.granted}
-                    onChange={(v) =>
-                      act(`grant-${c.name}`, () =>
-                        ctx.call("grant", { connector: c.name, granted: v }, 30000),
-                      )
-                    }
-                  />
-                ) : (
-                  <Text style={st.hint}>{c.granted ? "granted" : "—"}</Text>
-                )}
-              </Row>
-            ))}
-          </Group>
-        </>
+      {onApi && p.kind !== "home" ? (
+        <View style={st.group}>
+          <Tap kb="row" testID="settings-api-calls" onPress={onApi} style={st.item}>
+            <View style={{ flex: 1, gap: 1 }}>
+              <Text style={st.itemTitle}>API calls</Text>
+              <Text style={st.itemSub}>.peon/api/</Text>
+            </View>
+            <Text style={st.chev}>›</Text>
+          </Tap>
+        </View>
       ) : null}
 
       {data.admin && p.kind !== "system" ? (

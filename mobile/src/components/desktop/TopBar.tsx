@@ -166,7 +166,7 @@ function CommandBar() {
               <ErrorLine message={c.error ?? dictation.error} />
               {task ? (
                 <View style={st.taskFoot}>
-                  <Text style={st.hint}>@ folder · / skill · “using” model</Text>
+                  <Text style={st.hint}>@ project · / skill · “using” model</Text>
                   <Button
                     label={`${c.button}  ↵`}
                     height={30}

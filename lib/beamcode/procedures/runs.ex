@@ -14,7 +14,7 @@ defmodule Beamcode.Procedures.Runs do
 
   A `run:` step starts other procedures as child runs, one per `for_each`
   item and one at a time; the step is done when the last child is. A `queue:`
-  step adds tickets; a `call:` step calls a connector with no model.
+  step adds tickets; a `call:` step sends one of the Project's API calls with no model.
   """
   require Logger
   import Ecto.Query, only: [from: 2]
@@ -33,8 +33,8 @@ defmodule Beamcode.Procedures.Runs do
 
   opts:
     * `:trigger` — "slash", "button", "schedule", "queue", "chain" (default "button")
-    * `:session_id` — the chat to run in; else the Folder's chat (a new
-      worktree chat in a code Folder), or for a child a session of its parent's
+    * `:session_id` — the chat to run in; else the Project's chat (a new
+      worktree chat in a code Project), or for a child a session of its parent's
     * `:parent` — the run whose step started this one
     * `:ticket` — the Queue ticket it works on
     * `:key` — the schedule's name ("manual" otherwise), `:scope`
@@ -71,7 +71,7 @@ defmodule Beamcode.Procedures.Runs do
 
   defp resolve(project, name) when is_binary(name) or is_nil(name) do
     case Procedures.find(project, name) do
-      nil when name in [nil, ""] -> {:error, "This Folder has no procedures yet."}
+      nil when name in [nil, ""] -> {:error, "This Project has no procedures yet."}
       nil -> {:error, "No procedure called #{name}."}
       p -> {:ok, p}
     end
@@ -80,7 +80,7 @@ defmodule Beamcode.Procedures.Runs do
   defp resolve(_project, %{name: _} = proc), do: {:ok, proc}
 
   # Where the run shows: the chat it was typed in, a child session of the
-  # parent's chat, else the Folder's chat (code: a new worktree chat).
+  # parent's chat, else the Project's chat (code: a new worktree chat).
   defp chat(project, user, proc, opts) do
     cond do
       opts[:session_id] ->
@@ -186,9 +186,9 @@ defmodule Beamcode.Procedures.Runs do
   defp call_asks?(project, s) do
     [connector | tool] = String.split(s.call, ".")
 
-    case Enum.find(Connectors.for_project(project), &(&1.name == connector)) do
+    case Connectors.find(project, connector) do
       nil -> false
-      c -> match?(%{permission: "ask"}, find_tool(c, Enum.join(tool, ".")))
+      c -> match?(%{permission: "ask"}, Connectors.find_tool(c, Enum.join(tool, ".")))
     end
   end
 
@@ -398,7 +398,7 @@ defmodule Beamcode.Procedures.Runs do
     end
   end
 
-  # A Folder note: `.peon/review.md` (or the path as written).
+  # A Project note: `.peon/review.md` (or the path as written).
   defp note_file(dir, name) do
     name = if String.ends_with?(name, ".md"), do: name, else: name <> ".md"
 
@@ -868,7 +868,7 @@ defmodule Beamcode.Procedures.Runs do
 
   def stop(_run), do: {:error, "This run isn't going."}
 
-  ## Connector calls
+  ## API calls
 
   @doc false
   def call(project, s, values) do
@@ -876,9 +876,9 @@ defmodule Beamcode.Procedures.Runs do
     tool = Enum.join(tool, ".")
 
     with %{} = c <-
-           Enum.find(Connectors.list(), &(&1.name == connector)) ||
-             {:error, "No #{connector} connector."},
-         %{} = t <- find_tool(c, tool) || {:error, "#{connector} has no #{tool}."},
+           Connectors.find(project, connector) ||
+             {:error, "No #{connector} API in this Project (.peon/api/#{connector}.json)."},
+         %{} = t <- Connectors.find_tool(c, tool) || {:error, "#{connector} has no #{tool}."},
          :ok <-
            if(t.permission == "deny",
              do: {:error, "#{connector} · #{tool} is denied."},
@@ -905,11 +905,6 @@ defmodule Beamcode.Procedures.Runs do
         {:error, reason} -> {:error, reason}
       end
     end
-  end
-
-  defp find_tool(c, tool) do
-    Enum.find(c.tools, &(&1.name == tool)) ||
-      Enum.find(c.tools, &(&1.name == String.replace(tool, ".", "_")))
   end
 
   # A short line from a JSON answer: its id and status, else the start.
@@ -946,7 +941,7 @@ defmodule Beamcode.Procedures.Runs do
 
   defp session_dir(nil, project), do: project.directory
 
-  # Only a code Folder's chats have their own (worktree) folder.
+  # Only a code Project's chats have their own (worktree) folder.
   defp session_dir(_sid, %Project{kind: kind} = project) when kind != "code",
     do: project.directory
 
@@ -980,7 +975,7 @@ defmodule Beamcode.Procedures.Runs do
     end
   end
 
-  # Short model names prefer the provider the Folder's default model is from.
+  # Short model names prefer the provider the Project's default model is from.
   defp default_provider(project) do
     case Opencode.default_model(project.directory) do
       {:ok, %{"providerID" => p}} -> p

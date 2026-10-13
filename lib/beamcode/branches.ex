@@ -1,6 +1,6 @@
 defmodule Beamcode.Branches do
   @moduledoc """
-  The git branches of a Code Folder a new chat can continue, and the folder a
+  The git branches of a Code Project a new chat can continue, and the folder a
   chat on one works in: the branch's worktree when it has one, else a new
   worktree with the branch checked out (`Beamcode.Sessions.start/3`).
   """
@@ -10,7 +10,7 @@ defmodule Beamcode.Branches do
   @doc """
   Local branches, then remote ones with no local branch, newest commit first:
   `[%{name, worktree, remote, updated}]`. `worktree` is the folder name when
-  the branch is checked out in one; the Folder's own branch is left out.
+  the branch is checked out in one; the Project's own branch is left out.
   """
   def list(%Project{kind: "code"} = project) do
     script =
