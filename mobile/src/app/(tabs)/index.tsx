@@ -58,7 +58,7 @@ export default function Inbox() {
         ))}
 
         {inbox.length === 0 && connected ? (
-          <Empty title="All clear" detail="Approvals, questions and finished runs show up here." />
+          <Empty title="All clear" detail="Approvals, questions and runs waiting for you show up here." />
         ) : null}
 
         {running.length > 0 ? (

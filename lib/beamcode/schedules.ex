@@ -477,12 +477,12 @@ defmodule Beamcode.Schedules do
     String.slice(line, 0, 200)
   end
 
-  @doc "Finished runs not yet dismissed, that this user may see."
+  @doc "Runs waiting for a person, that this user may see."
   def inbox_runs(user, projects) do
     ids = Enum.map(projects, & &1.id)
 
     from(r in Run,
-      where: r.project_id in ^ids and r.status != "running" and not r.seen,
+      where: r.project_id in ^ids and r.status == "waiting" and not r.seen,
       where: r.scope == "team" or r.owner_id == ^user.id,
       order_by: [desc: r.inserted_at],
       limit: 50,
