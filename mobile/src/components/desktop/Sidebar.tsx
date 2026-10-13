@@ -230,7 +230,7 @@ export function Sidebar() {
         />
         {user?.admin ? (
           <NavRow
-            label="Secrets"
+            label="Shared API calls"
             href="/connectors"
             active={path === "/connectors"}
             gkey={gkey("/connectors")}

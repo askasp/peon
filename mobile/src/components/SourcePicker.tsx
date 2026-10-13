@@ -13,8 +13,16 @@ export type Connector = {
   connected: boolean;
 };
 type Choice = { id: string; label: string; detail: string };
-// `pending` while a service is open but nothing in it is chosen yet.
-export type Picked = { connector: string; choice: string; label: string; pending?: boolean } | null;
+// `pending` while a service is open but nothing in it is chosen yet. `token`
+// is set for a Project not made yet: it's saved in that Project when it's made.
+export type Picked = {
+  connector: string;
+  choice: string;
+  label: string;
+  pending?: boolean;
+  token?: string;
+} | null;
+type Call = <T>(event: string, payload?: object, timeout?: number) => Promise<T>;
 
 const tokenHint: Record<string, string> = {
   "github.projects": "A GitHub token with the project scope (and repo, to comment on private issues)",
@@ -31,18 +39,22 @@ const manualHint: Record<string, string> = {
 
 /**
  * Where a Dataset's rows come from: None (they live only here) or a connected
- * service, then which project or inbox. A service that isn't connected yet
- * takes a token right here (admins).
+ * service, then which project or inbox. Tokens belong to one Project: with
+ * `call` (the Project's channel) a token is saved in that Project; without it
+ * (a Project not made yet) it's checked and goes along with the pick.
  */
 export function SourcePicker({
   value,
   onChange,
   allowNone = true,
+  call,
 }: {
   value: Picked;
   onChange: (p: Picked) => void;
   allowNone?: boolean;
+  call?: Call;
 }) {
+  const send: Call = call ?? ((event, payload, timeout) => ask(event, payload, timeout));
   // Opening a service clears the pick until a project or inbox is chosen.
   const [connectors, setConnectors] = useState<Connector[] | null>(null);
   const [open, setOpen] = useState<string | null>(value?.connector ?? null);
@@ -51,18 +63,25 @@ export function SourcePicker({
   const [token, setToken] = useState("");
   const [manual, setManual] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // Tokens checked for a Project not made yet, by service.
+  const [unsaved, setUnsaved] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    ask<{ connectors: Connector[] }>("source_connectors")
+    send<{ connectors: Connector[] }>("source_connectors")
       .then((r) => setConnectors(r.connectors))
       .catch((e) => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function load(id: string) {
     setLoading(id);
     setError(null);
     try {
-      const r = await ask<{ account: string; choices: Choice[] }>("source_choices", { connector: id }, 60000);
+      const r = await send<{ account: string; choices: Choice[] }>(
+        "source_choices",
+        { connector: id },
+        60000,
+      );
       setChoices((m) => ({ ...m, [id]: r }));
     } catch (e: any) {
       setError(e.message);
@@ -71,19 +90,34 @@ export function SourcePicker({
   }
 
   async function connect(c: Connector) {
+    const t = token.trim();
     setLoading(c.id);
     setError(null);
     try {
-      await ask("source_connect", { connector: c.id, token: token.trim() }, 60000);
-      setToken("");
-      setConnectors((cs) => cs?.map((x) => (x.id === c.id ? { ...x, connected: true } : x)) ?? null);
-      setLoading(null);
-      await load(c.id);
+      if (call) {
+        await call("source_connect", { connector: c.id, token: t }, 60000);
+        setToken("");
+        setConnectors((cs) => cs?.map((x) => (x.id === c.id ? { ...x, connected: true } : x)) ?? null);
+        setLoading(null);
+        await load(c.id);
+      } else {
+        const r = await ask<{ account: string; choices: Choice[] }>(
+          "source_choices",
+          { connector: c.id, token: t },
+          60000,
+        );
+        setToken("");
+        setUnsaved((m) => ({ ...m, [c.id]: t }));
+        setChoices((m) => ({ ...m, [c.id]: r }));
+        setLoading(null);
+      }
     } catch (e: any) {
       setError(e.message);
       setLoading(null);
     }
   }
+
+  const connected = (c: Connector) => c.connected || !!unsaved[c.id];
 
   function pick(c: Connector) {
     setOpen(c.id);
@@ -97,7 +131,7 @@ export function SourcePicker({
   // A project or inbox named instead of listed (GitHub: owner/12).
   function takeManual(c: Connector) {
     const choice = manual.trim();
-    if (choice) onChange({ connector: c.id, choice, label: choice });
+    if (choice) onChange({ connector: c.id, choice, label: choice, token: unsaved[c.id] });
   }
 
   return (
@@ -132,12 +166,16 @@ export function SourcePicker({
                 <View style={{ flex: 1 }}>
                   <Text style={st.title}>{c.name}</Text>
                   <Text style={st.sub}>
-                    {got ? `connected as ${got.account}` : c.connected ? "connected" : "not connected"}
+                    {got
+                      ? `connected as ${got.account}`
+                      : c.connected
+                        ? "connected"
+                        : "not connected in this Project"}
                   </Text>
                 </View>
                 {loading === c.id ? <ActivityIndicator color={color.muted} /> : <Radio on={isOpen} />}
               </Tap>
-              {isOpen && !c.connected ? (
+              {isOpen && !connected(c) ? (
                 <View style={st.inner}>
                   <Text style={st.sub}>{tokenHint[c.id] ?? `Token for ${c.name}`}</Text>
                   <View style={{ flexDirection: "row", gap: 8 }}>
@@ -176,7 +214,7 @@ export function SourcePicker({
                           testID={`choice-${x.id || "all"}`}
                           onPress={() => {
                             setManual("");
-                            onChange({ connector: c.id, choice: x.id, label: x.label });
+                            onChange({ connector: c.id, choice: x.id, label: x.label, token: unsaved[c.id] });
                           }}
                           style={[st.choice, on && st.choiceOn]}
                         >
@@ -195,7 +233,7 @@ export function SourcePicker({
                   )}
                 </View>
               ) : null}
-              {isOpen && c.connected && manualHint[c.id] ? (
+              {isOpen && connected(c) && manualHint[c.id] ? (
                 <View style={st.inner}>
                   <Text style={st.sub}>
                     {got && got.choices.length

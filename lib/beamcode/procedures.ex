@@ -1094,7 +1094,7 @@ defmodule Beamcode.Procedures do
   """
   def draft(project, user, description) do
     services = Enum.filter(Connectors.all_for(project), &(&1.error == nil))
-    secrets = Vault.names()
+    secrets = Vault.names(project)
 
     calls =
       for c <- services,

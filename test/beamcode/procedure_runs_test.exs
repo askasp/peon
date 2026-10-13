@@ -453,14 +453,14 @@ defmodule Beamcode.ProcedureRunsTest do
   end
 
   describe "a connector call step" do
-    setup %{user: user} do
+    setup %{user: user, folder: folder} do
       {:ok, _} =
         Beamcode.Projects.insert_project(
           %{name: "setup", kind: "system", directory: "/srv/setup", scope: "team"},
           nil
         )
 
-      {:ok, _} = Beamcode.Vault.put("STRIPE_KEY", "sk_test", user)
+      {:ok, _} = Beamcode.Vault.put(folder, "STRIPE_KEY", "sk_test", user)
       calls = start_supervised!({Agent, fn -> [] end}, id: :calls)
       before = Application.get_env(:beamcode, :connector_req_options)
       Application.put_env(:beamcode, :connector_req_options, plug: {Req.Test, :stripe})

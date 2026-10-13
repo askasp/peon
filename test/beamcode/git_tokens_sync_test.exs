@@ -70,7 +70,7 @@ defmodule Beamcode.GitTokensSyncTest do
     assert {:ok, _} = GitTokens.save(ctx.project, " github_pat_abc \n", ctx.user)
 
     assert_received {:github, "/repos/org/app", ["Bearer github_pat_abc"]}
-    assert Vault.fetch("GITHUB_TOKEN_APP") == {:ok, "github_pat_abc"}
+    assert Vault.fetch(ctx.project, "GIT_TOKEN") == {:ok, "github_pat_abc"}
 
     assert_received {:write, @home_dir, "tokens.local", content}
     assert content =~ "\norg/app github_pat_abc\n"
@@ -87,13 +87,13 @@ defmodule Beamcode.GitTokensSyncTest do
     assert GitTokens.save(other, "github_pat_abc", ctx.user) ==
              {:error, "the token can't see org/other"}
 
-    assert Vault.fetch("GITHUB_TOKEN_OTHER") == :error
+    assert Vault.fetch(other, "GIT_TOKEN") == :error
     refute_received {:write, _, _, _}
   end
 
   test "removing a token rewrites the file without it", ctx do
     {:ok, _} = GitTokens.save(ctx.project, "github_pat_abc", ctx.user)
     assert :ok = GitTokens.delete(ctx.project)
-    assert Vault.fetch("GITHUB_TOKEN_APP") == :error
+    assert Vault.fetch(ctx.project, "GIT_TOKEN") == :error
   end
 end

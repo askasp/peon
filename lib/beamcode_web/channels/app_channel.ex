@@ -22,9 +22,10 @@ defmodule BeamcodeWeb.AppChannel do
     * `new_project_options` → `{known_repos, known_routines, connectors}` for the new-project form
     * `create_project` `{params}` → `{project_id, session_id?, note?}`; a new routine opens a
       session that drafts its instructions (`session_id`); a Dataset with
-      `source: {connector, choice}` is synced from that service
-    * `source_connectors` → `{connectors}`; `source_choices` `{connector}` → `{account, choices}`
-      (projects, inboxes); `source_connect` `{connector, token}` → `{account}` (admins)
+      `source: {connector, choice, token}` is synced from that service, with the
+      token saved in the new Project only
+    * `source_connectors` → `{connectors}`; `source_choices` `{connector, token}` →
+      `{account, choices}` (projects, inboxes), checking a token before the Project exists
     * `compose:preview` `{text}` → `{preview}`: the rule reading, while typing or talking
     * `compose:submit` `{text}` → `{plan}` to confirm, or `{result}` when it was done right away
     * `compose:confirm` → `{result}`, carrying out the last plan
@@ -51,7 +52,6 @@ defmodule BeamcodeWeb.AppChannel do
     Procedures,
     Schedules,
     Sessions,
-    Vault,
     Workspace
   }
 
@@ -281,15 +281,14 @@ defmodule BeamcodeWeb.AppChannel do
 
   def handle_in("new_project_options", _params, socket) do
     ChannelTasks.reply_async(socket, fn ->
-      secrets = Vault.names()
-
       {:ok,
        %{
          known_repos: Workspace.known_repos(),
          known_routines: Workspace.unregistered_routines(),
          connectors:
            for c <- Connectors.list(), c.error == nil do
-             %{name: c.name, tools: length(c.tools), ready: Connectors.ready?(c, secrets)}
+             # A new Project has no secrets yet.
+             %{name: c.name, tools: length(c.tools), ready: c.secret == nil}
            end
        }}
     end)
@@ -298,29 +297,15 @@ defmodule BeamcodeWeb.AppChannel do
   def handle_in("source_connectors", _params, socket),
     do: {:reply, {:ok, %{connectors: DataSources.connector_list()}}, socket}
 
-  def handle_in("source_choices", %{"connector" => id}, socket) when is_binary(id) do
+  # Checks a token for a Dataset being made; it's saved in that Project when it's created.
+  def handle_in("source_choices", %{"connector" => id, "token" => token}, socket)
+      when is_binary(id) and is_binary(token) do
     ChannelTasks.reply_async(socket, fn ->
-      case DataSources.choices(id) do
+      case DataSources.choices(id, token) do
         {:ok, result} -> {:ok, result}
         {:error, reason} -> error(reason)
       end
     end)
-  end
-
-  def handle_in("source_connect", %{"connector" => id, "token" => token}, socket)
-      when is_binary(id) and is_binary(token) do
-    user = socket.assigns.user
-
-    if user.admin do
-      ChannelTasks.reply_async(socket, fn ->
-        case DataSources.connect(id, token, user) do
-          {:ok, account} -> {:ok, %{account: account}}
-          {:error, reason} -> error(reason)
-        end
-      end)
-    else
-      {:reply, {:error, %{message: "An admin connects services (Settings → Secrets)."}}, socket}
-    end
   end
 
   # Only these can be made from the app; "system" projects (setup) get every connector.
@@ -520,7 +505,8 @@ defmodule BeamcodeWeb.AppChannel do
         project = Projects.get_project(project_id)
 
         note =
-          with {:ok, name} <- DataSources.add(project, id, source["choice"]),
+          with {:ok, _} <- connect_source(project, id, source["token"], user),
+               {:ok, name} <- DataSources.add(project, id, source["choice"]),
                :ok <- DataSources.refresh(project, name) do
             nil
           else
@@ -575,6 +561,11 @@ defmodule BeamcodeWeb.AppChannel do
         error(reason)
     end
   end
+
+  defp connect_source(project, id, token, user) when is_binary(token) and token != "",
+    do: DataSources.connect(project, id, token, user)
+
+  defp connect_source(_project, _id, _token, _user), do: {:ok, nil}
 
   ## Composer
 

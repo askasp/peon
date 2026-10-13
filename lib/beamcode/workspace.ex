@@ -85,6 +85,7 @@ defmodule Beamcode.Workspace do
            :ok <- write_new(root, "routines/AGENTS.md", routines_agents_md()) do
         :persistent_term.put({__MODULE__, :bootstrapped}, true)
         restore_git_tokens()
+        adopt_legacy_secrets()
         :ok
       else
         error ->
@@ -302,7 +303,7 @@ defmodule Beamcode.Workspace do
   defp store_token(_project, "", _user), do: :ok
 
   defp store_token(project, token, user) do
-    case Vault.put(GitTokens.secret_name(project), token, user) do
+    case Vault.put(project, GitTokens.secret_name(), token, user) do
       {:ok, _} -> :ok
       error -> error
     end
@@ -312,6 +313,13 @@ defmodule Beamcode.Workspace do
     case GitTokens.restore() do
       :ok -> :ok
       error -> Logger.warning("restoring GitHub tokens failed: #{inspect(error)}")
+    end
+  end
+
+  defp adopt_legacy_secrets do
+    case Vault.adopt_legacy() do
+      :ok -> :ok
+      error -> Logger.warning("moving old shared secrets into projects failed: #{inspect(error)}")
     end
   end
 

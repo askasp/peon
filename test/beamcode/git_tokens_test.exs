@@ -31,8 +31,8 @@ defmodule Beamcode.GitTokensTest do
     end
   end
 
-  test "secret names are per project" do
-    assert GitTokens.secret_name("amino-monorepo") == "GITHUB_TOKEN_AMINO_MONOREPO"
+  test "each project keeps its token under one name" do
+    assert GitTokens.secret_name() == "GIT_TOKEN"
   end
 
   describe "merge/2" do

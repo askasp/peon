@@ -172,7 +172,7 @@ export function SourceSettings({ ctx }: { ctx: ProjectCtx }) {
       {edit ? (
         adding ? (
           <View style={{ gap: 10 }}>
-            <SourcePicker value={picked} onChange={setPicked} allowNone={false} />
+            <SourcePicker value={picked} onChange={setPicked} allowNone={false} call={ctx.call} />
             <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
               <Button label="Cancel" kind="secondary" height={36} onPress={() => setAdding(false)} />
               <Button

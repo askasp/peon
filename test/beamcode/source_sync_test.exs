@@ -31,7 +31,11 @@ defmodule Beamcode.SourceSyncTest do
     setup_stub(fn conn ->
       case {conn.method, conn.request_path} do
         {"GET", "/api/fs/read/" <> path} ->
-          case File.read(Path.join(dir, URI.decode(path))) do
+          conn = Plug.Conn.fetch_query_params(conn)
+          # Only the test folder has files; other projects' folders are empty.
+          here = conn.query_params["location"]["directory"] in [nil, dir]
+
+          case here && File.read(Path.join(dir, URI.decode(path))) do
             {:ok, body} -> Plug.Conn.send_resp(conn, 200, body)
             _ -> Plug.Conn.send_resp(conn, 404, "")
           end
@@ -65,6 +69,12 @@ defmodule Beamcode.SourceSyncTest do
             [id, "output"] ->
               data(conn, %{"output" => elem(Agent.get(runs, & &1[id]), 1)})
           end
+
+        {"GET", "/api/location"} ->
+          data(conn, %{"directory" => dir})
+
+        _ ->
+          Plug.Conn.send_resp(conn, 404, "")
       end
     end)
 
@@ -96,8 +106,8 @@ defmodule Beamcode.SourceSyncTest do
       end
     end)
 
-    {:ok, _} = Vault.put("GITHUB_TOKEN", "ghp_test", nil)
     project = project_fixture(%{name: "roadmap", kind: "dataset", directory: dir}, nil)
+    {:ok, _} = Vault.put(project, "GITHUB_TOKEN", "ghp_test", nil)
     {:ok, "github"} = DataSources.add(project, "github.projects", "stadler/12")
 
     %{project: project, github: github, dir: dir}
@@ -368,12 +378,45 @@ defmodule Beamcode.SourceSyncTest do
   end
 
   test "without a token the source says how to connect", %{project: project} do
-    Vault.delete("GITHUB_TOKEN")
+    Vault.delete(project, "GITHUB_TOKEN")
 
     assert {:error, "GitHub Projects isn't connected" <> _} =
              DataSources.refresh(project, "github")
 
     assert [%{error: "GitHub Projects isn't connected" <> _}] = DataSources.list(project)
+  end
+
+  test "a token set in one Project isn't used by another", %{project: project} do
+    other = project_fixture(%{name: "other", kind: "dataset", directory: "/other"}, nil)
+
+    assert {:error, "GitHub Projects isn't connected in this Project" <> _} =
+             DataSources.token(other, Beamcode.SourceConnectors.GithubProjects)
+
+    assert [%{id: "github.projects", connected: false} | _] = DataSources.connector_list(other)
+    assert [%{id: "github.projects", connected: true} | _] = DataSources.connector_list(project)
+  end
+
+  test "an old shared token moves into the Projects that sync from it", %{project: project} do
+    Vault.delete(project, "GITHUB_TOKEN")
+    other = project_fixture(%{name: "notes", kind: "document", directory: "/nowhere"}, nil)
+
+    Beamcode.Repo.insert!(%Vault.Secret{
+      name: "GITHUB_TOKEN",
+      ciphertext: legacy_ciphertext("ghp_old")
+    })
+
+    assert :ok = Vault.adopt_legacy()
+    assert Vault.fetch(project, "GITHUB_TOKEN") == {:ok, "ghp_old"}
+    assert Vault.fetch(other, "GITHUB_TOKEN") == :error
+    assert Beamcode.Repo.aggregate(where(Vault.Secret, [s], is_nil(s.project_id)), :count) == 0
+  end
+
+  # Encrypts like the Vault did before secrets had a Project.
+  defp legacy_ciphertext(value) do
+    scratch = project_fixture(%{name: "scratch", kind: "chat", directory: "/scratch"}, nil)
+    {:ok, s} = Vault.put(scratch, "X", value, nil)
+    Beamcode.Repo.delete!(s)
+    s.ciphertext
   end
 
   test "a token without the project scope gets an honest error", %{project: _project} do
@@ -397,7 +440,7 @@ defmodule Beamcode.SourceSyncTest do
       end
     end)
 
-    assert {:error, message} = DataSources.choices("github.projects")
+    assert {:error, message} = DataSources.choices("github.projects", "ghp_test")
     assert message =~ "read:project scope"
     assert message =~ "GitHub said:"
   end
@@ -424,7 +467,7 @@ defmodule Beamcode.SourceSyncTest do
   } do
     calls = start_supervised!({Agent, fn -> [] end}, id: :front)
     :ok = DataSources.remove(project, "github")
-    {:ok, _} = Vault.put("FRONT_TOKEN", "front_test", nil)
+    {:ok, _} = Vault.put(project, "FRONT_TOKEN", "front_test", nil)
     {:ok, "front"} = DataSources.add(project, "front", "")
 
     Req.Test.stub(Beamcode.SourceConnector, fn conn ->

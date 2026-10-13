@@ -197,7 +197,7 @@ defmodule Beamcode.Outbox do
     with {:ok, %{"status" => "posting"} = e} <- entry(project, db, id) do
       result =
         with {:ok, _name, s} <- source(project, e["source"]),
-             {:ok, token} <- DataSources.token(s.connector),
+             {:ok, token} <- DataSources.token(project, s.connector),
              {:ok, row} <- row(project, s, e["action"], e["remote_id"]),
              {:ok, fields} <- fields(project, db, e["source"]),
              {:ok, src} <- synced_source(project, db, e["source"]) do

@@ -5,6 +5,8 @@ defmodule Beamcode.Vault.Secret do
   schema "secrets" do
     field :name, :string
     field :ciphertext, :binary, redact: true
+    # nil only for old shared secrets not yet adopted (see Vault.adopt_legacy/0).
+    belongs_to :project, Beamcode.Projects.Project
     belongs_to :set_by, Beamcode.Accounts.User
     timestamps(type: :utc_datetime)
   end

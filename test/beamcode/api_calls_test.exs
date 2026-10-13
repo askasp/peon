@@ -103,12 +103,21 @@ defmodule Beamcode.ApiCallsTest do
 
   test "only services with their secret set may be called", %{user: user, project: project} do
     assert Enum.map(Connectors.for_project(project), & &1.name) == ["front"]
-    {:ok, _} = Vault.put("STRIPE_KEY", "sk_test", user)
+
+    {:ok, other} =
+      Beamcode.Projects.insert_project(
+        %{name: "else", kind: "document", directory: "/srv/else"},
+        user
+      )
+
+    {:ok, _} = Vault.put(other, "STRIPE_KEY", "sk_other", user)
+    assert Enum.map(Connectors.for_project(project), & &1.name) == ["front"]
+    {:ok, _} = Vault.put(project, "STRIPE_KEY", "sk_test", user)
     assert Enum.map(Connectors.for_project(project), & &1.name) == ["stripe", "front"]
   end
 
   test "a person can send any call by hand, even a denied one", %{user: user, project: project} do
-    {:ok, _} = Vault.put("STRIPE_KEY", "sk_test", user)
+    {:ok, _} = Vault.put(project, "STRIPE_KEY", "sk_test", user)
 
     Req.Test.stub(:api, fn conn ->
       assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer sk_test"]

@@ -48,7 +48,7 @@ defmodule Beamcode.Keybinds do
     {"inbox", "Inbox", "i", "/inbox", false},
     {"folders", "Projects", "f", "/projects", false},
     {"schedules", "Schedules", "s", "/schedules", false},
-    {"connectors", "Secrets", "c", "/connectors", true},
+    {"connectors", "Shared API calls", "c", "/connectors", true},
     {"models", "Models", "m", "/models", true},
     {"users", "Users", "u", "/users", true},
     {"settings", "Settings", ",", "/settings", false}

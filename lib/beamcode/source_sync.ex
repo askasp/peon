@@ -18,7 +18,7 @@ defmodule Beamcode.SourceSync do
   @doc "Syncs source `name` (`s` from `DataSources.read/1`): `:ok` or `{:error, message}`."
   def run(project, name, s) do
     result =
-      with {:ok, token} <- DataSources.token(s.connector),
+      with {:ok, token} <- DataSources.token(project, s.connector),
            {:ok, pulled} <- s.connector.pull(token, s.config),
            {:ok, pending} <- Outbox.pending(project, s.db, name) do
         ProjectFiles.exec(project, s.db, statements(name, s, pulled, pending))

@@ -8,6 +8,7 @@ import { FileView } from "./FilesTab";
 import { SourceSettings } from "./SourceSettings";
 import { confirm } from "@/lib/confirm";
 import { useLoad } from "@/lib/useLoad";
+import { ago } from "@/lib/time";
 import { color, font } from "@/lib/theme";
 import type { ProjectCtx } from "./types";
 
@@ -16,6 +17,7 @@ type Settings = {
   skills: { name: string; path: string }[];
   settings: { scope: string; always_worktree: boolean; protect_default_branch: boolean };
   github: { repo: string | null; hint: string | null } | null;
+  secrets: { name: string; hint: string | null; set_by: string | null; updated_at: string }[];
   can_edit: boolean;
   admin: boolean;
 };
@@ -38,6 +40,8 @@ export function SettingsTab({
   const wide = useWide();
   const [picked, setPicked] = useState("AGENTS.md");
   const [token, setToken] = useState("");
+  const [secretName, setSecretName] = useState("");
+  const [secretValue, setSecretValue] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -207,6 +211,85 @@ export function SettingsTab({
             ) : null}
           </Group>
         </>
+      ) : null}
+
+      <SectionLabel style={st.section}>Secrets</SectionLabel>
+      <Text style={st.hint}>
+        {"Keys for this Project's API calls and sources. Other Projects never see them."}
+      </Text>
+      {data.secrets.length ? (
+        <View style={st.group}>
+          {data.secrets.map((x, i) => (
+            <View key={x.name} style={[st.row, i > 0 && st.top]} testID={`secret-${x.name}`}>
+              <View style={{ flex: 1, gap: 1 }}>
+                <Text style={st.itemMono}>{x.name}</Text>
+                <Text style={st.itemSub}>
+                  {[x.hint, x.set_by, ago(x.updated_at, true)].filter(Boolean).join(" · ")}
+                </Text>
+              </View>
+              {edit ? (
+                <>
+                  <Button
+                    label="Replace"
+                    kind="secondary"
+                    height={30}
+                    onPress={() => setSecretName(x.name)}
+                  />
+                  <Button
+                    label="Delete"
+                    kind="danger"
+                    height={30}
+                    busy={busy === `secret-del-${x.name}`}
+                    onPress={async () => {
+                      if (await confirm(`Delete ${x.name}?`, "What uses it here stops working.", "Delete"))
+                        act(`secret-del-${x.name}`, () => ctx.call("secret_delete", { name: x.name }, 30000));
+                    }}
+                  />
+                </>
+              ) : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {edit ? (
+        <Group style={{ padding: 14, gap: 10 }}>
+          <TextInput
+            testID="secret-name"
+            value={secretName}
+            onChangeText={(v) => setSecretName(v.toUpperCase())}
+            placeholder="STRIPE_KEY"
+            placeholderTextColor={color.faint}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            style={[st.input, { flex: 0, fontFamily: font.mono }]}
+          />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <TextInput
+              testID="secret-value"
+              value={secretValue}
+              onChangeText={setSecretValue}
+              placeholder="Value"
+              placeholderTextColor={color.faint}
+              secureTextEntry
+              autoCapitalize="none"
+              style={st.input}
+            />
+            <Button
+              label="Save"
+              height={40}
+              busy={busy === "secret"}
+              disabled={!secretName.trim() || !secretValue}
+              onPress={() =>
+                act("secret", async () => {
+                  await ctx.call("secret_save", { name: secretName.trim(), value: secretValue }, 30000);
+                  setNote(`${secretName.trim()} saved in this Project.`);
+                  setSecretName("");
+                  setSecretValue("");
+                })
+              }
+            />
+          </View>
+        </Group>
       ) : null}
 
       {onApi && p.kind !== "home" ? (

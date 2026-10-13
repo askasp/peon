@@ -122,22 +122,29 @@ defmodule Beamcode.DataSources do
 
   def connector(id), do: Enum.find(@connectors, &(&1.info().id == id))
 
-  @doc "A connector's token from the Vault: `{:ok, token}` or an error saying how to connect."
-  def token(mod) do
+  @doc """
+  A connector's token from the Project's vault: `{:ok, token}` or an error
+  saying how to connect. Each Project connects on its own.
+  """
+  def token(%Project{} = project, mod) do
     info = mod.info()
 
-    case Vault.fetch(info.secret) do
+    case Vault.fetch(project, info.secret) do
       {:ok, token} ->
         {:ok, token}
 
       _ ->
-        {:error, "#{info.name} isn't connected. Set it in Settings → Secrets (#{info.secret})."}
+        {:error,
+         "#{info.name} isn't connected in this Project. Connect it in Settings → Source (#{info.secret})."}
     end
   end
 
-  @doc "Each connector, whether it has a token, and its actions with their default levels."
-  def connector_list do
-    secrets = Vault.names()
+  @doc """
+  Each connector, whether the Project has a token for it, and its actions with
+  their default levels. Without a Project (one being made) nothing is connected.
+  """
+  def connector_list(project \\ nil) do
+    secrets = if project, do: Vault.names(project), else: MapSet.new()
 
     for mod <- @connectors do
       info = mod.info()
@@ -157,14 +164,14 @@ defmodule Beamcode.DataSources do
     end
   end
 
-  @doc "Saves a connector's token after checking it with the service: `{:ok, account}`."
-  def connect(id, token, user) when is_binary(token) do
+  @doc "Saves a connector's token in the Project after checking it with the service: `{:ok, account}`."
+  def connect(%Project{} = project, id, token, user) when is_binary(token) do
     mod = connector(id)
 
     with %{} = info <- mod && mod.info(),
          token = String.trim(token),
          {:ok, account} <- mod.account(token),
-         {:ok, _} <- Vault.put(info.secret, token, user) do
+         {:ok, _} <- Vault.put(project, info.secret, token, user) do
       {:ok, account}
     else
       nil -> {:error, "No connector #{id}"}
@@ -172,16 +179,31 @@ defmodule Beamcode.DataSources do
     end
   end
 
-  @doc "What a connector can sync (projects, inboxes), and who it's connected as."
-  def choices(id) do
+  @doc """
+  What a connector can sync (projects, inboxes), and who it's connected as:
+  with the Project's token, or with `token` itself for a Project not made yet.
+  """
+  def choices(%Project{} = project, id) do
     with mod when not is_nil(mod) <- connector(id),
-         {:ok, token} <- token(mod),
-         {:ok, account} <- mod.account(token),
-         {:ok, choices} <- mod.choices(token) do
-      {:ok, %{account: account, choices: choices}}
+         {:ok, token} <- token(project, mod) do
+      list_choices(mod, token)
     else
       nil -> {:error, "No connector #{id}"}
       error -> error
+    end
+  end
+
+  def choices(id, token) when is_binary(id) and is_binary(token) do
+    case connector(id) do
+      nil -> {:error, "No connector #{id}"}
+      mod -> list_choices(mod, String.trim(token))
+    end
+  end
+
+  defp list_choices(mod, token) do
+    with {:ok, account} <- mod.account(token),
+         {:ok, choices} <- mod.choices(token) do
+      {:ok, %{account: account, choices: choices}}
     end
   end
 

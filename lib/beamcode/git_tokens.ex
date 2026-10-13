@@ -2,8 +2,8 @@ defmodule Beamcode.GitTokens do
   @moduledoc """
   GitHub tokens for code projects, so sessions can clone, push and open PRs.
 
-  Each token is a fine-grained PAT for one repo, kept in the vault as
-  `GITHUB_TOKEN_<PROJECT>`. Git on the OpenCode server needs it in plain text,
+  Each token is a fine-grained PAT for one repo, kept in the project's vault
+  as `GIT_TOKEN`. Git on the OpenCode server needs it in plain text,
   so the gateway also writes it to `~/.config/opencode-git/tokens.local` there,
   one `owner/name token` line per repo. The server's git credential helper and
   `gh` wrapper read that file (see the ansible opencode_web role). The gateway
@@ -38,12 +38,10 @@ defmodule Beamcode.GitTokens do
 
   def https_url(repo), do: "https://github.com/#{repo}.git"
 
-  def secret_name(%Project{name: name}), do: secret_name(name)
+  @secret "GIT_TOKEN"
+  def secret_name, do: @secret
 
-  def secret_name(name) when is_binary(name),
-    do: "GITHUB_TOKEN_" <> (name |> String.upcase() |> String.replace("-", "_"))
-
-  def hint(project), do: Vault.hint(secret_name(project))
+  def hint(project), do: Vault.hint(project, @secret)
 
   @doc "Asks GitHub whether the token can see the repo."
   def check(repo, token) do
@@ -78,7 +76,7 @@ defmodule Beamcode.GitTokens do
          {:ok, repo} <- repo_for(project),
          :ok <- check(repo, token),
          {:ok, project} <- Projects.set_github_repo(project, repo),
-         {:ok, _} <- Vault.put(secret_name(project), token, user),
+         {:ok, _} <- Vault.put(project, @secret, token, user),
          :ok <- sync() do
       {:ok, project}
     else
@@ -88,7 +86,7 @@ defmodule Beamcode.GitTokens do
   end
 
   def delete(%Project{} = project) do
-    Vault.delete(secret_name(project))
+    Vault.delete(project, @secret)
     sync()
   end
 
@@ -147,7 +145,7 @@ defmodule Beamcode.GitTokens do
 
   defp stored do
     for %Project{github_repo: repo} = p when is_binary(repo) <- Projects.list_projects(),
-        {:ok, token} <- [Vault.fetch(secret_name(p))],
+        {:ok, token} <- [Vault.fetch(p, @secret)],
         do: {repo, token}
   end
 

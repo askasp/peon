@@ -149,7 +149,7 @@ export default function Settings() {
             <Group>
               {[
                 { href: "/users", label: "Users" },
-                { href: "/connectors", label: "Secrets" },
+                { href: "/connectors", label: "Shared API calls" },
                 { href: "/models", label: "Models" },
               ].map((l, i) => (
                 <Tap

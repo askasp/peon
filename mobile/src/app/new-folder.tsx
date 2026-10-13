@@ -77,7 +77,9 @@ export default function NewFolder() {
             name: final,
             scope,
             ...(ex && more.trim() ? { [ex.param]: more.trim() } : {}),
-            ...(synced ? { source: { connector: source.connector, choice: source.choice } } : {}),
+            ...(synced
+              ? { source: { connector: source.connector, choice: source.choice, token: source.token } }
+              : {}),
           },
         },
         180000,

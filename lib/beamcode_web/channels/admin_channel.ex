@@ -1,13 +1,12 @@
 defmodule BeamcodeWeb.AdminChannel do
   @moduledoc """
-  The admin screens for the app ("admin", admins only): users, connectors and
-  their secrets, and model providers.
+  The admin screens for the app ("admin", admins only): users, the old shared
+  API calls, and model providers. Secrets belong to each Project.
 
   Requests:
     * `users` → `{users}`; `create_user` `{username, password, admin}`;
       `toggle_admin` `{id}`; `delete_user` `{id}`
-    * `connectors` → `{connectors, secrets}`; `save_secret` `{name, value}`;
-      `delete_secret` `{name}`; `apply`; `new_connector` → `{session_id}`
+    * `connectors` → `{connectors}`; `apply`; `new_connector` → `{session_id}`
     * `models` → `{integrations, featured, models, default}`;
       `connect_key` `{id, key, answers}`; `start_oauth` `{id, method, answers}` → `{attempt}`;
       `complete_oauth` `{code}`; `paste_callback` `{url}`; `cancel_oauth`; `disconnect` `{id}`
@@ -17,7 +16,7 @@ defmodule BeamcodeWeb.AdminChannel do
   """
   use BeamcodeWeb, :channel
 
-  alias Beamcode.{Accounts, Connectors, ModelProviders, Opencode, Sessions, Vault, Workspace}
+  alias Beamcode.{Accounts, Connectors, ModelProviders, Opencode, Sessions, Workspace}
   alias BeamcodeWeb.{ChannelTasks}
 
   @poll_ms 2_000
@@ -60,38 +59,10 @@ defmodule BeamcodeWeb.AdminChannel do
     end)
   end
 
-  ## Connectors and secrets
+  ## Shared API calls
 
   def handle_in("connectors", _params, socket) do
     ChannelTasks.reply_async(socket, fn -> {:ok, connectors()} end)
-  end
-
-  def handle_in("save_secret", %{"name" => name, "value" => value}, socket)
-      when is_binary(name) and is_binary(value) do
-    user = socket.assigns.user
-
-    case Vault.put(String.trim(name), value, user) do
-      {:ok, _} ->
-        ChannelTasks.reply_async(socket, fn ->
-          Connectors.sync_all()
-          {:ok, connectors()}
-        end)
-
-      {:error, %Ecto.Changeset{}} ->
-        {:reply, {:error, %{message: "Names are UPPER_CASE letters, digits and _."}}, socket}
-
-      {:error, reason} ->
-        {:reply, {:error, %{message: ChannelTasks.error_message(reason)}}, socket}
-    end
-  end
-
-  def handle_in("delete_secret", %{"name" => name}, socket) when is_binary(name) do
-    Vault.delete(name)
-
-    ChannelTasks.reply_async(socket, fn ->
-      Connectors.sync_all()
-      {:ok, connectors()}
-    end)
   end
 
   def handle_in("apply", _params, socket) do
@@ -285,11 +256,8 @@ defmodule BeamcodeWeb.AdminChannel do
   defp changeset_error(cs),
     do: Enum.map_join(cs.errors, ", ", fn {f, {m, _}} -> "#{f} #{m}" end)
 
-  # GitHub tokens are managed in each code project's settings, so they aren't listed.
+  # Secrets live in each Project now; this lists only the old shared API calls.
   defp connectors do
-    secrets = Enum.reject(Vault.list(), &String.starts_with?(&1.name, "GITHUB_TOKEN_"))
-    names = Vault.names()
-
     %{
       connectors:
         for c <- Connectors.list() do
@@ -299,22 +267,12 @@ defmodule BeamcodeWeb.AdminChannel do
             error: c.error,
             base_url: c[:base_url],
             secret: c[:secret],
-            ready: c.error == nil and Connectors.ready?(c, names),
             projects: c.projects,
             tools:
               for(
                 t <- c.tools,
                 do: Map.take(t, [:name, :method, :path, :permission, :description])
               )
-          }
-        end,
-      secrets:
-        for s <- secrets do
-          %{
-            name: s.name,
-            hint: Vault.hint(s.name),
-            set_by: s.set_by && s.set_by.username,
-            updated_at: s.updated_at
           }
         end
     }

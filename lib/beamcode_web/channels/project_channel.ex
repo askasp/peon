@@ -44,7 +44,10 @@ defmodule BeamcodeWeb.ProjectChannel do
       `run_schedule` `{key}` → `{session_id}`
     * `sources` → `{sources, connectors}`: a Dataset's synced sources with their
       action levels and local columns; `source_add` `{connector, choice}`;
-      `source_level` `{name, action, level}`; `source_remove` `{name}`
+      `source_level` `{name, action, level}`; `source_remove` `{name}`;
+      `source_connectors` → `{connectors}`; `source_choices` `{connector}` →
+      `{account, choices}`; `source_connect` `{connector, token}` → `{account}`
+      saves the token in this Project
     * `outbox` → `{entries}`; `outbox_post` `{id, args?}`, `outbox_skip`, `outbox_undo`,
       `outbox_retry` `{id}` (see `Beamcode.Outbox`)
     * `api_calls` → `{services, can_edit, admin}`: the Project's API calls by
@@ -54,7 +57,8 @@ defmodule BeamcodeWeb.ProjectChannel do
       `{service}` moves a shared one in; `api_secret` `{name, value}` sets its
       secret (each replies with `{services}`); `api_generate` `{description}` →
       `{session_id}` has the chat write them
-    * `settings` → `{directory, skills, settings, github, connectors}`; `save_settings` `{params}` → `{project, message}`;
+    * `settings` → `{directory, skills, settings, github, connectors, secrets}`; `save_settings` `{params}` → `{project, message}`;
+      `secret_save` `{name, value}` / `secret_delete` `{name}` change this Project's secrets;
       `grant` `{connector, granted}`; `github_save` `{token}`; `github_remove`; `remove`
 
   Pushes `changed` when the project's sessions or runs change, so lists reload.
@@ -618,6 +622,39 @@ defmodule BeamcodeWeb.ProjectChannel do
     ChannelTasks.reply_async(socket, fn -> {:ok, sources(project, user)} end)
   end
 
+  def handle_in("source_connectors", _params, socket) do
+    project = socket.assigns.project
+    {:reply, {:ok, %{connectors: DataSources.connector_list(project)}}, socket}
+  end
+
+  def handle_in("source_choices", %{"connector" => id}, socket) when is_binary(id) do
+    project = socket.assigns.project
+
+    ChannelTasks.reply_async(socket, fn ->
+      case DataSources.choices(project, id) do
+        {:ok, result} -> {:ok, result}
+        {:error, reason} -> error(reason)
+      end
+    end)
+  end
+
+  def handle_in("source_connect", %{"connector" => id, "token" => token}, socket)
+      when is_binary(id) and is_binary(token) do
+    %{project: project, user: user} = socket.assigns
+
+    if ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        case DataSources.connect(project, id, token, user) do
+          {:ok, account} -> {:ok, %{account: account}}
+          {:error, reason} -> error(reason)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "Only the owner or an admin can connect services here."}},
+       socket}
+    end
+  end
+
   def handle_in("source_add", %{"connector" => id} = params, socket) when is_binary(id) do
     edit(socket, fn project ->
       with {:ok, name} <- DataSources.add(project, id, params["choice"]) do
@@ -809,24 +846,19 @@ defmodule BeamcodeWeb.ProjectChannel do
     api_edit(socket, fn project -> Connectors.move_here(project, service) end)
   end
 
-  # The vault is shared: an admin sets any secret, others only a new one.
+  # Secrets belong to this Project only; whoever can change it sets them.
   def handle_in("api_secret", %{"name" => name, "value" => value}, socket)
       when is_binary(name) and is_binary(value) do
     %{user: user} = socket.assigns
 
-    cond do
-      not Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) or value == "" ->
-        {:reply, {:error, %{message: "Give it an UPPER_SNAKE name and a value."}}, socket}
-
-      not user.admin and MapSet.member?(Vault.names(), name) ->
-        {:reply, {:error, %{message: "#{name} is set already. An admin can replace it."}}, socket}
-
-      true ->
-        api_edit(socket, fn project ->
-          with {:ok, _} <- Vault.put(name, value, user) do
-            Connectors.sync_project(project)
-          end
-        end)
+    if Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) and value != "" do
+      api_edit(socket, fn project ->
+        with {:ok, _} <- Vault.put(project, name, value, user) do
+          Connectors.sync_project(project)
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "Give it an UPPER_SNAKE name and a value."}}, socket}
     end
   end
 
@@ -877,6 +909,28 @@ defmodule BeamcodeWeb.ProjectChannel do
     else
       {:reply, {:error, %{message: "Admins grant connectors."}}, socket}
     end
+  end
+
+  def handle_in("secret_save", %{"name" => name, "value" => value}, socket)
+      when is_binary(name) and is_binary(value) do
+    name = String.trim(name)
+
+    cond do
+      not Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) or value == "" ->
+        {:reply, {:error, %{message: "Give it an UPPER_SNAKE name and a value."}}, socket}
+
+      name == GitTokens.secret_name() ->
+        {:reply, {:error, %{message: "Set the GitHub token under GitHub."}}, socket}
+
+      true ->
+        secret_edit(socket, &Vault.put(&1, name, value, socket.assigns.user))
+    end
+  end
+
+  def handle_in("secret_delete", %{"name" => name}, socket) when is_binary(name) do
+    if name == GitTokens.secret_name(),
+      do: {:reply, {:error, %{message: "Remove the GitHub token under GitHub."}}, socket},
+      else: secret_edit(socket, &Vault.delete(&1, name))
   end
 
   def handle_in("github_save", %{"token" => token}, socket) when is_binary(token) do
@@ -992,7 +1046,7 @@ defmodule BeamcodeWeb.ProjectChannel do
   defp settings(project, user) do
     {connectors, secrets} =
       if Beamcode.Workspace.uses_gateway?(project) and project.kind != "system",
-        do: {Connectors.list() |> Enum.filter(&(&1.error == nil)), Vault.names()},
+        do: {Connectors.list() |> Enum.filter(&(&1.error == nil)), Vault.names(project)},
         else: {[], MapSet.new()}
 
     %{
@@ -1017,9 +1071,37 @@ defmodule BeamcodeWeb.ProjectChannel do
             granted: project.name in c.projects
           }
         end,
+      secrets:
+        for s <- Vault.list(project), s.name != GitTokens.secret_name() do
+          %{
+            name: s.name,
+            hint: Vault.hint(project, s.name),
+            set_by: s.set_by && s.set_by.username,
+            updated_at: s.updated_at
+          }
+        end,
       can_edit: ProjectTools.can_edit?(project, user),
       admin: user.admin
     }
+  end
+
+  defp secret_edit(socket, fun) do
+    %{project: project, user: user} = socket.assigns
+
+    if ProjectTools.can_edit?(project, user) do
+      ChannelTasks.reply_async(socket, fn ->
+        case fun.(project) do
+          {:error, reason} ->
+            error(reason)
+
+          _ ->
+            Connectors.sync_project(project)
+            {:ok, settings(project, user)}
+        end
+      end)
+    else
+      {:reply, {:error, %{message: "Only the owner or an admin can change this."}}, socket}
+    end
   end
 
   defp api_edit(socket, fun) do
@@ -1038,7 +1120,7 @@ defmodule BeamcodeWeb.ProjectChannel do
   end
 
   defp api_services(project) do
-    secrets = Vault.names()
+    secrets = Vault.names(project)
 
     for c <- Connectors.all_for(project) do
       %{
@@ -1188,7 +1270,7 @@ defmodule BeamcodeWeb.ProjectChannel do
             local_columns: DataSources.local_columns(project, src.name, s)
           })
         end,
-      connectors: DataSources.connector_list(),
+      connectors: DataSources.connector_list(project),
       can_edit: ProjectTools.can_edit?(project, user)
     }
   end

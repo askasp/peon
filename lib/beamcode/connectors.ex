@@ -181,9 +181,9 @@ defmodule Beamcode.Connectors do
     own ++ shared
   end
 
-  @doc "The services a Project may call now: valid, and with their secret set."
+  @doc "The services a Project may call now: valid, and with their secret set in it."
   def for_project(%Project{} = project, shared \\ list()) do
-    secrets = Vault.names()
+    secrets = Vault.names(project)
     Enum.filter(all_for(project, shared), &ready?(&1, secrets))
   end
 
@@ -209,7 +209,7 @@ defmodule Beamcode.Connectors do
          %{} = t <- find_tool(c, call) || {:error, "#{service} has no #{call}."} do
       started = System.monotonic_time(:millisecond)
 
-      case run(c, t, args || %{}) do
+      case run(project, c, t, args || %{}) do
         {:ok, status, body} ->
           {:ok,
            %{
@@ -300,7 +300,8 @@ defmodule Beamcode.Connectors do
     end
   end
 
-  def ready?(c, secrets \\ Vault.names()),
+  @doc "Whether service `c` is valid and `secrets` (a Project's secret names) has its key."
+  def ready?(c, secrets),
     do: c.error == nil and (c.secret == nil or MapSet.member?(secrets, c.secret))
 
   def tool_name(connector, tool), do: "#{connector.name}_#{tool.name}"
@@ -340,7 +341,7 @@ defmodule Beamcode.Connectors do
       end
 
     case found do
-      [{c, t} | _] -> run(c, t, args || %{})
+      [{c, t} | _] -> run(project, c, t, args || %{})
       [] -> {:error, "unknown tool #{name}"}
     end
   end
@@ -367,8 +368,11 @@ defmodule Beamcode.Connectors do
     end
   end
 
-  @doc "Sends call `t` of service `c`. Returns `{:ok, status, body}` or `{:error, message}`."
-  def run(c, t, args) do
+  @doc """
+  Sends call `t` of service `c` with the Project's secret. Returns `{:ok,
+  status, body}` or `{:error, message}`.
+  """
+  def run(%Project{} = project, c, t, args) do
     params = path_params(t)
     missing = Enum.filter(params, &(to_string(args[&1] || "") |> String.trim() == ""))
 
@@ -383,7 +387,7 @@ defmodule Beamcode.Connectors do
              do: :ok,
              else: {:error, "#{Enum.join(missing, ", ")} is required and can't be empty"}
            ),
-         {:ok, auth} <- auth_options(c.auth) do
+         {:ok, auth} <- auth_options(project, c.auth) do
       opts =
         [
           method: String.downcase(t.method) |> String.to_existing_atom(),
@@ -486,10 +490,10 @@ defmodule Beamcode.Connectors do
 
   defp add_params(opts, _), do: opts
 
-  defp auth_options(%{"type" => "none"}), do: {:ok, []}
+  defp auth_options(_project, %{"type" => "none"}), do: {:ok, []}
 
-  defp auth_options(%{"type" => type, "secret" => name} = auth) do
-    case Vault.fetch(name) do
+  defp auth_options(project, %{"type" => type, "secret" => name} = auth) do
+    case Vault.fetch(project, name) do
       {:ok, secret} ->
         case type do
           "bearer" -> {:ok, [auth: {:bearer, secret}]}
@@ -504,7 +508,7 @@ defmodule Beamcode.Connectors do
     end
   end
 
-  defp auth_options(_), do: {:ok, []}
+  defp auth_options(_project, _), do: {:ok, []}
 
   # Keep results readable for the model and always valid UTF-8 (a cut can land
   # inside a multi-byte character like "ø").
