@@ -6,6 +6,7 @@ import { viewFor, viewInfo, type ViewKind } from "@/lib/folders";
 import { Icon } from "./Icon";
 import { Tap } from "./ui";
 import { color, font } from "@/lib/theme";
+import { userText } from "@/lib/attach";
 import type { Message } from "@/lib/types";
 
 const opensAs: Record<ViewKind, string> = {
@@ -29,7 +30,8 @@ export type Img = { uri: string | null; messageId: string; index: number };
 export type Tool = { name: string; label: string; status?: string; input: string; output: string };
 
 export type Block =
-  | { kind: "user"; key: string; text: string; skills: string[]; images: Img[] }
+  /** `about`: what the message was about (a run "Chat about this" attached), shown as a chip. */
+  | { kind: "user"; key: string; text: string; about?: string | null; skills: string[]; images: Img[] }
   | { kind: "text"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string }
   | { kind: "steps"; key: string; tools: Tool[]; from?: number; to?: number }
@@ -104,7 +106,7 @@ export function toBlocks(items: Message[]): Block[] {
         out.push({
           kind: "user",
           key: m.id,
-          text: m.text ?? "",
+          ...userText(m.text ?? ""),
           skills: (m.skills ?? []).map((s) => s.name),
           images: (m.files ?? []).flatMap((f, index) =>
             f.mime?.startsWith("image/")
@@ -251,6 +253,11 @@ export function BlockView({
       return (
         <View style={st.userWrap}>
           <View style={st.user}>
+            {block.about ? (
+              <Text style={st.about} numberOfLines={1}>
+                {block.about}
+              </Text>
+            ) : null}
             {block.skills.length ? <Text style={st.skill}>/{block.skills.join(" /")}</Text> : null}
             {block.text ? (
               <Text style={st.userText} selectable>
@@ -412,6 +419,16 @@ const st = StyleSheet.create({
     gap: 4,
   },
   userText: { fontSize: 15, lineHeight: 21, color: color.text },
+  about: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: color.raised,
+    fontSize: 12.5,
+    fontFamily: font.mono,
+    color: color.textSoft,
+  },
   skill: { fontSize: 13, color: color.accentText, fontFamily: font.mono },
   files: { fontSize: 12, color: color.muted, textAlign: "center" },
   images: { flexDirection: "row", flexWrap: "wrap", gap: 6 },

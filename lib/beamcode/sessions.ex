@@ -9,7 +9,8 @@ defmodule Beamcode.Sessions do
   existing branch with `branch: "name"` (its worktree, made when it has none).
   Records who started it.
 
-  opts: :worktree, :branch, :scope, :schedule_key, :title, :agent, :model (%{"id", "providerID"})
+  opts: :worktree, :branch, :scope, :schedule_key, :title, :agent, :model (%{"id", "providerID"}),
+  and for an Operations Project's chats :chat, :procedure, :base (see `Beamcode.OpsChats`)
   """
   def start(%Project{} = project, user, opts \\ []) do
     where =
@@ -29,7 +30,10 @@ defmodule Beamcode.Sessions do
       with {:ok, session} <- Opencode.create_session(body) do
         Projects.record_session(session["id"], project, user,
           scope: Keyword.get(opts, :scope, "team"),
-          schedule_key: opts[:schedule_key]
+          schedule_key: opts[:schedule_key],
+          chat: opts[:chat],
+          procedure: opts[:procedure],
+          base: opts[:base]
         )
 
         {:ok, session}
@@ -105,7 +109,8 @@ defmodule Beamcode.Sessions do
     end
   end
 
-  defp run_record?(record), do: record != nil and record.schedule_key != nil
+  defp run_record?(record),
+    do: record != nil and (record.schedule_key != nil or record.chat != nil)
 
   @doc """
   The OpenCode session `id` with its project and record, when `user` may see it:

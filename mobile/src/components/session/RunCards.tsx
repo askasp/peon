@@ -19,7 +19,7 @@ export type RunMark =
 
 /**
  * Where a chat's runs show: each step's divider when it started (a run of one
- * step in the chat itself needs none), and the wait card last.
+ * step in the chat itself needs none), and the wait card last (a failed run's where it stopped).
  */
 export function runMarks(runs: Run[], chat: string): { at: number; mark: RunMark }[] {
   const out: { at: number; mark: RunMark }[] = [];
@@ -37,9 +37,13 @@ export function runMarks(runs: Run[], chat: string): { at: number; mark: RunMark
           mark: { kind: "step", key: `run-${r.id}-${i}-${s.started ?? ""}`, run: r, index: i, children },
         });
       });
+    // A wait stays last; a failed run's card shows where it stopped, before what was asked after.
     if (r.status === "waiting" || r.status === "failed")
       out.push({
-        at: Number.MAX_SAFE_INTEGER - r.id,
+        at:
+          r.status === "failed" && r.finished && Number.isFinite(Date.parse(r.finished))
+            ? Date.parse(r.finished)
+            : Number.MAX_SAFE_INTEGER - r.id,
         mark: { kind: "wait", key: `wait-${r.id}`, run: r, children },
       });
   }

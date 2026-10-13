@@ -35,6 +35,9 @@ export type SessionSummary = {
   project: Project | null;
   /** The worktree folder, when the session isn't in the project's own folder. */
   worktree?: string | null;
+  /** An Operations Project's chats: about a procedure or a run, and which procedure. */
+  chat?: "procedure" | "run" | null;
+  procedure?: string | null;
 };
 
 export type RunningSession = { id: string; title: string; project: Project; status: Status };

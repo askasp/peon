@@ -1,5 +1,5 @@
 import { setViewing, usePeon } from "@/lib/peon";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -31,17 +31,12 @@ import { Badge, Button, Card, ErrorLine, Loading, Screen, Tap, UnderlineTabs } f
 import { CopyResult, RunProgress } from "@/components/session/RunProgress";
 import { RunLinksContext, type OfferedRow, type RunLinksApi } from "@/components/session/RunRows";
 import { RunMarkView, runMarks, withMarks, type RunMark } from "@/components/session/RunCards";
-import {
-  ProcedureChips,
-  ProcedureSheet,
-  ScheduledResult,
-  SendAllSheet,
-} from "@/components/session/ProcedureBits";
+import { SendAllSheet } from "@/components/session/ProcedureBits";
+import { EditLinkContext } from "@/components/Markdown";
 import { rowStates, type Procedure, type RunLink } from "@/lib/procedures";
 import { useKeyboardHeight } from "@/lib/useKeyboard";
 import { useSession } from "@/lib/useSession";
 import { useCommand } from "@/lib/commands";
-import { useLoad } from "@/lib/useLoad";
 import { useCurrent } from "@/lib/current";
 import { useWide } from "@/lib/useWide";
 import { useChannel } from "@/lib/useChannel";
@@ -51,7 +46,7 @@ import { inputsLabel, runLine, runWho } from "@/lib/runs";
 import { say, stopSpeaking } from "@/lib/voice";
 import { color, font } from "@/lib/theme";
 import type { Attached } from "@/lib/attach";
-import type { Message, Run, SessionOptions, SessionSummary } from "@/lib/types";
+import type { Message, SessionOptions, SessionSummary } from "@/lib/types";
 
 const modelValue = (m: any): string | null =>
   m && typeof m === "object" && m.id ? `${m.providerID}/${m.id}` : typeof m === "string" ? m : null;
@@ -67,6 +62,22 @@ export type FolderChat = {
   /** "Chat about this": the file in the composer. */
   attached: Attached | null;
   onAttach: (file: Attached | null) => void;
+  /** An Operations Project's procedure or run chat (see OpsView). */
+  ops?: OpsChat;
+};
+
+/** What an Operations chat puts around the conversation. */
+export type OpsChat = {
+  /** Left of the context meter: "‹ Procedures / refund-asks". */
+  bar: ReactNode;
+  /** Desktop: beside the chat (the procedure file, the run's details). */
+  side: ReactNode | null;
+  /** The composer's placeholder. */
+  hint?: string;
+  /** Above the messages: a run's result. */
+  header?: ReactNode;
+  /** A reply's [Edit name](edit:name): open that procedure's chat with the reply. */
+  onEdit?: (procedure: string, reply: string) => void;
 };
 
 // 05 · Session: the conversation, live; reply by typing or talking.
@@ -116,35 +127,16 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
 
   const all = useMemo(() => toBlocks(s.items), [s.items]);
   const [full, setFull] = useState(false);
-  // An Operations Project's chat: scheduled runs from before procedures ran in
-  // chats show their result where they finished.
-  const procedureChat = inFolder?.ctx.project.kind === "routine";
-  const { data: scheduled } = useLoad(
-    () =>
-      procedureChat
-        ? inFolder!.ctx
-            .call<{ runs: Run[] }>("runs")
-            .then((r) =>
-              r.runs.filter((x) => !x.trigger && x.schedule_key !== "manual" && x.status !== "running"),
-            )
-        : Promise.resolve([] as Run[]),
-    [procedureChat, inFolder?.ctx.changed],
-  );
+  const ops = inFolder?.ops;
   // A routine run reads as its result: the steps fold into one "Run transcript" row.
   // While a run works it shows its progress instead (RunProgress); after, the result.
   const runWorking = s.run?.status === "running" && (s.status === "running" || s.status === "waiting");
   // Procedure runs in this chat: a divider where each step starts, and the wait at the end.
   const blocks: Item[] = useMemo(() => {
     if (s.run && !full) return runWorking ? [] : foldRun(all);
-    const marks: { at: number; mark: Item }[] = [
-      ...runMarks(s.runs, id),
-      ...(scheduled ?? []).map((r) => ({
-        at: new Date(r.finished ?? r.started).getTime(),
-        mark: { kind: "scheduled" as const, key: `run-${r.id}`, run: r },
-      })),
-    ];
+    const marks: { at: number; mark: Item }[] = runMarks(s.runs, id);
     return marks.length ? withMarks<Block, Item>(s.items, marks, s.older != null, toBlocks) : all;
-  }, [all, s.run, full, runWorking, scheduled, s.items, s.older, s.runs, id]);
+  }, [all, s.run, full, runWorking, s.items, s.older, s.runs, id]);
   const [image, setImage] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [, tick] = useState(0);
@@ -232,7 +224,8 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const [inView, setInView] = useState<Attached | null>(null);
   const [dismissed, setDismissed] = useState<string | null>(null);
   const viewKey = inView && `${inView.path}·${inView.view ?? ""}`;
-  const attached = wide ? (viewKey && viewKey !== dismissed ? inView : null) : (inFolder?.attached ?? null);
+  const attached =
+    wide && !ops ? (viewKey && viewKey !== dismissed ? inView : null) : (inFolder?.attached ?? null);
   const written = all.findLast((b) => b.kind === "file");
   const lastWritten = written?.kind === "file" ? rel(written.path) : null;
   const [shownWritten, setShownWritten] = useState<string | null>(null);
@@ -251,6 +244,20 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
     if (!inFolder && project && singleChat(project.kind) && !isRun)
       router.replace({ pathname: "/project/[id]", params: { id: String(project.id) } } as any);
   }, [inFolder, project, isRun]);
+  // An Operations Project's procedure and run chats open in the Project, beside
+  // the procedure or the run (Inbox and old links come here).
+  const opsChat = s.session?.chat;
+  const ownRun = s.runs.find((r) => r.session_id === id && !r.parent_id)?.id ?? s.runs[0]?.id;
+  useEffect(() => {
+    if (inFolder || project?.kind !== "routine" || !opsChat) return;
+    if (opsChat === "procedure")
+      router.replace({ pathname: "/routine/[id]", params: { id: String(project.id), chat: id } } as any);
+    else if (ownRun)
+      router.replace({
+        pathname: "/routine/[id]",
+        params: { id: String(project.id), run: String(ownRun) },
+      } as any);
+  }, [inFolder, project, opsChat, ownRun, id]);
 
   // Procedures: the Project's, for keys and chips; reloaded when a turn ends,
   // since the chat may have added one.
@@ -262,9 +269,8 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const [lastStatus, setLastStatus] = useState(s.status);
   if (s.status !== lastStatus) {
     setLastStatus(s.status);
-    if (s.status === "idle" && procedureChat) reloadProcedures?.();
+    if (s.status === "idle" && ops) reloadProcedures?.();
   }
-  const [picked, setPicked] = useState<Procedure | null>(null);
   const [sendAll, setSendAll] = useState<OfferedRow[] | null>(null);
   const keys = useMemo(() => Object.fromEntries(procedures.map((p) => [p.name, p.key])), [procedures]);
   const stateOf = useMemo(() => rowStates(s.items, s.perms, keys), [s.items, s.perms, keys]);
@@ -378,7 +384,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
   const lastCompaction = blocks.map((b) => b.kind).lastIndexOf("compaction");
   const current =
     view && (view === "diff" ? changed > 0 : opened.includes(view)) ? view : changed ? "diff" : opened[0];
-  const pane = wide && (inFolder ? true : !paneHidden && current != null);
+  const pane = wide && (ops ? ops.side != null : inFolder ? true : !paneHidden && current != null);
   const folderName = s.project?.kind === "home" ? "Home" : s.project?.name;
   const goFolder = (tab: string) =>
     s.project && router.navigate({ pathname: folderHref(s.project), params: { tab } } as any);
@@ -397,9 +403,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
       extraData={pane ? (inFolder ? paneFile : current) : null}
       keyExtractor={(b) => b.key}
       renderItem={({ item, index }) =>
-        item.kind === "scheduled" ? (
-          <ScheduledResult run={item.run} call={folder.call} />
-        ) : item.kind === "step" || item.kind === "wait" ? (
+        item.kind === "step" || item.kind === "wait" ? (
           <RunMarkView mark={item} chat={id} call={call} />
         ) : index < lastCompaction ? (
           <View style={st.compacted}>
@@ -452,6 +456,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
               <ActivityIndicator size="small" color={color.muted} />
             </View>
           ) : null}
+          {ops?.header ?? null}
           {inFolder?.earlier.length ? (
             <EarlierChats call={inFolder.ctx.call} chats={inFolder.earlier} />
           ) : s.run && run ? (
@@ -549,7 +554,7 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
 
   const chatBar = (
     <View style={[st.chatBar, !wide && { paddingHorizontal: 18 }]}>
-      <Text style={st.chatBarTitle}>Chat</Text>
+      {ops ? ops.bar : <Text style={st.chatBarTitle}>Chat</Text>}
       {wide && s.status === "waiting" ? <Badge label="Needs you" tint="needs" /> : null}
       <View style={{ flex: 1 }} />
       {context != null ? (
@@ -568,9 +573,11 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
           <Text style={st.meterText}>{context}% context</Text>
         </View>
       ) : null}
-      <Tap onPress={compact} style={st.compactButton} testID="compact">
-        <Text style={st.compactText}>Compact</Text>
-      </Tap>
+      {ops ? null : (
+        <Tap onPress={compact} style={st.compactButton} testID="compact">
+          <Text style={st.compactText}>Compact</Text>
+        </Tap>
+      )}
     </View>
   );
 
@@ -584,7 +591,9 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
       >
         <View style={!inFolder && wide ? st.conversationWide : st.conversation}>
           {inFolder ? chatBar : null}
-          <RunLinksContext.Provider value={runLinks}>{transcript}</RunLinksContext.Provider>
+          <EditLinkContext.Provider value={ops?.onEdit ?? null}>
+            <RunLinksContext.Provider value={runLinks}>{transcript}</RunLinksContext.Provider>
+          </EditLinkContext.Provider>
           <ErrorLine message={error} />
           {note ? <Text style={st.note}>{note}</Text> : null}
           {s.run?.status === "running" ? (
@@ -605,11 +614,11 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
               />
             </View>
           ) : null}
-          {procedureChat ? <ProcedureChips procedures={procedures} onPick={setPicked} /> : null}
           <SessionComposer
             queued={s.run?.status === "running"}
             hint={
-              queued ? (wide ? 'Message, or "queue …" to add a task' : 'Message, or "queue …"') : undefined
+              ops?.hint ??
+              (queued ? (wide ? 'Message, or "queue …" to add a task' : 'Message, or "queue …"') : undefined)
             }
             busy={busy}
             options={options}
@@ -629,13 +638,15 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
             setModel={(model, variant) => call("set_model", { model, ...(variant ? { variant } : {}) })}
             onError={setError}
             attached={attached}
-            keepAttached={wide}
-            onDetach={() => (wide ? setDismissed(viewKey) : inFolder?.onAttach(null))}
+            keepAttached={wide && !ops}
+            onDetach={() => (wide && !ops ? setDismissed(viewKey) : inFolder?.onAttach(null))}
           />
         </View>
       </View>
+      {/* Desktop, in an Operations Project: the procedure or the run beside the chat. */}
+      {pane && ops ? <View style={st.side}>{ops.side}</View> : null}
       {/* Desktop, in a Project: its files beside the chat. */}
-      {pane && inFolder ? (
+      {pane && inFolder && !ops ? (
         <View style={st.side}>
           <FolderPane
             ctx={{ ...inFolder.ctx, changed: inFolder.ctx.changed + all.length }}
@@ -716,11 +727,6 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
       <Sheet visible={image != null} onClose={() => setImage(null)} width={900}>
         {image ? <Image source={{ uri: image }} style={st.full} resizeMode="contain" /> : null}
       </Sheet>
-      <ProcedureSheet
-        procedure={picked}
-        onClose={() => setPicked(null)}
-        onRun={(p, values) => runIn(p.name, { inputs: values })}
-      />
       <SendAllSheet
         rows={sendAll}
         keyName={sendAll ? (keys[sendAll[0].link.procedure] ?? null) : null}
@@ -919,8 +925,8 @@ function EarlierChat({ call, chat }: { call: FolderChat["ctx"]["call"]; chat: Se
   );
 }
 
-/** A transcript row: a block, a procedure run's step or wait, or an old scheduled run's result. */
-type Item = Block | RunMark | { kind: "scheduled"; key: string; run: Run };
+/** A transcript row: a block, or a procedure run's step or wait. */
+type Item = Block | RunMark;
 
 const FOLD = "run-transcript";
 

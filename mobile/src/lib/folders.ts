@@ -34,7 +34,7 @@ export const templates: { kind: Kind; label: string; detail: string; opens: stri
   { kind: "document", label: "Document", detail: "docs/ and a writing skill", opens: "Chat" },
   { kind: "design", label: "Design", detail: "designs/ and an HTML design skill", opens: "Chat" },
   { kind: "dataset", label: "Dataset", detail: "data.sqlite, a schema skill and app/", opens: "Chat" },
-  { kind: "routine", label: "Operations", detail: "procedures and API calls, no repo", opens: "Chat" },
+  { kind: "routine", label: "Operations", detail: "procedures and API calls, no repo", opens: "Procedures" },
 ];
 
 /** A Project name from free text: lowercase words joined by dashes. */
@@ -92,13 +92,13 @@ export const folderHref = (p: Pick<Project, "id" | "kind">) =>
 /**
  * Projects with one working copy of their files, so one continuous chat beside
  * them (Code chats each get a worktree; Chat and Home hold unrelated talks).
- * An Operations Project's chat is where its procedures run.
+ * Operations Projects have none: each procedure and each run has its own chat.
  */
-export const singleChat = (kind: Kind) =>
-  kind === "document" || kind === "design" || kind === "dataset" || kind === "routine";
+export const singleChat = (kind: Kind) => kind === "document" || kind === "design" || kind === "dataset";
 
 /** Where a Project opens first. */
-export const firstTab = (kind: Kind) => (singleChat(kind) ? "chat" : "chats");
+export const firstTab = (kind: Kind) =>
+  kind === "routine" ? "procedures" : singleChat(kind) ? "chat" : "chats";
 
 export type ViewKind = "doc" | "canvas" | "app" | "table" | "image" | "code" | "diff";
 

@@ -27,14 +27,20 @@ export function ProcedureDetail({
   onBack,
   onOpen,
   onRan,
+  embedded,
+  onOpenRun,
 }: {
   ctx: ProjectCtx;
   procedure: Procedure;
   runs: Run[];
-  onBack: () => void;
+  onBack?: () => void;
   /** Opens another procedure (a step that runs it). */
   onOpen: (name: string) => void;
-  onRan: (sessionId: string | null | undefined) => void;
+  onRan?: (sessionId: string | null | undefined) => void;
+  /** Beside its chat (an Operations Project): no back or Run here, the pane has them. */
+  embedded?: boolean;
+  /** Opens a recent run (else its session). */
+  onOpenRun?: (run: Run) => void;
 }) {
   const wide = useWide();
   const steps = p.steps ?? [];
@@ -60,7 +66,7 @@ export function ProcedureDetail({
       );
       const r = await ctx.call<{ session_id: string | null }>("run", { procedure: p.name, inputs }, 60000);
       setAsking(false);
-      onRan(r.session_id);
+      onRan?.(r.session_id);
     } catch (e: any) {
       setError(e.message);
     }
@@ -90,8 +96,13 @@ export function ProcedureDetail({
   }
 
   return (
-    <ScrollView contentContainerStyle={[st.body, wide && { paddingHorizontal: 28 }]}>
-      <View style={st.top}>
+    <ScrollView contentContainerStyle={[st.body, wide && { paddingHorizontal: embedded ? 24 : 28 }]}>
+      {embedded ? (
+        <Text style={st.embeddedTitle} numberOfLines={1}>
+          {p.name}
+        </Text>
+      ) : null}
+      <View style={[st.top, embedded && { display: "none" }]}>
         <Tap onPress={onBack} hitSlop={8} style={st.back} testID="procedure-back">
           <Icon name="back" size={14} color={color.muted} strokeWidth={2.4} />
           <Text style={st.backText}>Procedures</Text>
@@ -142,7 +153,7 @@ export function ProcedureDetail({
             </View>
             <Text style={st.muted}>
               {p.schedule.paused
-                ? "Paused · it won't run until you resume it"
+                ? "Paused until you start it"
                 : p.schedule.next
                   ? `Next run ${new Date(p.schedule.next).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })} · uses input defaults`
                   : `Can't read "${p.schedule.at}" as a time`}
@@ -150,7 +161,7 @@ export function ProcedureDetail({
           </View>
           {ctx.canEdit ? (
             <Tap onPress={() => pause(!p.schedule!.paused)} style={st.pause} testID="schedule-pause">
-              <Text style={st.pauseText}>{p.schedule.paused ? "Resume" : "Pause"}</Text>
+              <Text style={st.pauseText}>{p.schedule.paused ? "Start schedule" : "Pause"}</Text>
             </Tap>
           ) : null}
         </View>
@@ -247,7 +258,7 @@ export function ProcedureDetail({
         <View style={{ gap: 2 }}>
           <Text style={[st.label, { paddingBottom: 6 }]}>Recent runs</Text>
           {runs.slice(0, 12).map((r) => (
-            <RecentRun key={r.id} run={r} procedure={p} />
+            <RecentRun key={r.id} run={r} procedure={p} onOpen={onOpenRun} />
           ))}
         </View>
       ) : null}
@@ -520,7 +531,15 @@ function Pick({
 }
 
 /** A run in Recent runs: when, what it worked on, how it ended. Opens where it ran. */
-function RecentRun({ run: r, procedure: p }: { run: Run; procedure: Procedure }) {
+function RecentRun({
+  run: r,
+  procedure: p,
+  onOpen,
+}: {
+  run: Run;
+  procedure: Procedure;
+  onOpen?: (run: Run) => void;
+}) {
   const v = r.inputs ?? {};
   const currency = p.inputs.find((i) => i.name === "amount")?.currency;
   const amount = v.amount != null && v.amount !== "" ? `${v.amount}${currency ? ` ${currency}` : ""}` : null;
@@ -546,7 +565,7 @@ function RecentRun({ run: r, procedure: p }: { run: Run; procedure: Procedure })
   return (
     <Tap
       kb="row"
-      onPress={() => r.session_id && router.push(`/session/${r.session_id}`)}
+      onPress={() => (onOpen ? onOpen(r) : r.session_id && router.push(`/session/${r.session_id}`))}
       style={st.recent}
       testID={`recent-${r.id}`}
     >
@@ -583,6 +602,13 @@ function modelTint(model: string | null) {
 const st = StyleSheet.create({
   body: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 40, gap: 14, maxWidth: 900, width: "100%" },
   top: { flexDirection: "row", alignItems: "center", gap: 10 },
+  embeddedTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    fontFamily: font.mono,
+    color: color.textStrong,
+    marginBottom: -8,
+  },
   back: { flexDirection: "row", alignItems: "center", gap: 3 },
   backText: { fontSize: 13, color: color.muted },
   title: { fontFamily: font.mono, fontSize: 17, fontWeight: "600", color: color.text, flexShrink: 1 },

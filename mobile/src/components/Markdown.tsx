@@ -1,9 +1,16 @@
-import { ReactNode, useContext, useState } from "react";
+import { createContext, ReactNode, useContext, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { color, font } from "@/lib/theme";
 import { parseRunLink } from "@/lib/procedures";
 import { offeredRow, RunLinksContext, RunRows, type OfferedRow } from "./session/RunRows";
+import { Tap } from "./ui";
+
+/**
+ * A run chat's `[Edit name](edit:name)`: a button that opens that procedure's
+ * chat with the reply attached. Without it, the link shows as its text.
+ */
+export const EditLinkContext = createContext<((procedure: string, reply: string) => void) | null>(null);
 
 // Just enough markdown for agent replies: paragraphs, headings, lists, code
 // blocks, **bold**, `code` and [links](…) as their text. In a chat that can run
@@ -61,6 +68,7 @@ function CopyButton({ text }: { text: string }) {
 
 export function Markdown({ text, streaming }: { text: string; streaming?: boolean }) {
   const runnable = useContext(RunLinksContext) != null;
+  const edit = useContext(EditLinkContext);
   const blocks: ReactNode[] = [];
   const parts = text.split(/```/);
 
@@ -105,7 +113,20 @@ export function Markdown({ text, streaming }: { text: string; streaming?: boolea
       const href = runnable ? /\[([^\]]+)\]\((run:[^)\s]+)\)/.exec(trimmed) : null;
       const link = href ? parseRunLink(href[2], href[1]) : null;
 
-      if (link) {
+      const editing = edit ? /^\[([^\]]+)\]\(edit:([\w.-]+)\)$/.exec(trimmed) : null;
+
+      if (editing && edit) {
+        flush(`${k}p`);
+        const reply = text
+          .replace(/```peon-[\s\S]*?(```|$)/g, "")
+          .replace(trimmed, "")
+          .trim();
+        blocks.push(
+          <Tap key={k} onPress={() => edit(editing[2], reply)} style={st.edit} testID={`edit-${editing[2]}`}>
+            <Text style={st.editText}>{editing[1]}</Text>
+          </Tap>,
+        );
+      } else if (link) {
         if (para.length) flush(`${k}p`);
         rows.push(offeredRow(trimmed, link));
       } else if (!trimmed) {
@@ -175,4 +196,13 @@ const st = StyleSheet.create({
   preText: { fontFamily: font.mono, fontSize: 12.5, lineHeight: 18, color: color.textSoft },
   table: { fontFamily: font.mono, fontSize: 12, color: color.textDim },
   cursor: { color: color.accent, marginTop: -6 },
+  edit: {
+    alignSelf: "flex-start",
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: color.outline,
+  },
+  editText: { fontSize: 13.5, fontWeight: "600", color: color.text },
 });

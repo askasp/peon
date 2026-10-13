@@ -15,6 +15,7 @@ import { SessionChat } from "../session/SessionChat";
 import { SkillsTab } from "./SkillsTab";
 import { TasksTab } from "./TasksTab";
 import { QueueTab } from "./QueueTab";
+import { OpsView } from "./OpsView";
 import type { ProjectCtx } from "./types";
 import type { Procedure } from "@/lib/procedures";
 import { usePeon } from "@/lib/peon";
@@ -43,12 +44,17 @@ export function ProjectView({
   id,
   initialTab,
   tree,
+  chat: opsChat,
+  run,
 }: {
   id: string;
   back?: string;
   initialTab?: string;
   /** Files tab: a chat id to show that chat's worktree. */
   tree?: string;
+  /** An Operations Project: a procedure chat or a run to open (see OpsView). */
+  chat?: string;
+  run?: string;
 }) {
   const wide = useWide();
   const [changed, setChanged] = useState(0);
@@ -202,6 +208,24 @@ export function ProjectView({
       )}
     </View>
   );
+
+  // An Operations Project: Procedures and Runs, each with its own chats.
+  if (routine && p)
+    return (
+      <Screen full>
+        <OpsView
+          project={p}
+          ctx={ctx}
+          error={ch.error}
+          name={name}
+          sub={sub}
+          initialTab={initialTab}
+          chat={opsChat}
+          run={run}
+          settings={settingsView}
+        />
+      </Screen>
+    );
 
   // A single-chat Project opens as its chat: beside its files on the desktop
   // (Settings is a button), Chat · Files · Settings on the phone.

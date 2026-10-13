@@ -259,7 +259,9 @@ export function SessionComposer(p: Props) {
         <View style={[st.attachedRow, !wide && st.rowIn]}>
           <View style={st.attached} testID="attached">
             <View style={st.attachedGlyph}>
-              <Text style={st.attachedGlyphText}>{viewInfo[viewFor(p.attached.path)][1]}</Text>
+              <Text style={st.attachedGlyphText}>
+                {p.attached.text != null ? "↗" : viewInfo[viewFor(p.attached.path)][1]}
+              </Text>
             </View>
             <Text style={st.attachedPath} numberOfLines={1}>
               {p.attached.path}

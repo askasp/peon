@@ -20,13 +20,19 @@ defmodule BeamcodeWeb.ProjectChannel do
       `{on}` each reply with `{queue}` (and `ids` / `session_id`)
     * `procedures` → `{procedures, error}`
     * `run` `{procedure?, inputs? | rows?, session_id?}` → `{session_id, run}`: starts a
-      procedure (`Beamcode.Procedures.Runs.start/5`) in the Project's chat (a new
-      worktree chat in a code Project) or the chat given, once with `inputs` or
-      once per row of `rows`
+      procedure (`Beamcode.Procedures.Runs.start/5`) in the chat given, else the
+      Project's chat (a new worktree chat in a code Project, the run's own chat
+      in an Operations Project), once with `inputs` or once per row of `rows`
     * `run_continue` `{id, items?}`, `run_skip` `{id}`, `run_back` `{id, note}`,
       `run_stop` `{id}` → `{run}`: answer a run that waits for you, or stop it
     * `pause_schedule` `{procedure, paused}` → `{procedures}`: pause a procedure's schedule
     * `run_result` `{id}` → `{text}`: a run's result, to show it in the Project's chat
+    * Operations Projects (see `Beamcode.OpsChats`): `procedure_chat` `{name?}` →
+      `{session_id}` opens a procedure's chat (no name: a new procedure's);
+      `procedure_chat_info` `{session_id}` → `{procedure, path, base, new}`;
+      `procedure_undo` `{session_id}` puts the file back as it was before the
+      chat's last message; `run_chat` `{id}` → `{session_id}`; `run_detail` `{id}`
+      → `{run, children, outputs}`
     * `skills` → `{files}` (AGENTS.md first); `read_file` `{path}` → `{content}`;
       `save_file` `{path, content}`; `create_skill` `{name}` → `{path}`
     * `slash` → `{slash}`: skills and commands for `/` completion (`Sessions.slash_items/2`)
@@ -340,6 +346,103 @@ defmodule BeamcodeWeb.ProjectChannel do
 
       _ ->
         {:reply, {:error, %{message: "No such run here."}}, socket}
+    end
+  end
+
+  ## An Operations Project's procedure and run chats
+
+  def handle_in("procedure_chat", params, socket) do
+    %{project: project, user: user} = socket.assigns
+
+    cond do
+      not ProjectTools.can_edit?(project, user) ->
+        {:reply, {:error, %{message: "You can't change this Project."}}, socket}
+
+      is_binary(params["name"]) and params["name"] != "" ->
+        ChannelTasks.reply_async(socket, fn ->
+          case Beamcode.OpsChats.procedure_chat(project, user, params["name"]) do
+            {:ok, sid} -> {:ok, %{session_id: sid}}
+            {:error, reason} -> error(reason)
+          end
+        end)
+
+      true ->
+        ChannelTasks.reply_async(socket, fn ->
+          case Beamcode.OpsChats.new_procedure_chat(project, user) do
+            {:ok, sid} -> {:ok, %{session_id: sid}}
+            {:error, reason} -> error(reason)
+          end
+        end)
+    end
+  end
+
+  def handle_in("procedure_chat_info", %{"session_id" => sid}, socket) when is_binary(sid) do
+    project = socket.assigns.project
+
+    case Projects.session_record(sid) do
+      %{chat: "procedure", project_id: pid} = record when pid == project.id ->
+        ChannelTasks.reply_async(socket, fn ->
+          {:ok, Beamcode.OpsChats.info(project, record)}
+        end)
+
+      _ ->
+        {:reply, {:error, %{message: "That isn't a procedure chat here."}}, socket}
+    end
+  end
+
+  def handle_in("procedure_undo", %{"session_id" => sid}, socket) when is_binary(sid) do
+    %{project: project, user: user} = socket.assigns
+
+    case Projects.session_record(sid) do
+      %{chat: "procedure", project_id: pid} = record when pid == project.id ->
+        if ProjectTools.can_edit?(project, user) do
+          ChannelTasks.reply_async(socket, fn ->
+            case Beamcode.OpsChats.undo(project, record) do
+              {:ok, _} -> {:ok, %{}}
+              {:error, reason} -> error(reason)
+            end
+          end)
+        else
+          {:reply, {:error, %{message: "You can't change this Project."}}, socket}
+        end
+
+      _ ->
+        {:reply, {:error, %{message: "That isn't a procedure chat here."}}, socket}
+    end
+  end
+
+  def handle_in("run_chat", %{"id" => id}, socket) do
+    %{project: project, user: user} = socket.assigns
+
+    case visible_run(socket, id) do
+      nil ->
+        {:reply, {:error, %{message: "No such run here."}}, socket}
+
+      run ->
+        ChannelTasks.reply_async(socket, fn ->
+          case Beamcode.OpsChats.run_chat(project, user, run) do
+            {:ok, sid} -> {:ok, %{session_id: sid}}
+            {:error, reason} -> error(reason)
+          end
+        end)
+    end
+  end
+
+  def handle_in("run_detail", %{"id" => id}, socket) do
+    case visible_run(socket, id) do
+      nil ->
+        {:reply, {:error, %{message: "No such run here."}}, socket}
+
+      run ->
+        children = Schedules.child_runs(run.id)
+
+        {:reply,
+         {:ok,
+          %{
+            run: AppJSON.run(run),
+            children: Enum.map(children, &AppJSON.run/1),
+            outputs: run.outputs || %{}
+          }}, socket}
     end
   end
 
@@ -1273,6 +1376,20 @@ defmodule BeamcodeWeb.ProjectChannel do
       connectors: DataSources.connector_list(project),
       can_edit: ProjectTools.can_edit?(project, user)
     }
+  end
+
+  # A run in this Project that the user may see.
+  defp visible_run(socket, id) do
+    %{project: project, user: user} = socket.assigns
+
+    case Schedules.get_run(id) do
+      %{project_id: pid, scope: scope, owner_id: owner} = run
+      when pid == project.id and (scope == "team" or owner == user.id) ->
+        run
+
+      _ ->
+        nil
+    end
   end
 
   defp error(reason), do: {:error, %{message: ChannelTasks.error_message(reason)}}

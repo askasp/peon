@@ -298,6 +298,24 @@ defmodule Beamcode.Schedules do
     )
   end
 
+  @doc "One run by id (a string from the app is fine), with its owner; nil when there's none."
+  def get_run(id) do
+    case Integer.parse(to_string(id)) do
+      {n, ""} -> Repo.one(from r in Run, where: r.id == ^n, preload: :owner)
+      _ -> nil
+    end
+  end
+
+  @doc "The runs a run's steps started, oldest first."
+  def child_runs(run_id) do
+    Repo.all(
+      from r in Run,
+        where: r.parent_id == ^run_id,
+        order_by: [asc: r.inserted_at],
+        preload: :owner
+    )
+  end
+
   @doc """
   The run a session is (a schedule's own session, or a run from before
   procedures ran in chats); nil for a chat that procedure runs only pass through.

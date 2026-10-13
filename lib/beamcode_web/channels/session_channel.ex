@@ -134,6 +134,16 @@ defmodule BeamcodeWeb.SessionChannel do
             end
 
           :send ->
+            # An Operations Project's procedure and run chats send their context along.
+            text =
+              case Beamcode.Projects.session_record(sid) do
+                %{chat: chat} = record when is_binary(chat) ->
+                  Beamcode.OpsChats.with_context(project, record, text)
+
+                _ ->
+                  text
+              end
+
             case Sessions.send_text(sid, text, dir, files, delivery) do
               {:ok, _} -> {:ok, %{}}
               {:error, reason} -> error(reason)

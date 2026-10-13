@@ -101,7 +101,10 @@ defmodule Beamcode.Projects do
       project_id: project.id,
       user_id: user && user.id,
       scope: Keyword.get(opts, :scope, "team"),
-      schedule_key: Keyword.get(opts, :schedule_key)
+      schedule_key: Keyword.get(opts, :schedule_key),
+      chat: Keyword.get(opts, :chat),
+      procedure: Keyword.get(opts, :procedure),
+      base: Keyword.get(opts, :base)
     }
     |> Repo.insert!(on_conflict: :nothing, conflict_target: :session_id)
   end

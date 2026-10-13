@@ -41,6 +41,9 @@ defmodule BeamcodeWeb.AppJSON do
       scope: record && record.scope,
       scheduled: !!(record && record.schedule_key),
       started_by: record && record.user && record.user.username,
+      # An Operations Project's chats: "procedure" or "run", and which procedure.
+      chat: record && record.chat,
+      procedure: record && record.procedure,
       project: project(project)
     }
   end

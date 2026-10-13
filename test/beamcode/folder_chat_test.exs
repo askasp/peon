@@ -65,25 +65,30 @@ defmodule Beamcode.FolderChatTest do
     assert {:ok, %{"id" => "new"}} = Sessions.open(code, user)
   end
 
-  test "a procedure runs in its Project's one chat, a batch as one message", %{user: user} do
+  test "each Operations run gets its own chat, a batch as one message", %{user: user} do
     folder = project_fixture(%{name: "amino-maintenance", kind: "routine"}, user)
     sent = start_supervised!({Agent, fn -> [] end})
+    made = start_supervised!(Supervisor.child_spec({Agent, fn -> 0 end}, id: :made))
 
     setup_stub(fn conn ->
-      case {conn.method, conn.request_path} do
-        {"GET", "/api/session"} ->
+      case {conn.method, String.split(conn.request_path, "/", trim: true)} do
+        {"GET", ["api", "session"]} ->
           data(conn, [session("chat", 1, 1)])
 
-        {"GET", "/api/skill"} ->
+        {"POST", ["api", "session"]} ->
+          n = Agent.get_and_update(made, &{&1 + 1, &1 + 1})
+          data(conn, session("r#{n}", n, n))
+
+        {"GET", ["api", "skill"]} ->
           path = folder.directory <> "/.opencode/skill/refund/SKILL.md"
           data(conn, [%{"name" => "refund", "id" => "refund", "path" => path}])
 
-        {"GET", "/api/fs/read/procedures.json"} ->
+        {"GET", ["api", "fs", "read", "procedures.json"]} ->
           Plug.Conn.send_resp(conn, 200, ~s({"refund": {"key": "charge"}}))
 
-        {"POST", "/api/session/chat/prompt"} ->
+        {"POST", ["api", "session", sid, "prompt"]} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
-          Agent.update(sent, &[Jason.decode!(body) | &1])
+          Agent.update(sent, &[{sid, Jason.decode!(body)} | &1])
           data(conn, %{})
 
         _ ->
@@ -93,19 +98,23 @@ defmodule Beamcode.FolderChatTest do
 
     rows = [%{"charge" => "ch_1", "name" => "Ola"}, %{"charge" => "ch_2", "name" => "Kari"}]
     alias Beamcode.Procedures.Runs
-    assert {:ok, %{session_id: "chat"}} = Runs.start(folder, user, "refund", rows)
-
-    assert {:ok, %{session_id: "chat"}} =
-             Runs.start(folder, user, "refund", %{"charge" => "ch_3"})
-
+    assert {:ok, %{session_id: "r1"}} = Runs.start(folder, user, "refund", rows)
+    assert {:ok, %{session_id: "r2"}} = Runs.start(folder, user, "refund", %{"charge" => "ch_3"})
     assert {:error, "No procedure called nope."} = Runs.start(folder, user, "nope", %{})
 
     assert [
-             %{"skills" => [%{"id" => "refund"}], "text" => "charge: ch_3"},
-             %{
-               "text" =>
-                 "Run this once for each row, in order:\n- charge: ch_1, name: Ola\n- charge: ch_2, name: Kari"
-             }
+             {"r2", %{"skills" => [%{"id" => "refund"}], "text" => "charge: ch_3"}},
+             {"r1",
+              %{
+                "text" =>
+                  "Run this once for each row, in order:\n- charge: ch_1, name: Ola\n- charge: ch_2, name: Kari"
+              }}
            ] = Agent.get(sent, & &1)
+
+    # They're run chats about refund, kept out of the Project's chat list.
+    assert %{chat: "run", procedure: "refund"} = Projects.session_record("r1")
+    Projects.record_session("chat", folder, user)
+    {:ok, listed} = Sessions.list_visible(folder, user)
+    assert Enum.map(listed, & &1["id"]) == ["chat"]
   end
 end

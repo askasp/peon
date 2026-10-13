@@ -1,8 +1,14 @@
 import { useLocalSearchParams } from "expo-router";
 import { ProjectView } from "@/components/project/ProjectView";
 
-// 07 · Routine and runs: run it (with inputs), its runs, chats, skills, schedules and settings.
+// An Operations Project: its procedures and runs; `chat` opens a procedure's
+// chat, `run` a run's (on the phone each is its own screen).
 export default function RoutineScreen() {
-  const { id, tab } = useLocalSearchParams<{ id: string; tab?: string }>();
-  return <ProjectView id={id} back="Procedures" initialTab={tab} />;
+  const { id, tab, chat, run } = useLocalSearchParams<{
+    id: string;
+    tab?: string;
+    chat?: string;
+    run?: string;
+  }>();
+  return <ProjectView id={id} back="Procedures" initialTab={tab} chat={chat} run={run} />;
 }

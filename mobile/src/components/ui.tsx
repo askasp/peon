@@ -274,10 +274,11 @@ export function Badge({
   tint = "accent",
 }: {
   label: string;
-  tint?: "accent" | "muted" | "red" | "needs";
+  tint?: "accent" | "muted" | "red" | "needs" | "teal";
 }) {
   const look = {
     accent: { bg: color.accentWash, fg: color.accentText },
+    teal: { bg: "#14262a", fg: color.teal },
     needs: { bg: color.needsWash, fg: color.needs },
     muted: { bg: color.raised, fg: color.textDim },
     red: { bg: "#2a1716", fg: color.red },

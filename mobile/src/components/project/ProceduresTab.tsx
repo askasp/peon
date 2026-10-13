@@ -34,7 +34,16 @@ export function scheduleProcedure(s: Schedule, procedures: Procedure[]) {
  * and its last run; a row opens its steps (U3, U4). Below, the notes a step
  * can be handed and New procedure.
  */
-export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => void }) {
+export function ProceduresTab({
+  ctx,
+  onRan,
+  onOpenChat,
+}: {
+  ctx: ProjectCtx;
+  onRan?: () => void;
+  /** An Operations Project: a row opens the procedure's chat, New procedure an empty one. */
+  onOpenChat?: (name: string | null) => void;
+}) {
   const wide = useWide();
   const [open, setOpen] = useState<string | null>(null);
   const [drafting, setDrafting] = useState(false);
@@ -83,14 +92,15 @@ export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => v
               p={p}
               all={ctx.procedures}
               wide={wide}
-              onPress={() => setOpen(p.name)}
+              onPress={() => (onOpenChat && p.source === "folder" ? onOpenChat(p.name) : setOpen(p.name))}
             />
           ))}
         </View>
       ) : (
         <Text style={st.empty}>
-          No procedures yet. A procedure is a file in .peon/procedures/; New procedure drafts one with you in
-          the chat.
+          {onOpenChat
+            ? "No procedures yet."
+            : "No procedures yet. A procedure is a file in .peon/procedures/; New procedure drafts one with you in the chat."}
         </Text>
       )}
 
@@ -103,7 +113,11 @@ export function ProceduresTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => v
         ))}
         <View style={{ flex: 1 }} />
         {ctx.canEdit ? (
-          <Tap onPress={() => setDrafting(true)} hitSlop={8} testID="new-procedure">
+          <Tap
+            onPress={() => (onOpenChat ? onOpenChat(null) : setDrafting(true))}
+            hitSlop={8}
+            testID="new-procedure"
+          >
             <Text style={st.link}>New procedure</Text>
           </Tap>
         ) : null}

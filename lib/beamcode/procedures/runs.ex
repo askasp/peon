@@ -143,7 +143,8 @@ defmodule Beamcode.Procedures.Runs do
   defp resolve(_project, %{name: _} = proc), do: {:ok, proc}
 
   # Where the run shows: the chat it was typed in, a child session of the
-  # parent's chat, else the Project's chat (code: a new worktree chat).
+  # parent's chat, its own chat in an Operations Project (see OpsChats), else
+  # the Project's chat (code: a new worktree chat).
   defp chat(project, user, proc, opts) do
     cond do
       opts[:session_id] ->
@@ -153,6 +154,17 @@ defmodule Beamcode.Procedures.Runs do
         if needs_session?(proc),
           do: child_session(project, user, parent.session_id, proc.name, nil),
           else: {:ok, nil}
+
+      project.kind == "routine" ->
+        with {:ok, s} <-
+               Sessions.start(project, user,
+                 title: proc.name,
+                 scope: Keyword.get(opts, :scope, "team"),
+                 chat: "run",
+                 procedure: proc.name,
+                 schedule_key: if(opts[:trigger] == "schedule", do: opts[:key])
+               ),
+             do: {:ok, s["id"]}
 
       true ->
         title = if project.kind == "code", do: proc.name

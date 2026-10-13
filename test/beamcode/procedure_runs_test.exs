@@ -186,7 +186,8 @@ defmodule Beamcode.ProcedureRunsTest do
   # …), and what each session last said (`reply/2`).
   setup do
     user = user_fixture()
-    folder = project_fixture(%{name: "amino-maintenance", kind: "routine", directory: @dir}, user)
+    # The engine in a Project with one chat; Operations runs get their own (OpsChatsTest).
+    folder = project_fixture(%{name: "amino-maintenance", kind: "dataset", directory: @dir}, user)
 
     oc =
       start_supervised!(
