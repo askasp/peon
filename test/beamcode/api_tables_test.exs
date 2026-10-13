@@ -321,6 +321,34 @@ defmodule Beamcode.ApiTablesTest do
     assert Enum.find(tools, &(&1.name == "reply")).permission == "allow"
   end
 
+  test "an action without a source goes to the table holding its row", %{
+    project: project,
+    dir: dir,
+    calls: calls
+  } do
+    two =
+      put_in(@front, ["tables", "people"], %{
+        "call" => "list_conversations",
+        "rows" => "_results",
+        "id" => "assignee.email",
+        "columns" => %{"email" => "assignee.email"}
+      })
+
+    write_api(dir, "front", two)
+    Connectors.changed(project)
+    {:ok, _} = Vault.put(project, "FRONT_TOKEN", "front_test", nil)
+    :ok = DataSources.refresh(project, "conversations")
+    :ok = DataSources.refresh(project, "people")
+
+    assert {:ok, %{"source" => "conversations", "status" => "posting"}} =
+             Outbox.act(project, nil, "archive", "cnv_2", %{}, "view")
+
+    assert {"PATCH", "/conversations/cnv_2", _, _} = List.last(Agent.get(calls, & &1))
+
+    assert {:error, "No row nope in" <> _} =
+             Outbox.act(project, nil, "archive", "nope", %{}, "view")
+  end
+
   test "the agent sees the actions and syncs through the gateway", %{project: project} do
     {:ok, _} = Vault.put(project, "FRONT_TOKEN", "front_test", nil)
 

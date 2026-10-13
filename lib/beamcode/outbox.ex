@@ -25,7 +25,7 @@ defmodule Beamcode.Outbox do
   def act(%Project{} = project, name, action, remote_id, args, origin, opts \\ []) do
     args = if is_map(args), do: args, else: %{}
 
-    with {:ok, name, s} <- source(project, name),
+    with {:ok, name, s} <- source_for(project, name, action, remote_id),
          {:ok, level} <- level(s, action, opts[:level]),
          {:ok, row} <- row(project, s, action, remote_id),
          {:ok, fields} <- fields(project, s.db, name),
@@ -254,6 +254,38 @@ defmodule Beamcode.Outbox do
   end
 
   ## Helpers
+
+  # Without a source named (a view's peon.act, the agent's source_act): the one
+  # whose service has the action; of several (an API's tables share its
+  # actions), the one holding the row.
+  defp source_for(project, nil, action, remote_id) do
+    sources = DataSources.connector_sources(project)
+
+    with_action =
+      Enum.filter(sources, fn {_, s} -> Map.has_key?(DataSources.info(s).actions, action) end)
+
+    case with_action do
+      [{name, s}] ->
+        {:ok, name, s}
+
+      [_ | _] when is_binary(remote_id) and remote_id != "" ->
+        case Enum.find(with_action, fn {_, s} ->
+               match?({:ok, _}, row(project, s, action, remote_id))
+             end) do
+          {name, s} ->
+            {:ok, name, s}
+
+          nil ->
+            {:error,
+             "No row #{remote_id} in #{with_action |> Enum.map(&elem(&1, 0)) |> Enum.join(", ")}"}
+        end
+
+      _ ->
+        source(project, nil)
+    end
+  end
+
+  defp source_for(project, name, _action, _remote_id), do: source(project, name)
 
   defp source(project, name) do
     sources = DataSources.connector_sources(project)

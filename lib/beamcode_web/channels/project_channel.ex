@@ -92,6 +92,7 @@ defmodule BeamcodeWeb.ProjectChannel do
   }
 
   alias Beamcode.Opencode.Events
+  alias Beamcode.Projects.Project
   alias Beamcode.Procedures.Runs
   alias BeamcodeWeb.{AppJSON, ChannelTasks}
 
@@ -909,7 +910,8 @@ defmodule BeamcodeWeb.ProjectChannel do
   end
 
   # Secrets belong to this Project only; whoever can change it sets them. From
-  # a token card (`session_id`), the chat that asked hears it's saved.
+  # a token card (`session_id`), the chat that asked hears it's saved; a new
+  # token set in the tab of a one-chat Project, that chat.
   def handle_in("api_secret", %{"name" => name, "value" => value} = params, socket)
       when is_binary(name) and is_binary(value) do
     %{user: user} = socket.assigns
@@ -917,11 +919,26 @@ defmodule BeamcodeWeb.ProjectChannel do
 
     if Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) and value != "" do
       api_edit(socket, fn project ->
+        new? = not MapSet.member?(Vault.names(project), name)
+
         with {:ok, _} <- Vault.put(project, name, value, user),
              :ok <- Connectors.sync_project(project) do
-          if is_binary(params["session_id"]),
-            do: token_saved(project, params["session_id"], name, user),
-            else: :ok
+          cond do
+            is_binary(params["session_id"]) ->
+              token_saved(project, params["session_id"], name, user)
+
+            # Set in the API calls tab beside the Project's one chat: that chat
+            # may be waiting for it.
+            new? and Project.single_chat?(project) and
+                Enum.any?(Connectors.all_for(project), &(&1[:secret] == name)) ->
+              case Sessions.folder_chat(project, user) do
+                {:ok, chat, _} -> token_saved(project, chat["id"], name, user)
+                _ -> :ok
+              end
+
+            true ->
+              :ok
+          end
         end
       end)
     else

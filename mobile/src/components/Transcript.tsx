@@ -89,6 +89,46 @@ function toolOutput(state: any): string {
   return String(content).slice(0, 8000);
 }
 
+/**
+ * The tokens an `ask_token` call asks for: the gateway tool called directly
+ * (its input), or from code run by `execute` (`tools.gateway.ask_token({name:
+ * "X", …})`, an object literal whose keys aren't quoted).
+ */
+export function tokenAsks(name: string, input: any): TokenAsk[] {
+  if (name === "gateway_ask_token")
+    return input?.name
+      ? [
+          {
+            name: String(input.name),
+            service: String(input.service ?? ""),
+            what: input.what,
+            link: input.link,
+          },
+        ]
+      : [];
+  const code = name === "execute" && typeof input?.code === "string" ? input.code : "";
+  return code
+    .split(/tools\.gateway\.ask_token\s*\(/)
+    .slice(1)
+    .flatMap((call: string) => {
+      const args: Record<string, string> = {};
+      const literal = call.slice(0, call.indexOf("}") + 1 || undefined);
+      for (const [, key, quoted] of literal.matchAll(
+        /["']?(\w+)["']?\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`)/g,
+      )) {
+        const body = quoted.slice(1, -1);
+        try {
+          args[key] = quoted.startsWith('"') ? JSON.parse(quoted) : body;
+        } catch {
+          args[key] = body;
+        }
+      }
+      return /^[A-Z][A-Z0-9_]*$/.test(args.name ?? "")
+        ? [{ name: args.name, service: args.service ?? "", what: args.what, link: args.link }]
+        : [];
+    });
+}
+
 export function toBlocks(items: Message[]): Block[] {
   const out: Block[] = [];
   const steps = (m: Message): Block & { kind: "steps" } => {
@@ -130,13 +170,9 @@ export function toBlocks(items: Message[]): Block[] {
             out.push({ kind: "thinking", key: `${m.id}-r${i}`, text: p.text });
           } else if (p.type === "text" && p.text.trim()) {
             out.push({ kind: "text", key: `${m.id}-${i}`, text: p.text, streaming: !!p.streaming });
-          } else if (p.type === "tool" && p.name === "gateway_ask_token" && p.state?.input?.name) {
-            const i = p.state.input;
-            out.push({
-              kind: "token",
-              key: `${m.id}-t${i.name}`,
-              ask: { name: String(i.name), service: String(i.service ?? ""), what: i.what, link: i.link },
-            });
+          } else if (p.type === "tool" && p.name === "gateway_ask_token") {
+            for (const ask of tokenAsks(p.name, p.state?.input))
+              out.push({ kind: "token", key: `${m.id}-t${ask.name}`, ask });
           } else if (p.type === "tool") {
             const b = steps(m);
             const input = p.state?.input;
@@ -148,6 +184,10 @@ export function toBlocks(items: Message[]): Block[] {
               output: toolOutput(p.state),
             });
             b.to = m.time?.completed ?? b.to;
+            // ask_token called from code (OpenCode's `execute`): its cards after the steps.
+            if (p.name === "execute")
+              for (const ask of tokenAsks(p.name, input))
+                out.push({ kind: "token", key: `${m.id}-${i}-t${ask.name}`, ask });
             const path = input?.filePath ?? input?.path;
             if (p.state?.status === "completed" && typeof path === "string" && /^(write|edit)$/.test(p.name))
               files.set(path, files.get(path) ?? (p.name === "write" ? "Wrote" : "Edited"));
