@@ -29,7 +29,7 @@ defmodule Beamcode.Outbox do
          {:ok, level} <- level(s, action, opts[:level]),
          {:ok, row} <- row(project, s, action, remote_id),
          {:ok, fields} <- fields(project, s.db, name),
-         {:ok, patch, label} <- s.connector.prepare(action, args, row, fields) do
+         {:ok, patch, label} <- DataSources.prepare(s, action, args, row, fields) do
       status = if level == "direct", do: "posting", else: "waiting"
       before = Map.new(patch, fn {col, _} -> {col, row[col]} end)
       now = SourceSync.now()
@@ -97,7 +97,7 @@ defmodule Beamcode.Outbox do
     with {:ok, _name, s} <- source(project, e["source"]),
          {:ok, row} <- row(project, s, e["action"], e["remote_id"]),
          {:ok, fields} <- fields(project, db, e["source"]),
-         {:ok, patch, label} <- s.connector.prepare(e["action"], args, row, fields),
+         {:ok, patch, label} <- DataSources.prepare(s, e["action"], args, row, fields),
          {:ok, _} <-
            ProjectFiles.exec(
              project,
@@ -131,7 +131,7 @@ defmodule Beamcode.Outbox do
     with {:ok, %{"status" => "posted"} = e} <- entry(project, db, id),
          {:ok, _name, s} <- source(project, e["source"]),
          {back, args} <-
-           s.connector.undo(e["action"], e["args"], e["before"]) ||
+           DataSources.undo(s, e["action"], e["args"], e["before"]) ||
              {:error, "This can't be undone"},
          {:ok, entry} <-
            act(project, e["source"], back, e["remote_id"], args, "undo", level: "direct"),
@@ -197,22 +197,23 @@ defmodule Beamcode.Outbox do
     with {:ok, %{"status" => "posting"} = e} <- entry(project, db, id) do
       result =
         with {:ok, _name, s} <- source(project, e["source"]),
-             {:ok, token} <- DataSources.token(project, s.connector),
              {:ok, row} <- row(project, s, e["action"], e["remote_id"]),
              {:ok, fields} <- fields(project, db, e["source"]),
-             {:ok, src} <- synced_source(project, db, e["source"]) do
-          s.connector.post(token, e["action"], e["args"], row, src, fields)
+             {:ok, src} <- synced_source(project, db, e["source"]),
+             :ok <- DataSources.post(project, s, e["action"], e["args"], row, src, fields) do
+          # An API table only learns what the call changed from the next pull.
+          if s.kind == :api, do: {:ok, :refresh}, else: :ok
         end
 
       case result do
-        :ok ->
+        ok when ok in [:ok, {:ok, :refresh}] ->
           ProjectFiles.exec(project, db, [
             {"update _outbox set status = 'posted', error = null, updated_at = ? where id = ?",
              [SourceSync.now(), id]}
             | unmark(e["tbl"], e["remote_id"])
           ])
 
-          if e["remote_id"] == nil, do: refresh_soon(project, e["source"])
+          if e["remote_id"] == nil or ok != :ok, do: refresh_soon(project, e["source"])
           :ok
 
         {:error, message} ->
@@ -266,7 +267,7 @@ defmodule Beamcode.Outbox do
   end
 
   defp level(s, action, forced) do
-    info = s.connector.info()
+    info = DataSources.info(s)
 
     case forced || DataSources.level(s, action) do
       nil ->
@@ -274,7 +275,7 @@ defmodule Beamcode.Outbox do
          "#{info.name} has no action #{action}. Actions: #{info.actions |> Map.keys() |> Enum.join(", ")}"}
 
       "off" ->
-        {:error, "#{info.actions[action].label} is off for this Project (Settings → Source)"}
+        {:error, "#{info.actions[action].label} is off for this Project (API calls)"}
 
       level ->
         {:ok, level}
@@ -282,7 +283,7 @@ defmodule Beamcode.Outbox do
   end
 
   defp row(project, s, action, remote_id) do
-    needs_row = get_in(s.connector.info().actions, [action, :needs_row]) != false
+    needs_row = get_in(DataSources.info(s).actions, [action, :needs_row]) != false
 
     cond do
       not needs_row and remote_id in [nil, ""] ->

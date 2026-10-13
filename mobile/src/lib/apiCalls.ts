@@ -1,7 +1,17 @@
 // A Project's API calls: one file per service, `.peon/api/<service>.json`,
-// with its calls as `"name": [method, path, permission, description]`.
+// with its calls as `"name": [method, path, permission, description]` (or the
+// long form with a body), and in a Dataset the `tables` its read calls fill.
 
 export type Permission = "allow" | "ask" | "deny";
+
+/** An action's level in a Dataset: a write call's permission, said the way the Outbox says it. */
+export type Level = "direct" | "confirm" | "off";
+export const levelOf: Record<Permission, Level> = { allow: "direct", ask: "confirm", deny: "off" };
+export const levels: { value: Level; label: string }[] = [
+  { value: "direct", label: "Direct" },
+  { value: "confirm", label: "Ask first" },
+  { value: "off", label: "Off" },
+];
 
 export type ApiCall = {
   name: string;
@@ -11,7 +21,23 @@ export type ApiCall = {
   description: string | null;
   /** The `{placeholders}` in its path. */
   params: string[];
+  /** "write" calls are a Dataset's actions. */
+  kind?: "read" | "write";
 };
+
+/** A table a read call fills (Datasets only), with how its last sync went. */
+export type ApiTable = {
+  name: string;
+  call: string;
+  columns: string[];
+  every_minutes: number;
+  rows: number | null;
+  synced_at: string | null;
+  error: string | null;
+};
+
+/** The Project's stored token for a service: never the value, only its last characters. */
+export type ApiToken = { name: string; hint: string | null; set_by: string | null; updated_at: string };
 
 export type ApiService = {
   name: string;
@@ -23,6 +49,9 @@ export type ApiService = {
   auth: { type?: string; secret?: string; header?: string; param?: string } | null;
   secret: string | null;
   ready: boolean;
+  token?: ApiToken | null;
+  graphql?: boolean;
+  tables?: ApiTable[];
   raw: string;
   calls: ApiCall[];
 };

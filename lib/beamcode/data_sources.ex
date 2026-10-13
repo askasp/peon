@@ -21,9 +21,24 @@ defmodule Beamcode.DataSources do
                    "actions": {"setField": "direct", "comment": "confirm"}}
       }
 
+  Tables filled from the Project's own API calls (`Beamcode.ApiTables`) are
+  sources too, read from `.peon/api/*.json` rather than sources.json. GitHub
+  Projects and Front stay as connectors only for Datasets that already sync
+  them; new ones read from API calls.
+
   See `Beamcode.SourceSync` and `Beamcode.Outbox`.
   """
-  alias Beamcode.{Opencode, Outbox, ProjectFiles, SourceSync, Vault}
+  alias Beamcode.{
+    ApiTables,
+    Connectors,
+    Opencode,
+    Outbox,
+    ProjectFiles,
+    Sessions,
+    SourceSync,
+    Vault
+  }
+
   alias Beamcode.Projects.Project
   alias Beamcode.SourceConnectors.{Front, GithubProjects}
 
@@ -43,19 +58,19 @@ defmodule Beamcode.DataSources do
     sources = read(project)
 
     synced =
-      if Enum.any?(sources, fn {_, s} -> s.kind == :connector end),
+      if Enum.any?(sources, fn {_, s} -> s.kind in [:connector, :api] end),
         do: Outbox.status(project, db),
         else: %{}
 
     for {name, s} <- sources, s.db == db do
-      if s.kind == :connector,
+      if s.kind in [:connector, :api],
         do: connector_entry(name, s, synced[name]),
         else: script_entry(project, name, s)
     end
   end
 
   defp connector_entry(name, s, synced) do
-    info = s.connector.info()
+    info = info(s)
     synced = synced || %{}
 
     %{
@@ -73,7 +88,8 @@ defmodule Beamcode.DataSources do
       waiting: synced["waiting"] || 0,
       posting: synced["posting"] || 0,
       failed: synced["failed"] || 0,
-      stale: stale?(synced["synced_at"], s.every_minutes / 60)
+      stale: stale?(synced["synced_at"], s.every_minutes / 60),
+      api: if(s.kind == :api, do: s.api.name)
     }
   end
 
@@ -101,7 +117,7 @@ defmodule Beamcode.DataSources do
       if :global.set_lock(lock, [node()], 0) do
         try do
           case s.kind do
-            :connector ->
+            kind when kind in [:connector, :api] ->
               SourceSync.run(project, name, s)
 
             :script ->
@@ -113,6 +129,65 @@ defmodule Beamcode.DataSources do
       else
         {:error, "Another source in this folder is refreshing"}
       end
+    end
+  end
+
+  ## What a synced source does, whether a connector or an API table
+
+  @doc "Its `Beamcode.SourceConnector.info/0`."
+  def info(%{kind: :api} = s), do: ApiTables.info(s)
+  def info(s), do: s.connector.info()
+
+  @doc "Pulls it: `{:ok, pull}` (see `Beamcode.SourceConnector`)."
+  def pull(project, %{kind: :api} = s), do: ApiTables.pull(project, s)
+
+  def pull(project, s) do
+    with {:ok, token} <- token(project, s.connector), do: s.connector.pull(token, s.config)
+  end
+
+  def prepare(%{kind: :api} = s, action, args, row, fields),
+    do: ApiTables.prepare(s, action, args, row, fields)
+
+  def prepare(s, action, args, row, fields), do: s.connector.prepare(action, args, row, fields)
+
+  def post(project, %{kind: :api} = s, action, args, row, _src, _fields),
+    do: ApiTables.post(project, s, action, args, row)
+
+  def post(project, s, action, args, row, src, fields) do
+    with {:ok, token} <- token(project, s.connector),
+         do: s.connector.post(token, action, args, row, src, fields)
+  end
+
+  def undo(%{kind: :api}, _action, _args, _before), do: nil
+  def undo(s, action, args, before), do: s.connector.undo(action, args, before)
+
+  @doc "Whether it can sync now: an API table needs its token set in the Project."
+  def ready?(project, %{kind: :api, api: c}), do: Connectors.ready?(c, Vault.names(project))
+  def ready?(_project, _s), do: true
+
+  @doc """
+  A new Dataset's first message in its chat: what it's for, with what the app
+  adds (a peon-context block the chat doesn't show) on setting up the APIs it
+  names. Returns `{:ok, session_id}`.
+  """
+  def start_chat(%Project{} = project, user, description) do
+    text = """
+    #{String.trim(description)}
+
+    ```peon-context
+    This Dataset (#{project.name}) was just made for the above. If it names services to read
+    from (GitHub Projects, a Front inbox, …), add each under API calls: read its docs and
+    write `.peon/api/<service>.json` with the read calls, the tables they fill and the write
+    calls as actions (see the sqlite-schema skill). Then ask for each token with the
+    `ask_token` tool and wait. Once they're saved: test the read calls, call `source_sync`,
+    link rows across APIs that refer to each other, and offer a first view. If it names no
+    service, propose the tables to keep. Keep replies short.
+    ```
+    """
+
+    with {:ok, session} <- Sessions.open(project, user),
+         {:ok, _} <- Sessions.send_text(session["id"], text, project.directory) do
+      {:ok, session["id"]}
     end
   end
 
@@ -139,105 +214,18 @@ defmodule Beamcode.DataSources do
     end
   end
 
-  @doc """
-  Each connector, whether the Project has a token for it, and its actions with
-  their default levels. Without a Project (one being made) nothing is connected.
-  """
-  def connector_list(project \\ nil) do
-    secrets = if project, do: Vault.names(project), else: MapSet.new()
-
-    for mod <- @connectors do
-      info = mod.info()
-
-      %{
-        id: info.id,
-        name: info.name,
-        short: info.short,
-        secret: info.secret,
-        connected: MapSet.member?(secrets, info.secret),
-        actions:
-          for(
-            {k, a} <- Enum.sort(info.actions),
-            do: %{name: k, label: a.label, default: a.default}
-          )
-      }
-    end
-  end
-
-  @doc "Saves a connector's token in the Project after checking it with the service: `{:ok, account}`."
-  def connect(%Project{} = project, id, token, user) when is_binary(token) do
-    mod = connector(id)
-
-    with %{} = info <- mod && mod.info(),
-         token = String.trim(token),
-         {:ok, account} <- mod.account(token),
-         {:ok, _} <- Vault.put(project, info.secret, token, user) do
-      {:ok, account}
-    else
-      nil -> {:error, "No connector #{id}"}
-      error -> error
-    end
-  end
-
-  @doc """
-  What a connector can sync (projects, inboxes), and who it's connected as:
-  with the Project's token, or with `token` itself for a Project not made yet.
-  """
-  def choices(%Project{} = project, id) do
-    with mod when not is_nil(mod) <- connector(id),
-         {:ok, token} <- token(project, mod) do
-      list_choices(mod, token)
-    else
-      nil -> {:error, "No connector #{id}"}
-      error -> error
-    end
-  end
-
-  def choices(id, token) when is_binary(id) and is_binary(token) do
-    case connector(id) do
-      nil -> {:error, "No connector #{id}"}
-      mod -> list_choices(mod, String.trim(token))
-    end
-  end
-
-  defp list_choices(mod, token) do
-    with {:ok, account} <- mod.account(token),
-         {:ok, choices} <- mod.choices(token) do
-      {:ok, %{account: account, choices: choices}}
-    end
-  end
-
-  @doc """
-  Adds a connector source to sources.json with the connector's default levels:
-  `{:ok, name}`. `choice` is what to sync (a project, an inbox).
-  """
-  def add(%Project{} = project, id, choice) do
-    with mod when not is_nil(mod) <- connector(id) do
-      info = mod.info()
-      json = raw(project)
-      base = info.id |> String.split(".") |> hd()
-      name = Enum.find([base | for(n <- 2..20, do: "#{base}#{n}")], &(not Map.has_key?(json, &1)))
-      tables = for {_, %{"table" => t}} <- json, do: t
-
-      table =
-        Enum.find([info.table | for(n <- 2..20, do: "#{info.table}#{n}")], &(&1 not in tables))
-
-      entry = %{
-        "connector" => info.id,
-        info.config_key => to_string(choice || ""),
-        "table" => table,
-        "every_minutes" => @default_minutes,
-        "actions" => Map.new(info.actions, fn {k, a} -> {k, a.default} end)
-      }
-
-      with :ok <- write(project, Map.put(json, name, entry)), do: {:ok, name}
-    else
-      nil -> {:error, "No connector #{id}"}
-    end
-  end
-
   @doc "Sets the level (direct, confirm, off) of one action of a connector source."
   def set_level(%Project{} = project, name, action, level) when level in @levels do
+    case read(project)[name] do
+      %{kind: :api, api: c} -> ApiTables.set_level(project, c, action, level)
+      _ -> set_connector_level(project, name, action, level)
+    end
+  end
+
+  def set_level(_project, _name, _action, _level),
+    do: {:error, "Levels are direct, confirm or off"}
+
+  defp set_connector_level(project, name, action, level) do
     json = raw(project)
 
     with %{"connector" => id} = entry <- json[name],
@@ -250,18 +238,21 @@ defmodule Beamcode.DataSources do
     end
   end
 
-  def set_level(_project, _name, _action, _level),
-    do: {:error, "Levels are direct, confirm or off"}
-
   @doc "Removes a source from sources.json. Its table stays, as local rows."
   def remove(%Project{} = project, name) do
     json = raw(project)
     if Map.has_key?(json, name), do: write(project, Map.delete(json, name)), else: :ok
   end
 
-  @doc "The connector sources: `%{name => source}`."
+  @doc "The synced sources (connectors and API tables): `%{name => source}`."
   def connector_sources(%Project{} = project),
-    do: for({name, %{kind: :connector} = s} <- read(project), into: %{}, do: {name, s})
+    do:
+      for(
+        {name, %{kind: k} = s} <- read(project),
+        k in [:connector, :api],
+        into: %{},
+        do: {name, s}
+      )
 
   @doc "Columns added to a synced table here (notes, your own order): sync never writes them."
   def local_columns(%Project{} = project, name, s) do
@@ -280,7 +271,7 @@ defmodule Beamcode.DataSources do
 
   @doc "The level of an action on a source: direct, confirm or off."
   def level(s, action) do
-    case s.connector.info().actions[action] do
+    case info(s).actions[action] do
       nil -> nil
       a -> s.actions[action] || a.default
     end
@@ -335,8 +326,13 @@ defmodule Beamcode.DataSources do
 
   @doc false
   def read(project) do
-    for {name, s} <- raw(project), entry = entry(s), into: %{}, do: {name, entry}
+    own = for {name, s} <- raw(project), entry = entry(s), into: %{}, do: {name, entry}
+    Map.merge(api_tables(project), own)
   end
+
+  # Only a Dataset fills tables from its API calls.
+  defp api_tables(%Project{kind: "dataset"} = project), do: ApiTables.sources(project)
+  defp api_tables(_project), do: %{}
 
   defp entry(%{"script" => script, "table" => table} = s) when is_binary(table) do
     with {:ok, script} <- ProjectFiles.clean_path(script),

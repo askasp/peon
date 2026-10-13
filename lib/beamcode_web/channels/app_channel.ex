@@ -21,11 +21,8 @@ defmodule BeamcodeWeb.AppChannel do
     * `save_keys` `{prefs?, binds?}` → `{keys}`: keymap preferences and in-session shortcuts
     * `new_project_options` → `{known_repos, known_routines, connectors}` for the new-project form
     * `create_project` `{params}` → `{project_id, session_id?, note?}`; a new routine opens a
-      session that drafts its instructions (`session_id`); a Dataset with
-      `source: {connector, choice, token}` is synced from that service, with the
-      token saved in the new Project only
-    * `source_connectors` → `{connectors}`; `source_choices` `{connector, token}` →
-      `{account, choices}` (projects, inboxes), checking a token before the Project exists
+      session that drafts its instructions (`session_id`); a described Dataset
+      starts its chat with the description, which sets up the APIs it names
     * `compose:preview` `{text}` → `{preview}`: the rule reading, while typing or talking
     * `compose:submit` `{text}` → `{plan}` to confirm, or `{result}` when it was done right away
     * `compose:confirm` → `{result}`, carrying out the last plan
@@ -294,20 +291,6 @@ defmodule BeamcodeWeb.AppChannel do
     end)
   end
 
-  def handle_in("source_connectors", _params, socket),
-    do: {:reply, {:ok, %{connectors: DataSources.connector_list()}}, socket}
-
-  # Checks a token for a Dataset being made; it's saved in that Project when it's created.
-  def handle_in("source_choices", %{"connector" => id, "token" => token}, socket)
-      when is_binary(id) and is_binary(token) do
-    ChannelTasks.reply_async(socket, fn ->
-      case DataSources.choices(id, token) do
-        {:ok, result} -> {:ok, result}
-        {:error, reason} -> error(reason)
-      end
-    end)
-  end
-
   # Only these can be made from the app; "system" projects (setup) get every connector.
   @creatable ~w(code routine chat document design dataset)
 
@@ -322,11 +305,8 @@ defmodule BeamcodeWeb.AppChannel do
     params =
       Map.take(raw, ~w(kind name source github_token always_worktree scope description import))
 
-    # A Dataset's source is a connector, not a repository.
-    params =
-      if raw["kind"] == "dataset",
-        do: Map.put(params, "source", if(is_map(raw["source"]), do: raw["source"])),
-        else: params
+    # A Dataset reads from APIs its chat sets up, not from a repository.
+    params = if raw["kind"] == "dataset", do: Map.delete(params, "source"), else: params
 
     ChannelTasks.reply_async(socket, fn -> create_project(params, granted, user) end)
   end
@@ -495,35 +475,7 @@ defmodule BeamcodeWeb.AppChannel do
 
   ## New projects
 
-  defp create_project(
-         %{"kind" => "dataset", "source" => %{"connector" => id} = source} = params,
-         _granted,
-         user
-       ) do
-    case create_project(Map.delete(params, "source"), [], user) do
-      {:ok, %{project_id: project_id} = reply} ->
-        project = Projects.get_project(project_id)
-
-        note =
-          with {:ok, _} <- connect_source(project, id, source["token"], user),
-               {:ok, name} <- DataSources.add(project, id, source["choice"]),
-               :ok <- DataSources.refresh(project, name) do
-            nil
-          else
-            {:error, reason} ->
-              "Created, but the first sync failed: #{ChannelTasks.error_message(reason)}"
-          end
-
-        {:ok, if(note, do: Map.put(reply, :note, note), else: reply)}
-
-      error ->
-        error
-    end
-  end
-
   defp create_project(params, granted, user) do
-    params = if params["kind"] == "dataset", do: Map.delete(params, "source"), else: params
-
     case Workspace.create_project(params, user) do
       {:ok, project} ->
         if project.kind == "routine" and granted != [] do
@@ -551,7 +503,7 @@ defmodule BeamcodeWeb.AppChannel do
               {:ok, %{project_id: project.id, note: note}}
           end
         else
-          {:ok, %{project_id: project.id}}
+          start_dataset(project, user, params)
         end
 
       {:error, %Ecto.Changeset{} = cs} ->
@@ -562,10 +514,22 @@ defmodule BeamcodeWeb.AppChannel do
     end
   end
 
-  defp connect_source(project, id, token, user) when is_binary(token) and token != "",
-    do: DataSources.connect(project, id, token, user)
+  # A described Dataset starts its chat with that description; the chat sets
+  # up the APIs it names (see DataSources.start_chat/3).
+  defp start_dataset(%{kind: "dataset"} = project, user, params) do
+    with text when text != "" <- String.trim(params["description"] || ""),
+         {:error, reason} <- DataSources.start_chat(project, user, text) do
+      {:ok,
+       %{
+         project_id: project.id,
+         note: "Created, but its chat didn't start: #{ChannelTasks.error_message(reason)}"
+       }}
+    else
+      _ -> {:ok, %{project_id: project.id}}
+    end
+  end
 
-  defp connect_source(_project, _id, _token, _user), do: {:ok, nil}
+  defp start_dataset(project, _user, _params), do: {:ok, %{project_id: project.id}}
 
   ## Composer
 

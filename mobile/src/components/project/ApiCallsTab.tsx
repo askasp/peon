@@ -1,13 +1,15 @@
-// A Project's API calls: one block per service (its file in .peon/api/) with
-// a row per call. Describe calls at the top and the chat writes them; a row
-// opens the call to edit it and send it by hand.
+// A Project's API calls: one card per API (its file in .peon/api/) with its
+// token, the tables it fills and its actions in a Dataset, and a row per call.
+// Describe an API at the top and the chat reads its docs and writes the file;
+// a row opens the call to edit it and send it by hand.
 
 import { useState } from "react";
 import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { router } from "expo-router";
 import { Icon } from "../Icon";
 import { Button, ErrorLine, Loading, Tap } from "../ui";
-import { ApiCallDetail, MethodBadge, PermissionChip } from "./ApiCallDetail";
+import { ApiCallDetail } from "./ApiCallDetail";
+import { ApiServiceCard } from "./ApiServiceCard";
 import { confirm } from "@/lib/confirm";
 import { singleChat } from "@/lib/folders";
 import { useLoad } from "@/lib/useLoad";
@@ -86,73 +88,41 @@ export function ApiCallsTab({ ctx, onRan }: { ctx: ProjectCtx; onRan?: () => voi
       {services?.length === 0 ? <Text style={st.empty}>No API calls yet.</Text> : null}
 
       {(services ?? []).map((s) => (
-        <View key={s.name} style={st.service} testID={`api-service-${s.name}`}>
-          <View style={st.serviceHead}>
-            <Text style={st.serviceName}>{s.name}</Text>
-            {s.base_url ? (
-              <Text style={st.base} numberOfLines={1}>
-                {s.base_url}
-              </Text>
-            ) : null}
-            <View style={{ flex: 1 }} />
-            <StatusChip service={s} />
-            {ctx.canEdit && s.source === "project" ? (
-              <Tap onPress={() => setOpen({ json: s.name })} hitSlop={8} testID={`api-json-${s.name}`}>
-                <Text style={st.link}>Edit file</Text>
-              </Tap>
-            ) : null}
-            {ctx.canEdit && s.source === "shared" ? (
-              <Tap
-                hitSlop={8}
-                testID={`api-move-${s.name}`}
-                onPress={async () => {
-                  setError(null);
-                  try {
-                    await edit("api_move", { service: s.name });
-                  } catch (e: any) {
-                    setError(e.message);
-                  }
-                }}
-              >
-                <Text style={st.link}>Move into this Project</Text>
-              </Tap>
-            ) : null}
-          </View>
-          {s.error ? <Text style={st.bad}>{s.error}</Text> : null}
-          {!s.ready && !s.error && s.secret && ctx.canEdit ? (
-            <SecretRow name={s.secret} save={(value) => edit("api_secret", { name: s.secret, value })} />
-          ) : null}
-          {s.calls.map((c) => (
-            <Tap
-              key={c.name}
-              kb="row"
-              onPress={() => setOpen({ service: s.name, call: c.name })}
-              style={st.row}
-              testID={`api-call-${s.name}-${c.name}`}
-            >
-              <MethodBadge method={c.method} />
-              <View style={[st.callText, wide && st.callTextWide]}>
-                <Text style={st.callName} numberOfLines={1}>
-                  {c.name}
-                </Text>
-                <Text style={st.callPath} numberOfLines={1}>
-                  {c.path}
-                </Text>
-              </View>
-              <PermissionChip permission={c.permission} />
-            </Tap>
-          ))}
-          {ctx.canEdit && s.source === "project" ? (
-            <Tap
-              onPress={() => setOpen({ service: s.name, call: null })}
-              style={st.addRow}
-              testID={`api-add-${s.name}`}
-            >
-              <Text style={st.addText}>+ Call</Text>
-            </Tap>
+        <ApiServiceCard
+          key={s.name}
+          service={s}
+          project={ctx.project.name}
+          canEdit={ctx.canEdit}
+          dataset={ctx.project.kind === "dataset"}
+          wide={wide}
+          edit={edit}
+          onCall={(call) => setOpen({ service: s.name, call })}
+          onFile={() => setOpen({ json: s.name })}
+          onMove={async () => {
+            setError(null);
+            try {
+              await edit("api_move", { service: s.name });
+            } catch (e: any) {
+              setError(e.message);
+            }
+          }}
+        />
+      ))}
+
+      {services?.some((s) => s.secret) ? (
+        <View style={st.who} testID="api-token-note">
+          <Text style={st.whoTitle}>Who uses these tokens</Text>
+          <Text style={st.whoText}>
+            Chats, views and scheduled runs in {ctx.project.name}. No other Project can see or use them.
+          </Text>
+          {ctx.project.scope === "team" ? (
+            <Text style={st.whoText}>
+              {ctx.project.name} is shared with your team. Their changes post through these tokens, so the
+              services show them as the token&apos;s owner.
+            </Text>
           ) : null}
         </View>
-      ))}
+      ) : null}
     </ScrollView>
   );
 }
@@ -180,7 +150,11 @@ function GenerateBox({ onGenerate, empty }: { onGenerate: (text: string) => Prom
         <TextInput
           value={text}
           onChangeText={setText}
-          placeholder="Stripe: look up a charge, refund it"
+          placeholder={
+            empty
+              ? "Add an API, e.g. Front: the Support inbox's conversations"
+              : "+ Add API: name it and what to read or do"
+          }
           returnKeyType="go"
           placeholderTextColor={color.faint}
           style={st.generateInput}
@@ -200,57 +174,6 @@ function GenerateBox({ onGenerate, empty }: { onGenerate: (text: string) => Prom
       <ErrorLine message={error} />
     </View>
   );
-}
-
-function SecretRow({ name, save }: { name: string; save: (value: string) => Promise<unknown> }) {
-  const [value, setValue] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  return (
-    <View style={{ gap: 6 }}>
-      <View style={st.secret}>
-        <Text style={st.secretName}>{name}</Text>
-        <TextInput
-          value={value}
-          onChangeText={setValue}
-          placeholder="Paste the key"
-          placeholderTextColor={color.faint}
-          secureTextEntry
-          style={st.secretInput}
-          testID={`api-secret-${name}`}
-        />
-        <Button
-          label="Save"
-          height={30}
-          busy={busy}
-          disabled={!value}
-          onPress={async () => {
-            setBusy(true);
-            setError(null);
-            try {
-              await save(value);
-              setValue("");
-            } catch (e: any) {
-              setError(e.message);
-            }
-            setBusy(false);
-          }}
-        />
-      </View>
-      <ErrorLine message={error} />
-    </View>
-  );
-}
-
-function StatusChip({ service: s }: { service: ApiService }) {
-  const [label, tint] = s.error
-    ? ["invalid", color.red]
-    : s.source === "shared"
-      ? ["shared", color.muted]
-      : s.ready
-        ? ["ready", color.teal]
-        : [`needs ${s.secret}`, color.needs];
-  return <Text style={[st.status, { color: tint, borderColor: tint + "55" }]}>{label}</Text>;
 }
 
 /** The service's whole file: base URL, auth, rate limit, every call. */
@@ -329,6 +252,9 @@ function JsonEditor({
 const st = StyleSheet.create({
   body: { paddingHorizontal: 16, paddingTop: 14, paddingBottom: 40, gap: 18, maxWidth: 900, width: "100%" },
   empty: { fontSize: 13, color: color.muted },
+  who: { gap: 6, paddingHorizontal: 4 },
+  whoTitle: { fontSize: 13, fontWeight: "600", color: color.textSoft },
+  whoText: { fontSize: 12.5, lineHeight: 18, color: color.muted },
   generate: {
     gap: 8,
     padding: 10,
@@ -348,67 +274,7 @@ const st = StyleSheet.create({
     fontSize: 14,
     outlineStyle: "none",
   } as any,
-  service: { gap: 0 },
-  serviceHead: {
-    flexDirection: "row",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: 10,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: color.divider,
-  },
-  serviceName: { fontFamily: font.mono, fontSize: 14, fontWeight: "600", color: color.text },
-  base: { fontFamily: font.mono, fontSize: 12, color: color.faint, flexShrink: 1 },
-  status: {
-    fontSize: 11.5,
-    paddingHorizontal: 7,
-    paddingVertical: 1,
-    borderRadius: 5,
-    borderWidth: 1,
-    overflow: "hidden",
-  },
   link: { fontSize: 13, color: color.accentText },
-  bad: { fontSize: 12, color: color.red, paddingTop: 8 },
-  secret: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: 8,
-    padding: 8,
-    paddingLeft: 12,
-    borderRadius: 10,
-    backgroundColor: color.needsCard,
-    borderWidth: 1,
-    borderColor: color.needsBorder,
-  },
-  secretName: { fontFamily: font.mono, fontSize: 12.5, color: color.needs },
-  secretInput: {
-    flex: 1,
-    flexBasis: 0,
-    minWidth: 0,
-    height: 30,
-    borderRadius: 7,
-    backgroundColor: color.field,
-    paddingHorizontal: 10,
-    color: color.text,
-    fontSize: 13,
-    outlineStyle: "none",
-  } as any,
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#1c1c21",
-  },
-  callText: { flex: 1, minWidth: 0, gap: 2 },
-  callTextWide: { flexDirection: "row", alignItems: "baseline", gap: 14 },
-  callName: { fontFamily: font.mono, fontSize: 13, color: color.text },
-  callPath: { fontFamily: font.mono, fontSize: 12, color: color.faint, flexShrink: 1 },
-  addRow: { paddingVertical: 9 },
-  addText: { fontSize: 13, color: color.muted },
   top: { flexDirection: "row", alignItems: "center", gap: 10 },
   back: { flexDirection: "row", alignItems: "center", gap: 3 },
   backText: { fontSize: 13, color: color.muted },

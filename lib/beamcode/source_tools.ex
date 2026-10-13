@@ -16,7 +16,7 @@ defmodule Beamcode.SourceTools do
       actions =
         Enum.map_join(sources, "; ", fn {name, s} ->
           levels =
-            for {action, _} <- Enum.sort(s.connector.info().actions),
+            for {action, _} <- Enum.sort(DataSources.info(s).actions),
                 do: "#{action} (#{DataSources.level(s, action)})"
 
           "#{name} → table #{s.table}: #{Enum.join(levels, ", ")}"
@@ -29,8 +29,10 @@ defmodule Beamcode.SourceTools do
             "Post a change back to a synced source's service through the Outbox. " <>
               "direct actions post at once; confirm actions wait for the user to press Post " <>
               "(tell them it's waiting); off actions are refused. Sources: #{actions}. " <>
-              "setField args: {field: column, value}; comment/reply args: {body}; " <>
-              "create args: {title, body?}; assign args: {to: email}.",
+              "A table from the Project's API calls: the action is a write call's name, its " <>
+              "args are that call's arguments, and the row fills `{id}` and its columns. " <>
+              "GitHub Projects and Front sources from before: setField args: {field: column, value}; " <>
+              "comment/reply args: {body}; create args: {title, body?}; assign args: {to: email}.",
           inputSchema: %{
             type: "object",
             properties: %{

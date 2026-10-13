@@ -108,9 +108,22 @@ defmodule Beamcode.SourceSyncTest do
 
     project = project_fixture(%{name: "roadmap", kind: "dataset", directory: dir}, nil)
     {:ok, _} = Vault.put(project, "GITHUB_TOKEN", "ghp_test", nil)
-    {:ok, "github"} = DataSources.add(project, "github.projects", "stadler/12")
+
+    add_source(dir, "github", %{
+      "connector" => "github.projects",
+      "project" => "stadler/12",
+      "table" => "items",
+      "actions" => %{"setField" => "direct", "comment" => "confirm", "close" => "off"}
+    })
 
     %{project: project, github: github, dir: dir}
+  end
+
+  # A connector source, as Datasets made before API calls have them.
+  defp add_source(dir, name, entry) do
+    path = Path.join(dir, "sources.json")
+    json = if File.exists?(path), do: Jason.decode!(File.read!(path)), else: %{}
+    File.write!(path, Jason.encode!(Map.put(json, name, entry)))
   end
 
   defp item(id, number, title, status) do
@@ -386,14 +399,11 @@ defmodule Beamcode.SourceSyncTest do
     assert [%{error: "GitHub Projects isn't connected" <> _}] = DataSources.list(project)
   end
 
-  test "a token set in one Project isn't used by another", %{project: project} do
+  test "a token set in one Project isn't used by another", %{project: _project} do
     other = project_fixture(%{name: "other", kind: "dataset", directory: "/other"}, nil)
 
     assert {:error, "GitHub Projects isn't connected in this Project" <> _} =
              DataSources.token(other, Beamcode.SourceConnectors.GithubProjects)
-
-    assert [%{id: "github.projects", connected: false} | _] = DataSources.connector_list(other)
-    assert [%{id: "github.projects", connected: true} | _] = DataSources.connector_list(project)
   end
 
   test "an old shared token moves into the Projects that sync from it", %{project: project} do
@@ -419,32 +429,6 @@ defmodule Beamcode.SourceSyncTest do
     s.ciphertext
   end
 
-  test "a token without the project scope gets an honest error", %{project: _project} do
-    # The account check still works; only listing projects is refused.
-    Req.Test.stub(Beamcode.SourceConnector, fn conn ->
-      {:ok, body, conn} = Plug.Conn.read_body(conn)
-      %{"query" => query} = Jason.decode!(body)
-
-      if String.contains?(query, "projectsV2") do
-        Req.Test.json(conn, %{
-          "errors" => [
-            %{
-              "message" =>
-                "Your token has not been granted the required scopes to execute this query. " <>
-                  "The 'projectsV2' field requires one of the following scopes: ['read:project']"
-            }
-          ]
-        })
-      else
-        Req.Test.json(conn, %{"data" => %{"viewer" => %{"login" => "aksel"}}})
-      end
-    end)
-
-    assert {:error, message} = DataSources.choices("github.projects", "ghp_test")
-    assert message =~ "read:project scope"
-    assert message =~ "GitHub said:"
-  end
-
   test "the agent acts through the gateway tools, with the same levels", %{project: project} do
     :ok = DataSources.refresh(project, "github")
     assert [%{name: "source_act"}, %{name: "source_sync"}] = SourceTools.mcp_tools(project)
@@ -468,7 +452,12 @@ defmodule Beamcode.SourceSyncTest do
     calls = start_supervised!({Agent, fn -> [] end}, id: :front)
     :ok = DataSources.remove(project, "github")
     {:ok, _} = Vault.put(project, "FRONT_TOKEN", "front_test", nil)
-    {:ok, "front"} = DataSources.add(project, "front", "")
+
+    add_source(project.directory, "front", %{
+      "connector" => "front",
+      "inbox" => "",
+      "table" => "conversations"
+    })
 
     Req.Test.stub(Beamcode.SourceConnector, fn conn ->
       Agent.update(calls, &(&1 ++ [{conn.method, conn.request_path}]))

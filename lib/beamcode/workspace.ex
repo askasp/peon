@@ -445,46 +445,44 @@ defmodule Beamcode.Workspace do
        data with it on page load; never copy rows into the HTML. Changes to the
        data go through the chat.
 
-       Data from somewhere else (an API, a feed) comes in through a source, never
-       by fetching it yourself in the chat:
+       Data from an API comes in through this Project's API calls, never by
+       fetching it yourself in the chat:
 
-       1. Write one script, `sources/<name>.py`, that fetches the data and upserts
-          it into one table (`insert ... on conflict do update`) with a
-          `fetched_at` column, the ISO UTC time of the fetch. Keep the API's own
-          ids as the key so a refresh never duplicates rows. It runs from the
-          folder root, so open `data.sqlite` there.
-       2. Keys and tokens go in `.env` (`NAME=value`), read from the environment
-          in the script; never write them into the script, the chat or schema.md.
-       3. Add it to `sources.json`:
-          `{"<name>": {"script": "sources/<name>.py", "table": "<table>", "every_hours": 6}}`
-       4. Run it once, check the rows, and document the table in schema.md as
-          synced from <name>.
+       1. Read the API's docs and write `.peon/api/<service>.json` (format
+          below): the read calls, the `tables` they fill, and the write calls
+          the user wants as actions. One file per API.
+       2. Ask for its token with the `ask_token` tool and stop until a message
+          says it's saved. Never ask for a token in the chat.
+       3. Call `source_sync`, check the rows, and document each table in
+          schema.md as synced from <service>.
 
-       The table view's refresh button runs the script again without you, so
-       never edit a synced table by hand: keep the user's own notes about its
-       rows in a separate table that joins on the id. Apps over synced data show
-       how old it is (`max(fetched_at)`).
+       A synced table has `_remote_id` (the row's id on the service), `_source`,
+       `_synced_at` and `_pending` (1 while a change is posting) next to its
+       columns. `_fields` has each column's options in order (a board's
+       columns: `select options from _fields where col = 'status'`), `_sources`
+       when it last synced, `_outbox` every change posted back.
 
-       ## Services Peon syncs (GitHub Projects, Front)
-
-       A source with `"connector"` in sources.json is synced by Peon every few
-       minutes; there is no script. Its table has `_remote_id`, `_source`,
-       `_synced_at` and `_pending` (1 while a change is posting) next to the
-       service's columns. `_fields` has each field's options in order (a
-       board's columns: `select options from _fields where col = 'status'`),
-       `_sources` when it last synced, `_outbox` every change posted back.
-
-       - Never update a synced column or sources.json yourself. To change
-         something on the service, call the `source_act` tool (action, row =
-         the row's `_remote_id`, args). Each action has a level the user sets:
-         direct posts at once, confirm waits for the user to press Post in the
-         Outbox (say so), off is refused.
-       - The user's own columns (notes, their order) are fine: `alter table
-         items add column note text`. Sync never writes columns it doesn't own.
+       - Never update a synced column yourself. To change something on the
+         service, call the `source_act` tool (action = the write call's name,
+         row = the row's `_remote_id`, args). Each action has a level the user
+         sets: direct posts at once, confirm waits for the user to press Post
+         in the Outbox (say so), off is refused.
+       - The user's own columns (notes, their order, links to rows of another
+         API) are fine: `alter table items add column front text`. Sync never
+         writes columns it doesn't own, so link rows across APIs that way.
        - In apps, `peon.act(action, row, args)` does the same (`row` is a row
          from `peon.query` or its `_remote_id`) and returns a promise of
          `{status: "posting" | "waiting", label}`. Update the page at once, show
          rows with `_pending = 1` as posting, and query again a few seconds later.
+
+       A feed without an API (a CSV somewhere, a page to scrape) can still be a
+       script: `sources/<name>.py` upserts into one table with a `fetched_at`
+       column, keys from `.env`, listed in `sources.json` as
+       `{"<name>": {"script": "sources/<name>.py", "table": "<table>", "every_hours": 6}}`.
+
+       ## API call files
+
+       #{Beamcode.Connectors.format_doc()}
        """}
 
   defp folder_skill(_), do: nil
@@ -517,9 +515,9 @@ defmodule Beamcode.Workspace do
     Keep the data in `data.sqlite` (use the `sqlite3` command). Keep the schema
     simple and documented in `schema.md`. A UI over the data goes in `app/` as
     standalone HTML files that read the data with `peon.query(sql)` (see the
-    sqlite-schema skill). Data from an API comes in through a script in
-    `sources/` listed in `sources.json` (see the skill), so it can be refreshed.
-    A source synced by Peon (GitHub Projects, Front) posts changes back only
+    sqlite-schema skill). Data from an API comes in through this Project's API
+    calls (`.peon/api/<service>.json` with `tables`, see the skill), synced by
+    Peon; ask for each token with the `ask_token` tool. Changes go back only
     through the `source_act` tool or `peon.act` in apps.
     Mention the path of every file you write.
     """

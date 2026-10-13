@@ -4,10 +4,12 @@ import { Markdown } from "./Markdown";
 import { viewFor, viewInfo, type ViewKind } from "@/lib/folders";
 
 import { Icon } from "./Icon";
+import { TokenCard, type TokenAsk } from "./session/TokenCard";
 import { Tap } from "./ui";
 import { color, font } from "@/lib/theme";
 import { userText } from "@/lib/attach";
 import type { Message } from "@/lib/types";
+import type { ProjectCtx } from "./project/types";
 
 const opensAs: Record<ViewKind, string> = {
   doc: "Markdown · opens as a document",
@@ -40,7 +42,9 @@ export type Block =
   /** The agent summarised everything above to free up context (`messages` of them). */
   | { kind: "compaction"; key: string; auto: boolean; summary: string; time?: number; messages: number }
   /** A file the agent wrote or edited, once per message. */
-  | { kind: "file"; key: string; path: string; verb: "Wrote" | "Edited" };
+  | { kind: "file"; key: string; path: string; verb: "Wrote" | "Edited" }
+  /** The agent asked for an API token (`ask_token`): a card that saves it to the Project. */
+  | { kind: "token"; key: string; ask: TokenAsk };
 
 const base = (p?: string) => (p ? p.split("/").pop() : "");
 
@@ -102,11 +106,14 @@ export function toBlocks(items: Message[]): Block[] {
 
   for (const m of items) {
     switch (m.type) {
-      case "user":
+      case "user": {
+        const said = userText(m.text ?? "");
+        // Only what the app told the agent (a token was saved): nothing to show.
+        if (!said.text.trim() && !said.about && !m.files?.length && !m.skills?.length) break;
         out.push({
           kind: "user",
           key: m.id,
-          ...userText(m.text ?? ""),
+          ...said,
           skills: (m.skills ?? []).map((s) => s.name),
           images: (m.files ?? []).flatMap((f, index) =>
             f.mime?.startsWith("image/")
@@ -115,6 +122,7 @@ export function toBlocks(items: Message[]): Block[] {
           ),
         });
         break;
+      }
       case "assistant": {
         const files = new Map<string, "Wrote" | "Edited">();
         (m.content ?? []).forEach((p: any, i) => {
@@ -122,6 +130,13 @@ export function toBlocks(items: Message[]): Block[] {
             out.push({ kind: "thinking", key: `${m.id}-r${i}`, text: p.text });
           } else if (p.type === "text" && p.text.trim()) {
             out.push({ kind: "text", key: `${m.id}-${i}`, text: p.text, streaming: !!p.streaming });
+          } else if (p.type === "tool" && p.name === "gateway_ask_token" && p.state?.input?.name) {
+            const i = p.state.input;
+            out.push({
+              kind: "token",
+              key: `${m.id}-t${i.name}`,
+              ask: { name: String(i.name), service: String(i.service ?? ""), what: i.what, link: i.link },
+            });
           } else if (p.type === "tool") {
             const b = steps(m);
             const input = p.state?.input;
@@ -201,8 +216,13 @@ export function BlockView({
   onFile,
   viewing,
   rel = (p) => p,
+  projectCall,
+  sessionId,
 }: {
   block: Block;
+  /** The Project's channel and this chat, for a token card to save to. */
+  projectCall?: ProjectCtx["call"];
+  sessionId?: string;
   /** Opens a file card's file; `viewing` is the one open now (as `rel` shows it). */
   onFile?: (path: string) => void;
   viewing?: string | null;
@@ -229,6 +249,8 @@ export function BlockView({
   }
 
   switch (block.kind) {
+    case "token":
+      return <TokenCard ask={block.ask} call={projectCall} sessionId={sessionId} />;
     case "file": {
       const on = viewing != null && rel(block.path) === viewing;
       const kind = viewFor(rel(block.path));

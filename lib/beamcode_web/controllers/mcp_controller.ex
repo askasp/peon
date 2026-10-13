@@ -47,7 +47,26 @@ defmodule BeamcodeWeb.McpController do
   # into opencode.json before it sees the tools.
   defp rpc(project, %{"id" => id, "method" => "tools/list"}) do
     Connectors.sync_project(project)
-    ok(id, %{tools: Connectors.mcp_tools(project) ++ SourceTools.mcp_tools(project)})
+
+    ok(id, %{
+      tools:
+        Connectors.mcp_tools(project) ++
+          SourceTools.mcp_tools(project) ++ [Connectors.token_tool()]
+    })
+  end
+
+  defp rpc(project, %{
+         "id" => id,
+         "method" => "tools/call",
+         "params" => %{"name" => "ask_token"} = params
+       }) do
+    {error?, text} =
+      case Connectors.ask_token(project, params["arguments"] || %{}) do
+        {:ok, text} -> {false, text}
+        {:error, text} -> {true, text}
+      end
+
+    ok(id, %{content: [%{type: "text", text: text}], isError: error?})
   end
 
   defp rpc(project, %{

@@ -41,6 +41,9 @@ defmodule Beamcode.DataSourcesTest do
             [id, "output"] ->
               data(conn, %{"output" => elem(Agent.get(runs, & &1[id]), 1)})
           end
+
+        _ ->
+          Plug.Conn.send_resp(conn, 404, "")
       end
     end)
 

@@ -48,20 +48,21 @@ defmodule BeamcodeWeb.ProjectChannel do
     * `schedules` → `{schedules, agents, models, blank}`; `describe_schedule` `{params}`
       → `{cron, when, next}`; `save_schedule` `{params}`; `delete_schedule` `{key}`;
       `run_schedule` `{key}` → `{session_id}`
-    * `sources` → `{sources, connectors}`: a Dataset's synced sources with their
-      action levels and local columns; `source_add` `{connector, choice}`;
-      `source_level` `{name, action, level}`; `source_remove` `{name}`;
-      `source_connectors` → `{connectors}`; `source_choices` `{connector}` →
-      `{account, choices}`; `source_connect` `{connector, token}` → `{account}`
-      saves the token in this Project
+    * `sources` → `{sources}`: a Dataset's synced sources with their action
+      levels and local columns (GitHub Projects or Front from before, and
+      tables from its API calls); `source_level` `{name, action, level}`;
+      `source_remove` `{name}`
     * `outbox` → `{entries}`; `outbox_post` `{id, args?}`, `outbox_skip`, `outbox_undo`,
       `outbox_retry` `{id}` (see `Beamcode.Outbox`)
     * `api_calls` → `{services, can_edit, admin}`: the Project's API calls by
       service (`Beamcode.Connectors.all_for/2`). `api_try` `{service, call, args}` →
       `{status, body, ms, url}` sends one by hand; `api_save` `{service, content}`
       writes `.peon/api/<service>.json`; `api_delete` `{service}`; `api_move`
-      `{service}` moves a shared one in; `api_secret` `{name, value}` sets its
-      secret (each replies with `{services}`); `api_generate` `{description}` →
+      `{service}` moves a shared one in; `api_secret` `{name, value, session_id?}`
+      sets its token (from a chat's token card, that chat is told);
+      `api_secret_remove` `{name}`; `api_level` `{service, call, level}` sets an
+      action's level (each replies with `{services}`); `api_token` `{name}` →
+      `{token, project}` for a token card; `api_generate` `{description}` →
       `{session_id}` has the chat write them
     * `settings` → `{directory, skills, settings, github, connectors, secrets}`; `save_settings` `{params}` → `{project, message}`;
       `secret_save` `{name, value}` / `secret_delete` `{name}` change this Project's secrets;
@@ -72,6 +73,7 @@ defmodule BeamcodeWeb.ProjectChannel do
   use BeamcodeWeb, :channel
 
   alias Beamcode.{
+    ApiTables,
     Connectors,
     DataSources,
     GitTokens,
@@ -725,49 +727,6 @@ defmodule BeamcodeWeb.ProjectChannel do
     ChannelTasks.reply_async(socket, fn -> {:ok, sources(project, user)} end)
   end
 
-  def handle_in("source_connectors", _params, socket) do
-    project = socket.assigns.project
-    {:reply, {:ok, %{connectors: DataSources.connector_list(project)}}, socket}
-  end
-
-  def handle_in("source_choices", %{"connector" => id}, socket) when is_binary(id) do
-    project = socket.assigns.project
-
-    ChannelTasks.reply_async(socket, fn ->
-      case DataSources.choices(project, id) do
-        {:ok, result} -> {:ok, result}
-        {:error, reason} -> error(reason)
-      end
-    end)
-  end
-
-  def handle_in("source_connect", %{"connector" => id, "token" => token}, socket)
-      when is_binary(id) and is_binary(token) do
-    %{project: project, user: user} = socket.assigns
-
-    if ProjectTools.can_edit?(project, user) do
-      ChannelTasks.reply_async(socket, fn ->
-        case DataSources.connect(project, id, token, user) do
-          {:ok, account} -> {:ok, %{account: account}}
-          {:error, reason} -> error(reason)
-        end
-      end)
-    else
-      {:reply, {:error, %{message: "Only the owner or an admin can connect services here."}},
-       socket}
-    end
-  end
-
-  def handle_in("source_add", %{"connector" => id} = params, socket) when is_binary(id) do
-    edit(socket, fn project ->
-      with {:ok, name} <- DataSources.add(project, id, params["choice"]) do
-        # The first sync's error shows on the source; the source is added either way.
-        _ = DataSources.refresh(project, name)
-        :ok
-      end
-    end)
-  end
-
   def handle_in("source_level", %{"name" => name, "action" => action, "level" => level}, socket)
       when is_binary(name) and is_binary(action) and is_binary(level) do
     edit(socket, &DataSources.set_level(&1, name, action, level))
@@ -949,20 +908,51 @@ defmodule BeamcodeWeb.ProjectChannel do
     api_edit(socket, fn project -> Connectors.move_here(project, service) end)
   end
 
-  # Secrets belong to this Project only; whoever can change it sets them.
-  def handle_in("api_secret", %{"name" => name, "value" => value}, socket)
+  # Secrets belong to this Project only; whoever can change it sets them. From
+  # a token card (`session_id`), the chat that asked hears it's saved.
+  def handle_in("api_secret", %{"name" => name, "value" => value} = params, socket)
       when is_binary(name) and is_binary(value) do
     %{user: user} = socket.assigns
+    value = String.trim(value)
 
     if Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) and value != "" do
       api_edit(socket, fn project ->
-        with {:ok, _} <- Vault.put(project, name, value, user) do
-          Connectors.sync_project(project)
+        with {:ok, _} <- Vault.put(project, name, value, user),
+             :ok <- Connectors.sync_project(project) do
+          if is_binary(params["session_id"]),
+            do: token_saved(project, params["session_id"], name, user),
+            else: :ok
         end
       end)
     else
       {:reply, {:error, %{message: "Give it an UPPER_SNAKE name and a value."}}, socket}
     end
+  end
+
+  # Removing a token stops its API's sync and actions; the rows stay.
+  def handle_in("api_secret_remove", %{"name" => name}, socket) when is_binary(name) do
+    api_edit(socket, fn project ->
+      Vault.delete(project, name)
+      Connectors.sync_project(project)
+    end)
+  end
+
+  # What a token card shows: whether it's set, and by whom.
+  def handle_in("api_token", %{"name" => name}, socket) when is_binary(name) do
+    project = socket.assigns.project
+    secret = Enum.find(Vault.list(project), &(&1.name == name))
+    {:reply, {:ok, %{token: token_info(project, secret), project: project.name}}, socket}
+  end
+
+  # An action's level: its call's permission in the API file.
+  def handle_in("api_level", %{"service" => service, "call" => call, "level" => level}, socket)
+      when is_binary(service) and is_binary(call) and level in ~w(direct confirm off) do
+    api_edit(socket, fn project ->
+      case Connectors.find(project, service) do
+        %{source: "project", error: nil} = c -> ApiTables.set_level(project, c, call, level)
+        _ -> {:error, "No API #{service} in this Project."}
+      end
+    end)
   end
 
   def handle_in("api_generate", %{"description" => text}, socket) when is_binary(text) do
@@ -1223,7 +1213,13 @@ defmodule BeamcodeWeb.ProjectChannel do
   end
 
   defp api_services(project) do
-    secrets = Vault.names(project)
+    stored = Map.new(Vault.list(project), &{&1.name, &1})
+    secrets = MapSet.new(Map.keys(stored))
+
+    synced =
+      if project.kind == "dataset", do: Outbox.status(project, "data.sqlite"), else: %{}
+
+    tables = DataSources.connector_sources(project)
 
     for c <- Connectors.all_for(project) do
       %{
@@ -1235,7 +1231,24 @@ defmodule BeamcodeWeb.ProjectChannel do
         auth: c[:auth],
         secret: c[:secret],
         ready: Connectors.ready?(c, secrets),
+        token: token_info(project, stored[c[:secret]]),
         raw: c.raw,
+        graphql: Enum.any?(c.tools, &String.ends_with?(&1.path, "/graphql")),
+        tables:
+          for t <- c[:tables] || [],
+              match?(%{kind: :api, api: %{name: n}} when n == c.name, tables[t["name"]]) do
+            sync = synced[t["name"]] || %{}
+
+            %{
+              name: t["name"],
+              call: t["call"],
+              columns: t["columns"] |> Map.keys() |> Enum.sort(),
+              every_minutes: tables[t["name"]].every_minutes,
+              rows: sync["rows"],
+              synced_at: sync["synced_at"],
+              error: sync["error"]
+            }
+          end,
         calls:
           for t <- c.tools do
             %{
@@ -1244,11 +1257,51 @@ defmodule BeamcodeWeb.ProjectChannel do
               path: t.path,
               permission: t.permission,
               description: t.description,
-              params: Connectors.path_params(t)
+              params: Connectors.path_params(t),
+              kind: t.kind
             }
           end
       }
     end
+  end
+
+  defp token_info(_project, nil), do: nil
+
+  defp token_info(project, secret) do
+    %{
+      name: secret.name,
+      hint: Vault.hint(project, secret.name),
+      set_by: secret.set_by && secret.set_by.username,
+      updated_at: secret.updated_at
+    }
+  end
+
+  # After a token card saves: tell the chat that asked, with what's still missing.
+  defp token_saved(project, session_id, name, user) do
+    missing =
+      for c <- Connectors.all_for(project),
+          is_binary(c[:secret]),
+          not MapSet.member?(Vault.names(project), c.secret),
+          uniq: true,
+          do: c.secret
+
+    # Only for the agent: the card itself shows the person it's saved.
+    text =
+      "```peon-context\nThe user saved #{name} to #{project.name}'s secrets." <>
+        case missing do
+          [] ->
+            " Every token the API calls need is set: carry on."
+
+          names ->
+            " Still missing: #{Enum.join(names, ", ")}; wait for those before calling their APIs."
+        end <> "\n```"
+
+    with {:ok, sessions} <- Sessions.list_visible(project, user),
+         true <- Enum.any?(sessions, &(&1["id"] == session_id)) do
+      Sessions.send_text(session_id, text, project.directory)
+    end
+
+    :ok
   end
 
   # A procedure's inputs from the app: strings, and lists for multi-choice ones.
@@ -1363,7 +1416,7 @@ defmodule BeamcodeWeb.ProjectChannel do
     %{
       sources:
         for src <- listed, s = connected[src.name] do
-          info = s.connector.info()
+          info = DataSources.info(s)
 
           Map.merge(src, %{
             actions:
@@ -1373,7 +1426,6 @@ defmodule BeamcodeWeb.ProjectChannel do
             local_columns: DataSources.local_columns(project, src.name, s)
           })
         end,
-      connectors: DataSources.connector_list(project),
       can_edit: ProjectTools.can_edit?(project, user)
     }
   end

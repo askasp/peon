@@ -95,7 +95,7 @@ defmodule Beamcode.Vault do
 
   defp needed(project) do
     api = for c <- Connectors.all_for(project), is_binary(c[:secret]), do: c.secret
-    synced = for {_, s} <- DataSources.connector_sources(project), do: s.connector.info().secret
+    synced = for {_, s} <- DataSources.connector_sources(project), do: DataSources.info(s).secret
     Enum.uniq(api ++ synced)
   end
 

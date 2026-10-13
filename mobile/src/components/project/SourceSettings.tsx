@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { SourceBadge } from "../Outbox";
-import { SourcePicker, type Picked } from "../SourcePicker";
 import { Button, ErrorLine, Loading, Segmented, SectionLabel } from "../ui";
 import { confirm } from "@/lib/confirm";
 import { useLoad } from "@/lib/useLoad";
@@ -24,6 +23,8 @@ type Source = {
   error: string | null;
   actions: { name: string; label: string; level: Level }[];
   local_columns: string[];
+  /** Set for a table filled from the Project's API calls (shown under API calls instead). */
+  api?: string | null;
 };
 type Data = { sources: Source[]; can_edit: boolean };
 
@@ -34,17 +35,17 @@ const levels: { value: Level; label: string }[] = [
 ];
 
 /**
- * A Dataset's synced sources (sources.json): sync now, what each action may
- * do (for you, views and scheduled runs alike), the local columns, and
- * disconnecting, which keeps the rows as a local table.
+ * A Dataset's GitHub Projects or Front sources from before API calls
+ * (sources.json): sync now, what each action may do (for you, views and
+ * scheduled runs alike), the local columns, and disconnecting, which keeps the
+ * rows as a local table. New APIs are added under API calls; nothing shows
+ * here without an old source.
  */
 export function SourceSettings({ ctx }: { ctx: ProjectCtx }) {
   const [version, setVersion] = useState(0);
   const [data, setData] = useState<Data | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [picked, setPicked] = useState<Picked>(null);
   const { data: loaded, error: loadError } = useLoad(() => ctx.call<Data>("sources", {}, 30000), [version]);
   const shown = data ?? loaded;
 
@@ -63,18 +64,14 @@ export function SourceSettings({ ctx }: { ctx: ProjectCtx }) {
 
   if (!shown) return loadError ? <ErrorLine message={loadError} /> : <Loading />;
   const edit = shown.can_edit;
+  const sources = shown.sources.filter((s) => !s.api);
+  if (sources.length === 0) return null;
 
   return (
     <View style={{ gap: 10 }} testID="source-settings">
       <SectionLabel style={st.section}>Source</SectionLabel>
       <ErrorLine message={error} />
-      {shown.sources.length === 0 && !adding ? (
-        <Text style={st.hint}>
-          None. The rows live only here. Add a source to sync GitHub Projects or a Front inbox into a table.
-        </Text>
-      ) : null}
-
-      {shown.sources.map((s) => (
+      {sources.map((s) => (
         <View key={s.name} style={st.card}>
           <View style={st.head}>
             <SourceBadge short={s.short} size={32} />
@@ -168,43 +165,6 @@ export function SourceSettings({ ctx }: { ctx: ProjectCtx }) {
           ) : null}
         </View>
       ))}
-
-      {edit ? (
-        adding ? (
-          <View style={{ gap: 10 }}>
-            <SourcePicker value={picked} onChange={setPicked} allowNone={false} call={ctx.call} />
-            <View style={{ flexDirection: "row", gap: 8, justifyContent: "flex-end" }}>
-              <Button label="Cancel" kind="secondary" height={36} onPress={() => setAdding(false)} />
-              <Button
-                label="Add and sync"
-                height={36}
-                disabled={!picked || picked.pending}
-                busy={busy === "add"}
-                onPress={() =>
-                  picked &&
-                  act("add", async () => {
-                    const r = await ctx.call<Data>(
-                      "source_add",
-                      { connector: picked.connector, choice: picked.choice },
-                      660000,
-                    );
-                    setAdding(false);
-                    setPicked(null);
-                    return r;
-                  })
-                }
-              />
-            </View>
-          </View>
-        ) : (
-          <Button
-            label={shown.sources.length ? "+ Add another source" : "+ Add a source"}
-            kind="secondary"
-            height={38}
-            onPress={() => setAdding(true)}
-          />
-        )
-      ) : null}
     </View>
   );
 }

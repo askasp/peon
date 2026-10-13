@@ -51,11 +51,13 @@ defmodule Beamcode.Connectors do
       error: nil,
       tools: [],
       projects: [],
+      tables: [],
       raw: body
     }
 
     with {:ok, json} when is_map(json) <- Jason.decode(body),
-         {:ok, tools} <- parse_tools(json["tools"]) do
+         {:ok, tools} <- parse_tools(json["tools"]),
+         {:ok, tables} <- parse_tables(json["tables"], tools) do
       auth = json["auth"] || %{"type" => "none"}
 
       %{
@@ -68,7 +70,8 @@ defmodule Beamcode.Connectors do
         auth: auth,
         secret: auth["secret"],
         per_minute: get_in(json, ["rateLimit", "perMinute"]),
-        compact: json["compact"] == true
+        compact: json["compact"] == true,
+        tables: tables
       })
     else
       {:ok, _} -> %{base | error: "must be a JSON object"}
@@ -110,12 +113,73 @@ defmodule Beamcode.Connectors do
            method: method,
            path: to_string(path),
            permission: perm,
-           description: List.first(rest)
+           description: List.first(rest),
+           body: nil,
+           kind: if(method == "GET", do: "read", else: "write"),
+           patch: %{}
          }}
     end
   end
 
-  defp parse_tool(name, _), do: {:error, "tool #{name}: expected [method, path, permission]"}
+  # The longer form, for a call with a fixed body (GraphQL) or one that isn't
+  # what its method says (a POST that only reads).
+  defp parse_tool(name, %{"method" => method, "path" => path} = spec) do
+    with {:ok, tool} <- parse_tool(name, [method, path, spec["permission"] || "allow"]) do
+      cond do
+        spec["kind"] not in [nil, "read", "write"] ->
+          {:error, "tool #{name}: kind must be read or write"}
+
+        not (is_nil(spec["patch"]) or is_map(spec["patch"])) ->
+          {:error, "tool #{name}: patch must be an object of column => value"}
+
+        true ->
+          {:ok,
+           %{
+             tool
+             | description: spec["description"],
+               body: spec["body"],
+               kind: spec["kind"] || tool.kind,
+               patch: spec["patch"] || %{}
+           }}
+      end
+    end
+  end
+
+  defp parse_tool(name, _),
+    do: {:error, "tool #{name}: expected [method, path, permission] or {method, path, …}"}
+
+  # "tables": what read calls fill in a Dataset (see Beamcode.ApiTables).
+  defp parse_tables(nil, _tools), do: {:ok, []}
+
+  defp parse_tables(tables, tools) when is_map(tables) do
+    names = MapSet.new(tools, & &1.name)
+
+    tables
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.reduce_while({:ok, []}, fn {name, spec}, {:ok, acc} ->
+      cond do
+        not Regex.match?(~r/^[a-z][a-z0-9_]{0,40}$/, name) ->
+          {:halt, {:error, "table #{name}: use lowercase snake_case"}}
+
+        not is_map(spec) ->
+          {:halt, {:error, "table #{name}: expected an object"}}
+
+        not MapSet.member?(names, spec["call"]) ->
+          {:halt, {:error, "table #{name}: \"call\" must name one of this file's tools"}}
+
+        not is_map(spec["columns"]) or spec["columns"] == %{} ->
+          {:halt, {:error, "table #{name}: \"columns\" maps each column to a path in a row"}}
+
+        bad = Enum.find(Map.keys(spec["columns"]), &(not Regex.match?(~r/^[a-z][a-z0-9_]*$/, &1))) ->
+          {:halt, {:error, "table #{name}: column #{bad}: use lowercase snake_case"}}
+
+        true ->
+          {:cont, {:ok, acc ++ [Map.put(spec, "name", name)]}}
+      end
+    end)
+  end
+
+  defp parse_tables(_, _), do: {:error, "\"tables\" must be an object"}
 
   @doc """
   A Project's own services, `.peon/api/*.json`, parsed and with `source:
@@ -313,6 +377,13 @@ defmodule Beamcode.Connectors do
   def mcp_tools(project) do
     for c <- for_project(project), t <- c.tools, t.permission != "deny" do
       params = path_params(t)
+      fills = body_params(t) -- params
+
+      body =
+        if t.body,
+          do:
+            "JSON request body; leave it out to send the call's own body filled from the other arguments",
+          else: "JSON request body"
 
       %{
         name: tool_name(c, t),
@@ -321,13 +392,67 @@ defmodule Beamcode.Connectors do
           type: "object",
           properties:
             Map.new(params, &{&1, %{type: "string"}})
+            |> Map.merge(Map.new(fills, &{&1, %{description: "Goes into the request body"}}))
             |> Map.merge(%{
               query: %{type: "object", description: "Query string parameters"},
-              body: %{type: "object", description: "JSON request body"}
+              body: %{type: "object", description: body}
             }),
           required: params
         }
       }
+    end
+  end
+
+  @doc """
+  The gateway's `ask_token` tool: the agent asks for a service's token and
+  the person sees a card in the chat (drawn from the call's input) that saves
+  it to the Project's secrets. The token never passes through the chat.
+  """
+  def token_tool do
+    %{
+      name: "ask_token",
+      description:
+        "Ask the user for an API token. They see a card in the chat to paste it into; it's saved " <>
+          "encrypted in this Project only and the gateway calls with it, but you never see it. " <>
+          "Never ask for a token in a message. Call it once per token the API file's auth.secret names, " <>
+          "then stop and wait: a message tells you when it's saved.",
+      inputSchema: %{
+        type: "object",
+        properties: %{
+          name: %{
+            type: "string",
+            description: "The secret's name, as in auth.secret (UPPER_SNAKE_CASE)"
+          },
+          service: %{type: "string", description: "The API it's for, e.g. github"},
+          what: %{
+            type: "string",
+            description:
+              "What kind of token and which scopes or permissions it needs, in a line, e.g. " <>
+                "\"Fine-grained personal access token · Projects: read and write · Issues: write\""
+          },
+          link: %{type: "string", description: "The page where the user makes one"}
+        },
+        required: ["name", "service"]
+      }
+    }
+  end
+
+  @doc "Answers the agent's `ask_token` call (the card itself is the call)."
+  def ask_token(%Project{} = project, args) do
+    name = to_string(args["name"] || "")
+
+    cond do
+      not Regex.match?(~r/^[A-Z][A-Z0-9_]*$/, name) ->
+        {:error, "name must be UPPER_SNAKE_CASE, as in the API file's auth.secret"}
+
+      MapSet.member?(Vault.names(project), name) ->
+        {:ok,
+         "#{name} is already set in #{project.name}. Call the API; to replace it, the user uses the API calls tab."}
+
+      true ->
+        {:ok,
+         "The user sees a card asking for #{name}. It saves to #{project.name}'s secrets, never to the chat. " <>
+           "Stop here and wait: you'll get a message when it's saved."}
     end
   end
 
@@ -370,9 +495,21 @@ defmodule Beamcode.Connectors do
 
   @doc """
   Sends call `t` of service `c` with the Project's secret. Returns `{:ok,
-  status, body}` or `{:error, message}`.
+  status, body}` (slimmed and cut for the model) or `{:error, message}`.
   """
   def run(%Project{} = project, c, t, args) do
+    with {:ok, status, body} <- request(project, c, t, args) do
+      body = if c[:compact], do: compact(body), else: body
+      {:ok, status, truncate(body)}
+    end
+  end
+
+  @doc """
+  Sends call `t` and returns the whole body as it came: `{:ok, status, body}`.
+  A call with a `body` template and no `body` argument sends the template
+  filled from `args` (see `fill/2`).
+  """
+  def request(%Project{} = project, c, t, args) do
     params = path_params(t)
     missing = Enum.filter(params, &(to_string(args[&1] || "") |> String.trim() == ""))
 
@@ -382,42 +519,76 @@ defmodule Beamcode.Connectors do
         URI.encode(to_string(args[key]), &URI.char_unreserved?/1)
       end)
 
-    with :ok <-
-           if(missing == [],
-             do: :ok,
-             else: {:error, "#{Enum.join(missing, ", ")} is required and can't be empty"}
-           ),
-         {:ok, auth} <- auth_options(project, c.auth) do
+    body =
+      cond do
+        is_map(args["body"]) -> args["body"]
+        t[:body] != nil -> fill(t.body, args)
+        true -> nil
+      end
+
+    if missing == [] do
+      [method: String.downcase(t.method) |> String.to_existing_atom(), url: c.base_url <> path]
+      |> add_params(args["query"])
+      |> then(fn o -> if body != nil, do: Keyword.put(o, :json, body), else: o end)
+      |> add_headers(args["headers"])
+      |> send_request(project, c)
+    else
+      {:error, "#{Enum.join(missing, ", ")} is required and can't be empty"}
+    end
+  end
+
+  @doc "GETs a URL the API handed back (the next page), with the service's auth."
+  def request_url(%Project{} = project, c, url) when is_binary(url),
+    do: send_request([method: :get, url: url], project, c)
+
+  defp send_request(opts, project, c) do
+    with {:ok, auth} <- auth_options(project, c.auth) do
       opts =
-        [
-          method: String.downcase(t.method) |> String.to_existing_atom(),
-          url: c.base_url <> path,
-          retry: false,
-          receive_timeout: 60_000,
-          decode_body: false
-        ]
+        [retry: false, receive_timeout: 60_000, decode_body: false]
+        |> Keyword.merge(opts)
         |> Keyword.merge(auth, fn
           :params, a, b -> a ++ b
+          :headers, a, b -> List.wrap(a) ++ b
           _, _, b -> b
         end)
-        |> add_params(args["query"])
-        |> then(fn o ->
-          if is_map(args["body"]), do: Keyword.put(o, :json, args["body"]), else: o
-        end)
-        |> add_headers(args["headers"])
         # Tests point calls at a Req.Test stub.
         |> Keyword.merge(Application.get_env(:beamcode, :connector_req_options, []))
 
       case request_with_retry(c, opts, 3) do
-        {:ok, %Req.Response{status: status, body: body}} ->
-          body = if c[:compact], do: compact(to_string(body)), else: to_string(body)
-          {:ok, status, truncate(body)}
-
-        {:error, e} ->
-          {:error, Exception.message(e)}
+        {:ok, %Req.Response{status: status, body: body}} -> {:ok, status, to_string(body)}
+        {:error, e} -> {:error, Exception.message(e)}
       end
     end
   end
+
+  @doc """
+  A body template filled from `values`: a string that is exactly `"{name}"`
+  becomes that value as it is (a number stays a number, a missing one null).
+  Nothing else is touched, so GraphQL queries keep their braces; their values
+  go in `variables`.
+  """
+  def fill(template, values) when is_map(template),
+    do: Map.new(template, fn {k, v} -> {k, fill(v, values)} end)
+
+  def fill(template, values) when is_list(template), do: Enum.map(template, &fill(&1, values))
+
+  def fill(template, values) when is_binary(template) do
+    case Regex.run(~r/^\{(\w+)\}$/, template) do
+      [_, key] -> values[key]
+      nil -> template
+    end
+  end
+
+  def fill(other, _values), do: other
+
+  @doc "The `{placeholders}` a call's body template takes."
+  def body_params(%{body: nil}), do: []
+
+  def body_params(%{body: body}) do
+    Regex.scan(~r/"\{(\w+)\}"/, Jason.encode!(body)) |> Enum.map(&List.last/1) |> Enum.uniq()
+  end
+
+  def body_params(_), do: []
 
   # Extra headers a procedure's call step sends (an Idempotency-Key).
   defp add_headers(opts, headers) when is_map(headers) and map_size(headers) > 0 do
@@ -581,8 +752,8 @@ defmodule Beamcode.Connectors do
     #{have}
 
     1. Read the API's docs (webfetch) for the exact paths, parameters and auth.
-    2. Write or update `#{@api_dir}/<service>.json`, one file per service, with only the calls asked for.
-    3. If it needs a key, name it in `auth.secret` and tell me to set it in the API calls tab.
+    2. Write or update `#{@api_dir}/<service>.json`, one file per service, with only the calls asked for.#{if project.kind == "dataset", do: " In this Dataset, add the `tables` its read calls fill and make its changes write calls (the actions).", else: ""}
+    3. If it needs a key, name it in `auth.secret` and ask for it with the `ask_token` tool, then wait.
     4. If the gateway already has the tool (`<service>_<call>`), try one read call; never a write.
 
     End with the calls you added, one line each, and say I can try them in the API calls tab.
@@ -628,8 +799,49 @@ defmodule Beamcode.Connectors do
       destructive deny.
     - `{placeholders}` in the path become required arguments. Every call also
       takes optional `query` and `body` objects.
-    - Secret names are UPPER_SNAKE_CASE. Never ask anyone to paste a token into
-      a chat, and never write one to a file: they set it in the API calls tab.
+    - Secret names are UPPER_SNAKE_CASE, one token per service. Ask for it with
+      the gateway's `ask_token` tool (name, service, what kind and scopes, the
+      link to make one): the user pastes it into a card that saves it to this
+      Project's secrets. Never ask for a token in a message and never write one
+      to a file. You can call with it but never read it.
+    - A call that needs a fixed body (GraphQL) uses the long form:
+      `"items": {"method": "POST", "path": "/graphql", "permission": "allow",
+      "kind": "read", "description": "…", "body": {"query": "query($p: ID!,
+      $after: String) {…}", "variables": {"p": "{project}", "after": "{after}"}}}`.
+      A string that is exactly `"{name}"` is filled from the call's arguments;
+      nothing inside the query is, so values go in `variables`. `kind` is
+      `read` or `write` (default: GET reads, anything else writes).
+    - In a Dataset, `"tables"` says what the read calls fill, synced every few
+      minutes into data.sqlite (see the sqlite-schema skill):
+
+      ```json
+      "tables": {
+        "conversations": {
+          "call": "list_conversations", "args": {"inbox": "inb_1"},
+          "rows": "_results", "id": "id",
+          "columns": {"subject": "subject", "assignee": "assignee.email",
+                      "tags": "tags[].name",
+                      "created_at": {"path": "created_at", "type": "time"}},
+          "next": "_pagination.next", "pages": 3, "every_minutes": 5
+        }
+      }
+      ```
+
+      `rows` is where the list is in the response, `id` each row's id, and
+      each column a path in a row: keys joined by `.`, `[]` for every item of
+      a list, `[0]` for one, `[key=value]` for the first whose key matches
+      (`fieldValues.nodes[field.name=Status].name`). Types: text (default),
+      integer, real, time (Unix seconds or ms to ISO) and json; `"options"`
+      lists a column's values in order (a board's columns). Paging: `next`
+      is where the next page's URL is, or `"cursor": {"from": "data.x.pageInfo.endCursor",
+      "to": "after"}` passes the cursor back as `after`.
+    - A Dataset's write calls are its actions: the agent calls them through
+      the gateway, and views through `peon.act(call, row, args)`. Their
+      permission is the action's level (allow: direct, ask: ask first, deny:
+      off). A row's columns and `id` (its id on the service) fill the call's
+      path and body, so `"/conversations/{id}"` acts on that row. `"patch":
+      {"status": "{value}"}` shows the change on the row at once, before the
+      next sync confirms it.
     - Rate limits: look up the API's limit and set `rateLimit.perMinute` a bit
       under it. Peon paces every call and retries HTTP 429 itself.
     - Verbose JSON: `"compact": true` drops `_links` and HTML `body` fields

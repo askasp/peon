@@ -1,6 +1,7 @@
 defmodule Beamcode.SourceSync do
   @moduledoc """
-  Pulls a connector source into its table in the Dataset's SQLite file.
+  Pulls a synced source (a connector, or a table from the Project's API calls)
+  into its table in the Dataset's SQLite file.
 
   Every synced row carries `_remote_id`, `_source`, `_synced_at` and
   `_pending` (1 while an action on it is posting). Columns the connector
@@ -18,8 +19,7 @@ defmodule Beamcode.SourceSync do
   @doc "Syncs source `name` (`s` from `DataSources.read/1`): `:ok` or `{:error, message}`."
   def run(project, name, s) do
     result =
-      with {:ok, token} <- DataSources.token(project, s.connector),
-           {:ok, pulled} <- s.connector.pull(token, s.config),
+      with {:ok, pulled} <- DataSources.pull(project, s),
            {:ok, pending} <- Outbox.pending(project, s.db, name) do
         ProjectFiles.exec(project, s.db, statements(name, s, pulled, pending))
       end
@@ -116,7 +116,7 @@ defmodule Beamcode.SourceSync do
          """,
          [
            name,
-           s.connector.info().id,
+           DataSources.info(s).id,
            s.table,
            pulled.title,
            pulled.url,
@@ -147,7 +147,7 @@ defmodule Beamcode.SourceSync do
 
       conflict ->
         {col, value} = conflict
-        service = s.connector.info().name
+        service = DataSources.info(s).name
 
         [
           {"update _outbox set status = 'failed', error = ?, updated_at = ? where id = ?",
@@ -172,7 +172,7 @@ defmodule Beamcode.SourceSync do
     {"""
      insert into _sources (name, connector, tbl, error) values (?, ?, ?, ?)
      on conflict(name) do update set error = excluded.error
-     """, [name, s.connector.info().id, s.table, message]}
+     """, [name, DataSources.info(s).id, s.table, message]}
   end
 
   def now, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()

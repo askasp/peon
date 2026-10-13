@@ -1,6 +1,6 @@
 defmodule Beamcode.SourceSync.Ticker do
   @moduledoc """
-  Pulls every Dataset's connector sources in the background, each as often as
+  Pulls every Dataset's synced sources (connectors, API tables) in the background, each as often as
   its `every_minutes` (5 by default). Checks once a minute.
   """
   use GenServer
@@ -24,6 +24,8 @@ defmodule Beamcode.SourceSync.Ticker do
       for project <- Projects.list_projects(),
           project.kind == "dataset",
           {name, s} <- DataSources.connector_sources(project),
+          # An API table waits for its token rather than failing every minute.
+          DataSources.ready?(project, s),
           last = state.last[{project.id, name}],
           last == nil or now - last >= s.every_minutes * 60 do
         {project, name}

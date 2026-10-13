@@ -422,6 +422,8 @@ export function SessionChat({ id, folder: inFolder }: { id: string; folder?: Fol
             onFile={openFile}
             viewing={inFolder ? (pane ? paneFile : null) : pane && current !== "diff" ? current : null}
             rel={rel}
+            projectCall={folder.joined ? folder.call : undefined}
+            sessionId={id}
             onImage={setImage}
             loadImage={(img) =>
               call<{ mime: string; data: string }>(

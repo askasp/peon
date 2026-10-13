@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { router, useLocalSearchParams } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Icon } from "@/components/Icon";
-import { SourcePicker, type Picked } from "@/components/SourcePicker";
 import { ErrorLine, Tap } from "@/components/ui";
 import { folderHref, slugName, templates } from "@/lib/folders";
 import { notify } from "@/lib/notice";
@@ -18,9 +17,10 @@ type Kind = Project["kind"];
 // What the second step asks besides the name.
 const extra: Partial<Record<Kind, { label: string; placeholder: string; param: string }>> = {
   code: { label: "Repository", placeholder: "github.com/you/repo, or empty for git init", param: "source" },
+  // The chat reads it and adds the APIs it names under API calls.
   dataset: {
-    label: "What will you keep track of?",
-    placeholder: "e.g. books I lend out and who has them",
+    label: "What will you keep track of? (optional)",
+    placeholder: "e.g. the roadmap in GitHub Projects and the Front threads about it",
     param: "description",
   },
   routine: {
@@ -47,22 +47,10 @@ export default function NewFolder() {
   const [scope, setScope] = useState<"private" | "team">("private");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A Dataset's source: None, or a service to sync from.
-  const [source, setSource] = useState<Picked>(null);
   const t = templates.find((x) => x.kind === kind);
-  const synced = kind === "dataset" && source != null;
-  const ex =
-    kind && synced
-      ? {
-          label: "What should it be for?",
-          placeholder: "e.g. plan the week and move my tasks along",
-          param: "description",
-        }
-      : kind
-        ? extra[kind]
-        : undefined;
+  const ex = kind ? extra[kind] : undefined;
   const final = slugName(name);
-  const ready = !!final && !source?.pending;
+  const ready = !!final;
 
   async function create() {
     if (!kind || !final) return;
@@ -77,9 +65,6 @@ export default function NewFolder() {
             name: final,
             scope,
             ...(ex && more.trim() ? { [ex.param]: more.trim() } : {}),
-            ...(synced
-              ? { source: { connector: source.connector, choice: source.choice, token: source.token } }
-              : {}),
           },
         },
         180000,
@@ -156,14 +141,6 @@ export default function NewFolder() {
               />
               <Text style={st.path}>{where(t.kind, final || "name")}</Text>
             </View>
-            {kind === "dataset" ? (
-              <View style={st.field}>
-                <Text style={st.label}>Source</Text>
-                <ScrollView style={{ maxHeight: wide ? 360 : 300 }} keyboardShouldPersistTaps="handled">
-                  <SourcePicker value={source} onChange={setSource} />
-                </ScrollView>
-              </View>
-            ) : null}
             {ex ? (
               <View style={st.field}>
                 <Text style={st.label}>{ex.label}</Text>
@@ -188,7 +165,7 @@ export default function NewFolder() {
             </View>
             <View style={st.foot}>
               <Text style={[st.rowSub, { flex: 1 }]}>
-                {synced ? "Creates data.sqlite, sources.json and app/" : t.detail}
+                {t.kind === "dataset" ? "Creates data.sqlite" : t.detail}
               </Text>
               {/* Private repos (a GitHub token), existing routine folders, connectors. */}
               {t.kind === "code" || t.kind === "routine" ? (
@@ -208,15 +185,7 @@ export default function NewFolder() {
               disabled={busy || !ready}
               style={[st.go, !ready && { opacity: 0.4 }]}
             >
-              <Text style={st.goText}>
-                {busy
-                  ? synced
-                    ? "Creating and syncing…"
-                    : "Creating…"
-                  : synced
-                    ? "Create and sync"
-                    : "Create Project"}
-              </Text>
+              <Text style={st.goText}>{busy ? "Creating…" : "Create Project"}</Text>
             </Tap>
           </>
         )}
