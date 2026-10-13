@@ -1,6 +1,6 @@
 // A Project and the template it was made from.
 
-import type { HomeView, Project } from "./types";
+import type { Project } from "./types";
 
 type Kind = Project["kind"];
 
@@ -95,33 +95,6 @@ export const folderHref = (p: Pick<Project, "id" | "kind">) =>
  * Operations Projects have none: each procedure and each run has its own chat.
  */
 export const singleChat = (kind: Kind) => kind === "document" || kind === "design" || kind === "dataset";
-
-/**
- * The Views a single-chat Project shows as tabs beside its chat, by kind.
- * Each is a kind of file it makes here (see `viewPattern`). The chat itself is
- * always the first tab, added by the app.
- */
-export const viewTabsFor = (kind: Kind): { value: HomeView; label: string }[] =>
-  kind === "dataset"
-    ? [
-        { value: "app", label: "Design" },
-        { value: "table", label: "Data" },
-      ]
-    : kind === "design"
-      ? [{ value: "canvas", label: "Design" }]
-      : kind === "document"
-        ? [{ value: "doc", label: "Doc" }]
-        : [];
-
-/** The file a View pins, first in `FolderPane.firstFile`. */
-export const viewPattern: Record<HomeView, RegExp | null> = {
-  chat: null,
-  files: null,
-  doc: /\.md$/i,
-  canvas: /\.html?$/i,
-  app: /^app\/.*\.html?$/i,
-  table: /\.(sqlite|db|csv)$/i,
-};
 
 /** Where a Project opens first. */
 export const firstTab = (kind: Kind) =>

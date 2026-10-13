@@ -16,32 +16,19 @@ import { SkillsTab } from "./SkillsTab";
 import { TasksTab } from "./TasksTab";
 import { QueueTab } from "./QueueTab";
 import { OpsView } from "./OpsView";
-import { FolderPane } from "./FolderPane";
 import type { ProjectCtx } from "./types";
 import type { Procedure } from "@/lib/procedures";
 import { usePeon } from "@/lib/peon";
 import { useChannel } from "@/lib/useChannel";
 import { useCurrent } from "@/lib/current";
 import { useWide } from "@/lib/useWide";
-import { firstTab, singleChat, templateName, viewTabsFor } from "@/lib/folders";
+import { firstTab, singleChat, templateName } from "@/lib/folders";
 import { attachToChat, useAttached } from "@/lib/attach";
 import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
 import type { Project, SessionSummary } from "@/lib/types";
 
-type Tab =
-  | "chat"
-  | "chats"
-  | "files"
-  | "doc"
-  | "canvas"
-  | "app"
-  | "table"
-  | "procedures"
-  | "api"
-  | "queue"
-  | "tasks"
-  | "settings";
+type Tab = "chat" | "chats" | "files" | "procedures" | "api" | "queue" | "tasks" | "settings";
 type Section = "general" | "skills" | "schedules";
 
 // Old links (?tab=skills) land on the tab that has them now.
@@ -90,9 +77,6 @@ export function ProjectView({
   const routine = p?.kind === "routine";
   // Design, Document, Dataset and Operations Projects are one chat beside their files.
   const single = p ? singleChat(p.kind) : false;
-  // A single-chat Project shows each of its Views as a tab beside the chat.
-  const views = p && single ? viewTabsFor(p.kind) : [];
-  const viewTab = (t: Tab) => views.some((v) => v.value === t);
   // The procedures it can run, as joined and when the chat may have added one.
   const [reloaded, setProcedures] = useState<{ list: Procedure[]; error: string | null } | null>(null);
   const procedures = reloaded?.list ?? ch.reply?.procedures ?? [];
@@ -124,7 +108,6 @@ export function ProjectView({
   const tabs: { value: Tab; label: string }[] = single
     ? [
         { value: "chat", label: "Chat" },
-        ...views,
         ...proceduresTab,
         ...apiTab,
         { value: "files", label: "Files" },
@@ -161,8 +144,6 @@ export function ProjectView({
 
   const [worktreeOverride, setWorktree] = useState<boolean | null>(null);
   const worktree = worktreeOverride ?? p?.always_worktree ?? false;
-  // The file each View tab shows, kept per tab so switching back holds it.
-  const [viewFile, setViewFile] = useState<Record<string, string | null>>({});
   const newChat = () => p && router.push({ pathname: "/compose", params: { folder: String(p.id) } });
   async function saveWorktree(v: boolean) {
     setWorktree(v);
@@ -246,8 +227,8 @@ export function ProjectView({
       </Screen>
     );
 
-  // A single-chat Project: its chat and each of its Views as tabs, beside its
-  // files (on the desktop the Views and Settings are buttons in the header).
+  // A single-chat Project opens as its chat: beside its files on the desktop
+  // (Settings is a button), Chat · Files · Settings on the phone.
   if (single && p) {
     const settings = tab === "settings";
     const error = ch.error ?? chatError;
@@ -266,16 +247,6 @@ export function ProjectView({
               {sub}
             </Text>
             <View style={{ flex: 1 }} />
-            {views.map((v) => (
-              <Tap
-                key={v.value}
-                onPress={() => setTab(tab === v.value ? "chat" : v.value)}
-                style={st.settingsButton}
-                testID={`folder-view-${v.value}`}
-              >
-                <Text style={st.settingsText}>{tab === v.value ? "Chat" : v.label}</Text>
-              </Tap>
-            ))}
             {proceduresTab.length ? (
               <Tap
                 onPress={() => setTab(tab === "procedures" ? "chat" : "procedures")}
@@ -341,15 +312,6 @@ export function ProjectView({
           <ApiCallsTab ctx={ctx} onRan={() => setTab("chat")} />
         ) : tab === "files" && !wide ? (
           <FilesTab ctx={ctx} />
-        ) : viewTab(tab) ? (
-          <FolderPane
-            key={tab}
-            ctx={ctx}
-            file={viewFile[tab] ?? null}
-            view={tab}
-            onFile={(f) => setViewFile((m) => ({ ...m, [tab]: f }))}
-            onShown={() => {}}
-          />
         ) : !chat ? (
           <Loading />
         ) : (

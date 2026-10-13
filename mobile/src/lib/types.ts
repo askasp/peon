@@ -4,9 +4,6 @@ export type Status = "idle" | "running" | "waiting";
 
 export type User = { id: number; username: string; admin: boolean };
 
-/** One of a single-chat Project's Views: its chat, or a kind of file it shows (see `folders.ts`). */
-export type HomeView = "chat" | "files" | "doc" | "canvas" | "app" | "table";
-
 export type Project = {
   id: number;
   name: string;

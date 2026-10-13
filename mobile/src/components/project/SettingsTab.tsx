@@ -15,11 +15,7 @@ import type { ProjectCtx } from "./types";
 type Settings = {
   directory: string;
   skills: { name: string; path: string }[];
-  settings: {
-    scope: string;
-    always_worktree: boolean;
-    protect_default_branch: boolean;
-  };
+  settings: { scope: string; always_worktree: boolean; protect_default_branch: boolean };
   github: { repo: string | null; hint: string | null } | null;
   secrets: { name: string; hint: string | null; set_by: string | null; updated_at: string }[];
   can_edit: boolean;
