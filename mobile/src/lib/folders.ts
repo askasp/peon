@@ -97,40 +97,24 @@ export const folderHref = (p: Pick<Project, "id" | "kind">) =>
 export const singleChat = (kind: Kind) => kind === "document" || kind === "design" || kind === "dataset";
 
 /**
- * The Views a single-chat Project can open on (`home_view`), by kind. The
- * first is its chat; the rest are pinned to a file it makes here.
+ * The Views a single-chat Project shows as tabs beside its chat, by kind.
+ * Each is a kind of file it makes here (see `viewPattern`). The chat itself is
+ * always the first tab, added by the app.
  */
-export const homeViewsFor = (kind: Kind): { value: HomeView; label: string }[] =>
+export const viewTabsFor = (kind: Kind): { value: HomeView; label: string }[] =>
   kind === "dataset"
     ? [
-        { value: "chat", label: "Chat" },
         { value: "app", label: "Design" },
         { value: "table", label: "Data" },
       ]
     : kind === "design"
-      ? [
-          { value: "chat", label: "Chat" },
-          { value: "canvas", label: "Design" },
-        ]
+      ? [{ value: "canvas", label: "Design" }]
       : kind === "document"
-        ? [
-            { value: "chat", label: "Chat" },
-            { value: "doc", label: "Doc" },
-          ]
+        ? [{ value: "doc", label: "Doc" }]
         : [];
 
-/** A short name for an opening View, on the tab and in Settings. */
-export const homeLabel: Record<HomeView, string> = {
-  chat: "Chat",
-  files: "Files",
-  doc: "Doc",
-  canvas: "Design",
-  app: "Design",
-  table: "Data",
-};
-
-/** The file an opening View pins, first in `FolderPane.firstFile`. */
-export const homePattern: Record<HomeView, RegExp | null> = {
+/** The file a View pins, first in `FolderPane.firstFile`. */
+export const viewPattern: Record<HomeView, RegExp | null> = {
   chat: null,
   files: null,
   doc: /\.md$/i,
@@ -139,19 +123,9 @@ export const homePattern: Record<HomeView, RegExp | null> = {
   table: /\.(sqlite|db|csv)$/i,
 };
 
-/** The View a single-chat Project actually opens on: its setting, or its chat. */
-export const opensWith = (kind: Kind, homeView?: string | null): HomeView =>
-  homeViewsFor(kind).some((v) => v.value === homeView) ? (homeView as HomeView) : "chat";
-
 /** Where a Project opens first. */
-export const firstTab = (kind: Kind, homeView?: string | null) =>
-  kind === "routine"
-    ? "procedures"
-    : singleChat(kind)
-      ? opensWith(kind, homeView) === "chat"
-        ? "chat"
-        : "home"
-      : "chats";
+export const firstTab = (kind: Kind) =>
+  kind === "routine" ? "procedures" : singleChat(kind) ? "chat" : "chats";
 
 export type ViewKind = "doc" | "canvas" | "app" | "table" | "image" | "code" | "diff";
 

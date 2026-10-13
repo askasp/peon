@@ -23,13 +23,25 @@ import { usePeon } from "@/lib/peon";
 import { useChannel } from "@/lib/useChannel";
 import { useCurrent } from "@/lib/current";
 import { useWide } from "@/lib/useWide";
-import { firstTab, homeLabel, opensWith, singleChat, templateName } from "@/lib/folders";
+import { firstTab, singleChat, templateName, viewTabsFor } from "@/lib/folders";
 import { attachToChat, useAttached } from "@/lib/attach";
 import { useLoad } from "@/lib/useLoad";
 import { color, font } from "@/lib/theme";
 import type { Project, SessionSummary } from "@/lib/types";
 
-type Tab = "chat" | "chats" | "files" | "procedures" | "api" | "queue" | "tasks" | "settings" | "home";
+type Tab =
+  | "chat"
+  | "chats"
+  | "files"
+  | "doc"
+  | "canvas"
+  | "app"
+  | "table"
+  | "procedures"
+  | "api"
+  | "queue"
+  | "tasks"
+  | "settings";
 type Section = "general" | "skills" | "schedules";
 
 // Old links (?tab=skills) land on the tab that has them now.
@@ -78,12 +90,9 @@ export function ProjectView({
   const routine = p?.kind === "routine";
   // Design, Document, Dataset and Operations Projects are one chat beside their files.
   const single = p ? singleChat(p.kind) : false;
-  // A single-chat Project opens on its chat, or the View it's set to show ("home").
-  const home = p ? opensWith(p.kind, p.home_view) : "chat";
-  const homeTab = single && home !== "chat";
-  // Where its header buttons go back to: the home View, or the chat.
-  const main: Tab = homeTab ? "home" : "chat";
-  const mainLabel = homeTab ? homeLabel[home] : "Chat";
+  // A single-chat Project shows each of its Views as a tab beside the chat.
+  const views = p && single ? viewTabsFor(p.kind) : [];
+  const viewTab = (t: Tab) => views.some((v) => v.value === t);
   // The procedures it can run, as joined and when the chat may have added one.
   const [reloaded, setProcedures] = useState<{ list: Procedure[]; error: string | null } | null>(null);
   const procedures = reloaded?.list ?? ch.reply?.procedures ?? [];
@@ -114,8 +123,8 @@ export function ProjectView({
   // Other schedules are under Settings.
   const tabs: { value: Tab; label: string }[] = single
     ? [
-        ...(homeTab ? [{ value: "home" as Tab, label: homeLabel[home] }] : []),
         { value: "chat", label: "Chat" },
+        ...views,
         ...proceduresTab,
         ...apiTab,
         { value: "files", label: "Files" },
@@ -132,7 +141,7 @@ export function ProjectView({
       ];
   const [section, setSection] = useState<Section>(fromSection ?? "general");
   const tab =
-    picked && tabs.some((t) => t.value === picked) ? picked : p ? (firstTab(p.kind, p.home_view) as Tab) : "chats";
+    picked && tabs.some((t) => t.value === picked) ? picked : p ? (firstTab(p.kind) as Tab) : "chats";
 
   // The one chat (made the first time), and the chats the Project had before.
   const { data: chat, error: chatError } = useLoad(
@@ -152,8 +161,8 @@ export function ProjectView({
 
   const [worktreeOverride, setWorktree] = useState<boolean | null>(null);
   const worktree = worktreeOverride ?? p?.always_worktree ?? false;
-  // The file a single-chat Project's "home" View shows (its chat is a tab).
-  const [homeFile, setHomeFile] = useState<string | null>(null);
+  // The file each View tab shows, kept per tab so switching back holds it.
+  const [viewFile, setViewFile] = useState<Record<string, string | null>>({});
   const newChat = () => p && router.push({ pathname: "/compose", params: { folder: String(p.id) } });
   async function saveWorktree(v: boolean) {
     setWorktree(v);
@@ -237,8 +246,8 @@ export function ProjectView({
       </Screen>
     );
 
-  // A single-chat Project opens as its chat: beside its files on the desktop
-  // (Settings is a button), Chat · Files · Settings on the phone.
+  // A single-chat Project: its chat and each of its Views as tabs, beside its
+  // files (on the desktop the Views and Settings are buttons in the header).
   if (single && p) {
     const settings = tab === "settings";
     const error = ch.error ?? chatError;
@@ -257,35 +266,36 @@ export function ProjectView({
               {sub}
             </Text>
             <View style={{ flex: 1 }} />
-            {homeTab ? (
+            {views.map((v) => (
               <Tap
-                onPress={() => setTab(tab === "home" ? "chat" : "home")}
+                key={v.value}
+                onPress={() => setTab(tab === v.value ? "chat" : v.value)}
                 style={st.settingsButton}
-                testID="folder-home"
+                testID={`folder-view-${v.value}`}
               >
-                <Text style={st.settingsText}>{tab === "home" ? "Chat" : homeLabel[home]}</Text>
+                <Text style={st.settingsText}>{tab === v.value ? "Chat" : v.label}</Text>
               </Tap>
-            ) : null}
+            ))}
             {proceduresTab.length ? (
               <Tap
-                onPress={() => setTab(tab === "procedures" ? main : "procedures")}
+                onPress={() => setTab(tab === "procedures" ? "chat" : "procedures")}
                 style={st.settingsButton}
                 testID="folder-procedures"
               >
-                <Text style={st.settingsText}>{tab === "procedures" ? mainLabel : "Procedures"}</Text>
+                <Text style={st.settingsText}>{tab === "procedures" ? "Chat" : "Procedures"}</Text>
               </Tap>
             ) : null}
             {apiTab.length ? (
               <Tap
-                onPress={() => setTab(tab === "api" ? main : "api")}
+                onPress={() => setTab(tab === "api" ? "chat" : "api")}
                 style={st.settingsButton}
                 testID="folder-api"
               >
-                <Text style={st.settingsText}>{tab === "api" ? mainLabel : "API calls"}</Text>
+                <Text style={st.settingsText}>{tab === "api" ? "Chat" : "API calls"}</Text>
               </Tap>
             ) : null}
             <Tap
-              onPress={() => setTab(settings ? main : "settings")}
+              onPress={() => setTab(settings ? "chat" : "settings")}
               style={st.settingsButton}
               testID="folder-settings"
             >
@@ -295,7 +305,7 @@ export function ProjectView({
                 color={color.textSoft}
                 strokeWidth={settings ? 2.4 : undefined}
               />
-              <Text style={st.settingsText}>{settings ? mainLabel : "Settings"}</Text>
+              <Text style={st.settingsText}>{settings ? "Chat" : "Settings"}</Text>
             </Tap>
           </View>
         ) : (
@@ -326,17 +336,18 @@ export function ProjectView({
         ) : settings ? (
           settingsView(ctx)
         ) : tab === "procedures" ? (
-          <ProceduresTab ctx={ctx} onRan={() => setTab(main)} />
+          <ProceduresTab ctx={ctx} onRan={() => setTab("chat")} />
         ) : tab === "api" ? (
-          <ApiCallsTab ctx={ctx} onRan={() => setTab(main)} />
+          <ApiCallsTab ctx={ctx} onRan={() => setTab("chat")} />
         ) : tab === "files" && !wide ? (
           <FilesTab ctx={ctx} />
-        ) : tab === "home" ? (
+        ) : viewTab(tab) ? (
           <FolderPane
+            key={tab}
             ctx={ctx}
-            file={homeFile}
-            homeView={home}
-            onFile={setHomeFile}
+            file={viewFile[tab] ?? null}
+            view={tab}
+            onFile={(f) => setViewFile((m) => ({ ...m, [tab]: f }))}
             onShown={() => {}}
           />
         ) : !chat ? (

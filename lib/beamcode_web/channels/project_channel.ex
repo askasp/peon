@@ -998,8 +998,7 @@ defmodule BeamcodeWeb.ProjectChannel do
         "scope",
         "always_worktree",
         "protect_default_branch",
-        "queue_auto",
-        "home_view"
+        "queue_auto"
       ])
 
     case ProjectTools.update_settings(socket.assigns.project, params, socket.assigns.user) do
@@ -1172,8 +1171,7 @@ defmodule BeamcodeWeb.ProjectChannel do
       settings: %{
         scope: project.scope,
         always_worktree: project.always_worktree,
-        protect_default_branch: project.protect_default_branch,
-        home_view: project.home_view
+        protect_default_branch: project.protect_default_branch
       },
       github:
         if(project.kind == "code",

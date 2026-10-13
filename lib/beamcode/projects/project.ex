@@ -12,9 +12,6 @@ defmodule Beamcode.Projects.Project do
   # each run has its own (see Beamcode.OpsChats).
   @single_chat ~w(document design dataset)
   @scopes ~w(team private)
-  # What a single-chat Project opens on: its chat, the file browser, or one
-  # kind of View it makes here (see the app's `firstTab` and `FolderPane`).
-  @home_views ~w(chat files doc canvas app table)
 
   schema "projects" do
     field :name, :string
@@ -22,8 +19,6 @@ defmodule Beamcode.Projects.Project do
     field :directory, :string
     field :scope, :string, default: "team"
     field :always_worktree, :boolean, default: false
-    # A single-chat Project's opening View ("chat" unless changed).
-    field :home_view, :string, default: "chat"
     field :oc_project_id, :string
     field :github_repo, :string
     # No pushes to main/master/default_branch (see Beamcode.BranchGuard).
@@ -64,10 +59,8 @@ defmodule Beamcode.Projects.Project do
 
   def settings_changeset(project, attrs) do
     project
-    |> cast(attrs, [:scope, :always_worktree, :protect_default_branch, :queue_auto, :home_view])
-    |> validate_required([:home_view])
+    |> cast(attrs, [:scope, :always_worktree, :protect_default_branch, :queue_auto])
     |> validate_inclusion(:scope, @scopes)
-    |> validate_inclusion(:home_view, @home_views)
   end
 
   def default_branch_changeset(project, branch) do

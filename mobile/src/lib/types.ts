@@ -4,7 +4,7 @@ export type Status = "idle" | "running" | "waiting";
 
 export type User = { id: number; username: string; admin: boolean };
 
-/** What a single-chat Project opens on: its chat, or one kind of View (see `folders.ts`). */
+/** One of a single-chat Project's Views: its chat, or a kind of file it shows (see `folders.ts`). */
 export type HomeView = "chat" | "files" | "doc" | "canvas" | "app" | "table";
 
 export type Project = {
@@ -13,8 +13,6 @@ export type Project = {
   kind: "code" | "chat" | "document" | "design" | "dataset" | "home" | "routine" | "system";
   scope: "team" | "private";
   always_worktree: boolean;
-  /** Which View a single-chat Project opens on ("chat" unless changed). */
-  home_view: HomeView;
   /** Code Projects: a worktree starts its next ready task when one finishes. */
   queue_auto?: boolean;
   default_branch: string | null;

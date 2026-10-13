@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { PickSheet } from "../Sheet";
 import { Loading } from "../ui";
 import { FileView } from "./FilesTab";
-import { homePattern, viewFor, viewInfo } from "@/lib/folders";
+import { viewPattern, viewFor, viewInfo } from "@/lib/folders";
 import { useLoad } from "@/lib/useLoad";
 import { color } from "@/lib/theme";
 import type { HomeView } from "@/lib/types";
@@ -33,8 +33,8 @@ const home: Record<string, RegExp> = {
   dataset: /^(app\/.*\.html|data\.sqlite)$/,
 };
 
-export function firstFile(kind: string, files: string[], homeView?: string | null) {
-  const pinned = homeView ? homePattern[homeView as HomeView] : null;
+export function firstFile(kind: string, files: string[], view?: string | null) {
+  const pinned = view ? viewPattern[view as HomeView] : null;
   return (
     files.find((f) => pinned?.test(f)) ??
     files.find((f) => home[kind]?.test(f)) ??
@@ -53,21 +53,21 @@ export function firstFile(kind: string, files: string[], homeView?: string | nul
 export function FolderPane({
   ctx,
   file,
-  homeView,
+  view,
   onFile,
   onShown,
 }: {
   ctx: Pick<ProjectCtx, "call" | "changed" | "project">;
   file: string | null;
-  /** Which View the Project opens on, to pick the file it pins (see `firstFile`). */
-  homeView?: string | null;
+  /** Which View tab this is, to pick the file it pins (see `firstFile`). */
+  view?: string | null;
   onFile: (path: string) => void;
   /** The file in view and the device its canvas shows, for the composer. */
   onShown: (path: string, view: string | null) => void;
 }) {
   const [picking, setPicking] = useState(false);
   const { data: files, error } = useLoad(() => allFiles(ctx.call), [ctx.changed, ctx.call]);
-  const shown = file ?? (files ? firstFile(ctx.project.kind, files, homeView) : null);
+  const shown = file ?? (files ? firstFile(ctx.project.kind, files, view) : null);
 
   // Keep the shown file once there is one, so new files don't move it.
   useEffect(() => {
