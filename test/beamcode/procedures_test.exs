@@ -211,6 +211,35 @@ defmodule Beamcode.ProceduresTest do
     assert Procedures.fill("{amount.minor}", %{"amount" => "12,5"}) == "1250"
   end
 
+  test "fill/2 reaches into returned values and formats times" do
+    values = %{
+      "since" => "2026-10-12T07:00:00Z",
+      "customer" => %{"id" => "cus_1", "matches" => [%{"email" => "a@b.no"}]},
+      "finder.approved" => [%{"charge" => "ch_1"}]
+    }
+
+    assert Procedures.fill("{customer.id} {customer.matches.0.email}", values) ==
+             "cus_1 a@b.no"
+
+    assert Procedures.fill("{finder.approved.0.charge} {customer.nope}", values) ==
+             "ch_1 {customer.nope}"
+
+    assert Procedures.fill("{since.unix} {since.date} {since}", values) ==
+             "1791788400 2026-10-12 2026-10-12T07:00:00Z"
+
+    assert Procedures.fill("{customer}", values) =~ ~s("id":"cus_1")
+  end
+
+  test "duration/1 reads spans" do
+    assert Procedures.duration("4d") == 4 * 86_400
+    assert Procedures.duration("4 days") == 4 * 86_400
+    assert Procedures.duration("12h") == 12 * 3_600
+    assert Procedures.duration("2w") == 14 * 86_400
+    assert Procedures.duration("3") == 3 * 86_400
+    assert Procedures.duration("soon") == nil
+    assert Procedures.duration(nil) == nil
+  end
+
   test "model names resolve to the newest match, effort to its variant" do
     models = [
       %{"id" => "claude-opus-4-1", "providerID" => "anthropic"},

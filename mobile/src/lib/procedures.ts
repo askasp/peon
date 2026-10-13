@@ -11,7 +11,12 @@ export type ProcedureInput = {
   multi: boolean;
   type?: string;
   currency?: string | null;
+  /** How far back a `default: last_run` input may go: "4d". */
+  max?: string | null;
 };
+
+/** Where a `last_run` input starts now: `value` (ISO), the last good run's start, and whether `max` cut it. */
+export type Since = { value: string; last: string | null; capped: boolean; max: string };
 
 export type ProcedureStep = {
   name: string;
@@ -63,7 +68,34 @@ export type Procedure = {
   steps?: ProcedureStep[];
   last?: Run | null;
   warnings?: string[];
+  /** Per `last_run` input, by name. */
+  since?: Record<string, Since>;
 };
+
+/** "4d" → "4 days", "12h" → "12 hours", "1d" → "1 day". */
+export function spanLabel(span: string): string {
+  const m = /^\s*(\d+)\s*([a-z]*)/i.exec(span);
+  if (!m) return span;
+  const n = Number(m[1]);
+  const unit = { d: "day", w: "week", h: "hour", m: "minute" }[(m[2][0] ?? "d").toLowerCase()] ?? "day";
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
+}
+
+/** "Mon 12 Oct, 07:00" in the viewer's time. */
+export function timeLabel(iso: string): string {
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return iso;
+  return t.toLocaleString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** Whether an input picks up where the last run started. */
+export const sinceInput = (i: ProcedureInput) => i.default === "last_run";
 
 /** How a procedure gets started, for the Starts column: /name, its schedule, buttons, the Queue, chains. */
 export function starts(p: Procedure, all: Procedure[]) {

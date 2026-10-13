@@ -623,6 +623,28 @@ defmodule Beamcode.Workspace do
     end
   end
 
+  @conventions_start "## Procedures\n\nA procedure is one file"
+
+  @doc """
+  Brings the Procedures section of a Project's AGENTS.md up to date, when it
+  is the one this app wrote (it starts the same); the rest stays as it is.
+  """
+  def refresh_conventions(%Project{directory: dir}) do
+    with {:ok, old} when is_binary(old) <- Opencode.read_file(dir, "AGENTS.md"),
+         [head, section] <- String.split(old, @conventions_start, parts: 2) do
+      tail =
+        case Regex.split(~r/^## /m, section, parts: 2) do
+          [_, rest] -> "\n\n## " <> rest
+          _ -> "\n"
+        end
+
+      new = head <> String.trim_trailing(Beamcode.Procedures.conventions()) <> tail
+      if new == old, do: :ok, else: write(dir, "AGENTS.md", new)
+    else
+      _ -> :ok
+    end
+  end
+
   defp routines_agents_md do
     """
     # Routines

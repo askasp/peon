@@ -9,7 +9,15 @@ import { useWide } from "@/lib/useWide";
 import { ago } from "@/lib/time";
 import { singleChat } from "@/lib/folders";
 import { color, font } from "@/lib/theme";
-import { starts, type Procedure, type ProcedureInput } from "@/lib/procedures";
+import {
+  sinceInput,
+  spanLabel,
+  starts,
+  timeLabel,
+  type Procedure,
+  type ProcedureInput,
+  type Since,
+} from "@/lib/procedures";
 import type { Run, Schedule } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
@@ -248,10 +256,13 @@ export function InputFields({
   inputs,
   values,
   onChange,
+  since,
 }: {
   inputs: ProcedureInput[];
   values: Values;
   onChange: (v: Values) => void;
+  /** Where each `last_run` input starts now (from the server). */
+  since?: Record<string, Since>;
 }) {
   const choose = (input: ProcedureInput, option: string) => {
     if (!input.multi) return onChange({ ...values, [input.name]: option });
@@ -269,7 +280,14 @@ export function InputFields({
             {input.name}
             {input.currency ? ` · ${input.currency}` : ""}
           </Text>
-          {input.options.length ? (
+          {sinceInput(input) ? (
+            <SinceField
+              input={input}
+              since={since?.[input.name]}
+              value={String(values[input.name] ?? "")}
+              onChange={(t) => onChange({ ...values, [input.name]: t })}
+            />
+          ) : input.options.length ? (
             <View style={st.options}>
               {input.options.map((o) => {
                 const v = values[input.name];
@@ -285,7 +303,6 @@ export function InputFields({
             <TextInput
               value={String(values[input.name] ?? "")}
               onChangeText={(t) => onChange({ ...values, [input.name]: t })}
-              placeholder={input.default === "last_run" ? "since the last run" : undefined}
               style={st.field}
               placeholderTextColor={color.faint}
               testID={`input-${input.name}`}
@@ -293,6 +310,66 @@ export function InputFields({
           )}
         </View>
       ))}
+    </View>
+  );
+}
+
+/**
+ * A `default: last_run` input: chips for the last run, one day and its max,
+ * a field for a date, and a line saying where the run will start.
+ */
+function SinceField({
+  input,
+  since,
+  value,
+  onChange,
+}: {
+  input: ProcedureInput;
+  since?: Since;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const max = input.max ?? since?.max ?? "7d";
+  const spans = Array.from(new Set(["1d", max]));
+  const chips = [{ label: "Last run", value: "" }, ...spans.map((s) => ({ label: spanLabel(s), value: s }))];
+  const typed = value !== "" && !spans.includes(value);
+  const hint = typed
+    ? "A date like 2026-10-10, or a span like 12h."
+    : value
+      ? `The last ${spanLabel(value)}.`
+      : !since
+        ? `Since the last run, at most ${spanLabel(max)} back.`
+        : !since.last
+          ? `No run yet · from ${timeLabel(since.value)} (${spanLabel(max)} back).`
+          : since.capped
+            ? `Last run was ${ago(since.last, true)} · reading only ${spanLabel(max)}, from ${timeLabel(since.value)}.`
+            : `From ${timeLabel(since.value)}, when the last run started.`;
+  return (
+    <View style={{ gap: 6 }}>
+      <View style={st.options}>
+        {chips.map((c) => {
+          const on = value === c.value;
+          return (
+            <Tap
+              key={c.label}
+              onPress={() => onChange(c.value)}
+              style={[st.option, on && st.optionOn]}
+              testID={`since-${input.name}-${c.value || "last"}`}
+            >
+              <Text style={[st.optionText, on && { color: color.textStrong }]}>{c.label}</Text>
+            </Tap>
+          );
+        })}
+      </View>
+      <TextInput
+        value={typed ? value : ""}
+        onChangeText={onChange}
+        placeholder="or a date: 2026-10-10"
+        style={st.field}
+        placeholderTextColor={color.faint}
+        testID={`input-${input.name}`}
+      />
+      <Text style={[st.hint, since?.capped && !value && { color: color.needs }]}>{hint}</Text>
     </View>
   );
 }
@@ -355,6 +432,7 @@ const st = StyleSheet.create({
   } as any,
   input: { gap: 6 },
   inputName: { fontSize: 12, color: color.muted },
+  hint: { fontSize: 12, lineHeight: 17, color: color.faint },
   options: { flexDirection: "row", flexWrap: "wrap", gap: 6 },
   option: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 7, backgroundColor: color.field },
   optionOn: { backgroundColor: color.pill },

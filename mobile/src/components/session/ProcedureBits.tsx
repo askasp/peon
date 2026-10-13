@@ -77,7 +77,9 @@ export function ProcedureSheet({
       {p ? (
         <View style={{ gap: 14 }}>
           {p.description ? <Text style={st.desc}>{p.description}</Text> : null}
-          {p.inputs.length ? <InputFields inputs={p.inputs} values={values} onChange={setValues} /> : null}
+          {p.inputs.length ? (
+            <InputFields inputs={p.inputs} values={values} onChange={setValues} since={p.since} />
+          ) : null}
           <ErrorLine message={error} />
           <Button label="Run" kind="accent" height={46} busy={busy} onPress={run} testID="procedure-run" />
         </View>

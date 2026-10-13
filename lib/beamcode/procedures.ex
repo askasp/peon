@@ -8,7 +8,7 @@ defmodule Beamcode.Procedures do
       name: email-refunds
       description: Read support mail and list who should get a refund
       inputs:
-        since: { type: date, default: last_run }
+        since: { type: date, default: last_run, max: 4d }
       outputs:
         approved: [{ charge: text, amount: money, name: text }]
       schedule: { at: Mon 07:00, tz: Europe/Oslo }
@@ -322,7 +322,8 @@ defmodule Beamcode.Procedures do
         default: default(spec["default"], multi),
         options: Enum.map(List.wrap(spec["options"]), &to_string/1),
         multi: multi,
-        currency: str(spec["currency"])
+        currency: str(spec["currency"]),
+        max: str(spec["max"])
       }
     end
   end
@@ -402,6 +403,30 @@ defmodule Beamcode.Procedures do
         nil
     end
   end
+
+  @doc """
+  Seconds in a span: `4d`, `12h`, `2w`, `30m`, `4 days`, or a bare number of
+  days. nil when it isn't one.
+  """
+  def duration(text) when is_binary(text) do
+    case Regex.run(~r/^\s*(\d+)\s*([a-z]*)\s*$/i, text) do
+      [_, n, unit] ->
+        case unit |> String.downcase() |> String.first() do
+          nil -> 86_400
+          "d" -> 86_400
+          "w" -> 604_800
+          "h" -> 3_600
+          "m" -> 60
+          _ -> nil
+        end
+        |> then(&(&1 && String.to_integer(n) * &1))
+
+      _ ->
+        nil
+    end
+  end
+
+  def duration(_), do: nil
 
   defp keys(map), do: Map.get(map, :order) || map |> Map.keys() |> Enum.filter(&is_binary/1)
 
@@ -684,7 +709,8 @@ defmodule Beamcode.Procedures do
         default: spec["default"] || if(multi, do: [], else: ""),
         options: Enum.map(List.wrap(spec["options"]), &to_string/1),
         multi: multi,
-        currency: nil
+        currency: nil,
+        max: nil
       }
     end)
     |> Enum.sort_by(& &1.name)
@@ -731,18 +757,81 @@ defmodule Beamcode.Procedures do
   end
 
   @doc """
-  Fills `{input}` placeholders. `{amount.minor}` is a money input × 100 (299
-  NOK → 29900 øre); unknown placeholders stay as they are.
+  Fills `{input}` placeholders. A dotted one reaches into a value an earlier
+  step returned (`{customer.email}`, `{matches.0.id}`). The last part can be
+  `minor` (a money input × 100: 299 NOK → 29900 øre), or for a time `unix`
+  (seconds), `date` (2026-10-12) or `iso`. Unknown placeholders stay as they are.
   """
   def fill(text, values) do
-    Regex.replace(~r/\{([\w-]+)(?:\.(minor))?\}/, text, fn whole, name, part ->
-      case values[name] do
-        nil -> whole
-        value when part == "minor" -> minor(value)
-        value -> text(value)
+    Regex.replace(~r/\{([\w-]+(?:\.[\w-]+)*)\}/, text, fn whole, path ->
+      case lookup(values, String.split(path, ".")) do
+        {:ok, value} -> text(value)
+        :error -> whole
       end
     end)
   end
+
+  @modifiers ~w(minor unix date iso)
+
+  defp lookup(values, parts) do
+    with :error <- dig(values, parts),
+         [modifier | rest] when modifier in @modifiers and rest != [] <- Enum.reverse(parts),
+         {:ok, value} <- dig(values, Enum.reverse(rest)) do
+      modify(value, modifier)
+    else
+      {:ok, value} -> {:ok, value}
+      _ -> :error
+    end
+  end
+
+  # A map key can hold dots itself ("email-refunds.approved"): the longest
+  # one that matches wins.
+  defp dig(value, []), do: if(is_nil(value), do: :error, else: {:ok, value})
+
+  defp dig(%{} = map, parts) do
+    Enum.find_value(length(parts)..1//-1, :error, fn n ->
+      {key, rest} = Enum.split(parts, n)
+      key = Enum.join(key, ".")
+      if Map.has_key?(map, key), do: dig(map[key], rest)
+    end)
+  end
+
+  defp dig(list, [i | rest]) when is_list(list) do
+    case Integer.parse(i) do
+      {n, ""} when n < length(list) -> dig(Enum.at(list, n), rest)
+      _ -> :error
+    end
+  end
+
+  defp dig(_, _), do: :error
+
+  defp modify(value, "minor"), do: {:ok, minor(value)}
+
+  defp modify(value, modifier) do
+    case to_time(value) do
+      nil -> :error
+      t when modifier == "unix" -> {:ok, Integer.to_string(DateTime.to_unix(t))}
+      t when modifier == "date" -> {:ok, Date.to_iso8601(DateTime.to_date(t))}
+      t -> {:ok, DateTime.to_iso8601(t)}
+    end
+  end
+
+  @doc "A time from an input value: an ISO time or date (as UTC). nil otherwise."
+  def to_time(value) when is_binary(value) do
+    value = String.trim(value)
+
+    with {:error, _} <- DateTime.from_iso8601(value),
+         {:error, _} <- NaiveDateTime.from_iso8601(value),
+         {:error, _} <- Date.from_iso8601(value) do
+      nil
+    else
+      {:ok, %DateTime{} = t, _} -> t
+      {:ok, %NaiveDateTime{} = t} -> DateTime.from_naive!(t, "Etc/UTC")
+      {:ok, %Date{} = d} -> DateTime.new!(d, ~T[00:00:00], "Etc/UTC")
+    end
+  end
+
+  def to_time(_), do: nil
 
   defp minor(value) do
     case Float.parse(value |> to_string() |> String.replace(",", ".")) do
@@ -787,7 +876,14 @@ defmodule Beamcode.Procedures do
   end
 
   defp text(nil), do: ""
-  defp text(list) when is_list(list), do: Enum.map_join(list, ", ", &to_string/1)
+  defp text(%{} = map), do: Jason.encode!(map)
+
+  defp text(list) when is_list(list) do
+    if Enum.any?(list, &(is_map(&1) or is_list(&1))),
+      do: Jason.encode!(list),
+      else: Enum.map_join(list, ", ", &to_string/1)
+  end
+
   defp text(v), do: v |> to_string() |> String.replace(~r/\s+/, " ") |> String.trim()
 
   @doc "Whether a procedure is more than one prompt sent as a message."
@@ -866,6 +962,66 @@ defmodule Beamcode.Procedures do
     Project's API calls (`.peon/api/stripe.json`) with no model. `key` is the input that identifies the thing acted on
     (a charge id, not a name): never act twice on the same key. Notes a step
     can be handed live in `.peon/*.md`.
+
+    ### Since the last run
+
+    A procedure that reads what came in (mail, orders) takes a time input
+    that starts where its last run started, so nothing is read twice or
+    missed:
+
+    ```yaml
+    inputs:
+      since: { type: date, default: last_run, max: 4d }
+    ```
+
+    `{since}` is an ISO time: when the last finished run started, but never
+    more than `max` back (also on the first run). A failed run doesn't count,
+    so the next one covers it again. A person can type `1d`, `12h` or a date
+    instead. Don't give a schedule a number of days: a daily schedule gets
+    about one day by itself and catches up after a missed day. For an API's
+    query use `{since.unix}` (seconds) or `{since.date}` (2026-10-12).
+
+    ### Passing data on
+
+    A `call:` step with `returns: customer` keeps the JSON answer as the
+    output `customer`. Later steps use it as `{customer.email}` or
+    `{customer.matches.0.id}`, in `params:`, `with:`, `confirm:` and prompts.
+    So does a `run:` step, from the outputs of the procedure it ran.
+
+    Make each part its own procedure, so a person can run it alone (find
+    mail, look up a customer, act on one), then a chain that runs them:
+
+    ```yaml
+    # refund-one.md: one email in, one comment out
+    key: message
+    inputs:
+      message: { type: text }
+      email: { type: text }
+    steps:
+      - name: Look up
+        call: shop.find_customer
+        params: { q: "{email}" }
+        returns: customer
+      - name: Comment
+        call: mail.add_comment
+        params: { id: "{message}", body: "Refund: https://shop.test/refund/{customer.id}" }
+    ```
+
+    ```yaml
+    # refunds.md: the chain
+    inputs:
+      since: { type: date, default: last_run, max: 4d }
+    steps:
+      - name: Find
+        run: find-refunds          # returns refunds: [{ message, email, name }]
+      - name: Each
+        run: refund-one
+        for_each: refunds
+        on_fail: continue
+    ```
+
+    When a lookup can find nothing or several, put a prompt step between
+    (`returns:` the one it picked) instead of trusting the first match.
 
     ### Starting the next procedure
 

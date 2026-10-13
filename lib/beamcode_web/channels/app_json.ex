@@ -153,7 +153,10 @@ defmodule BeamcodeWeb.AppJSON do
       name: p.name,
       description: p.description,
       inputs:
-        Enum.map(p.inputs, &Map.take(&1, [:name, :type, :default, :options, :multi, :currency])),
+        Enum.map(
+          p.inputs,
+          &Map.take(&1, [:name, :type, :default, :options, :multi, :currency, :max])
+        ),
       key: p.key,
       source: p.source,
       path: p.path,

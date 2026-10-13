@@ -133,10 +133,30 @@ defmodule Beamcode.ProcedureRunsTest do
   ---
   """
 
+  @refund_one """
+  ---
+  name: refund-one
+  key: message
+  inputs:
+    message: { type: text }
+    email: { type: text }
+  steps:
+    - name: Look up
+      call: stripe.customers_search
+      params: { q: "{email}" }
+      returns: customer
+    - name: Comment
+      call: stripe.comments_create
+      params: { message: "{message}", body: "https://shop.test/refund/{customer.id}" }
+  ---
+  """
+
   @stripe ~s({"name": "stripe", "baseUrl": "https://api.stripe.test",
     "auth": {"type": "bearer", "secret": "STRIPE_KEY"},
     "tools": {"refunds_create": ["POST", "/v1/refunds", "ask", "Refund a charge"],
-              "charges_delete": ["DELETE", "/v1/charges/{charge}", "deny"]},
+              "charges_delete": ["DELETE", "/v1/charges/{charge}", "deny"],
+              "customers_search": ["GET", "/v1/customers/search", "allow"],
+              "comments_create": ["POST", "/v1/comments", "allow"]},
     "projects": ["amino-maintenance"]})
 
   @models [
@@ -168,6 +188,7 @@ defmodule Beamcode.ProcedureRunsTest do
       ".peon/refund-policy.md" => "Refund double charges.",
       ".peon/procedures/pay.md" => @pay,
       ".peon/procedures/nuke.md" => @nuke,
+      ".peon/procedures/refund-one.md" => @refund_one,
       "connectors/stripe.json" => @stripe
     }
 
@@ -264,7 +285,7 @@ defmodule Beamcode.ProcedureRunsTest do
 
     assert {"s1", text} = last_prompt(oc)
     assert text =~ "/email-refunds · Read (step 1 of 3)"
-    assert text =~ "Read support mail since the last 7 days."
+    assert text =~ ~r"Read support mail since \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\."
 
     reply(oc, "s1", "Ola asked for 299 back.")
     Runs.session_idle("s1", :ok)
@@ -428,9 +449,15 @@ defmodule Beamcode.ProcedureRunsTest do
 
       Req.Test.stub(:stripe, fn conn ->
         {:ok, body, conn} = Plug.Conn.read_body(conn)
+        conn = Plug.Conn.fetch_query_params(conn)
         key = Plug.Conn.get_req_header(conn, "idempotency-key")
-        Agent.update(calls, &(&1 ++ [{conn.method, conn.request_path, Jason.decode!(body), key}]))
-        Req.Test.json(conn, %{"id" => "re_1", "status" => "succeeded"})
+        sent = if body == "", do: conn.query_params, else: Jason.decode!(body)
+        Agent.update(calls, &(&1 ++ [{conn.method, conn.request_path, sent, key}]))
+
+        case conn.request_path do
+          "/v1/customers/search" -> Req.Test.json(conn, %{"id" => "cus_7", "name" => "Ola"})
+          _ -> Req.Test.json(conn, %{"id" => "re_1", "status" => "succeeded"})
+        end
       end)
 
       %{calls: calls}
@@ -453,15 +480,84 @@ defmodule Beamcode.ProcedureRunsTest do
                 ["refund-ch_1"]}
              ] = Agent.get(calls, & &1)
 
-      assert %{status: "done", summary: "succeeded · re_1"} = done
+      assert %{status: "done", summary: "200 · succeeded · re_1"} = done
       # No model, no message.
       assert Agent.get(oc, & &1.prompts) == []
+    end
+
+    test "returns keeps the answer for the next step", %{
+      user: user,
+      folder: folder,
+      calls: calls
+    } do
+      {:ok, run} =
+        Runs.start(folder, user, "refund-one", %{"message" => "m1", "email" => "ola@x.no"})
+
+      assert %{status: "done", outputs: %{"customer" => %{"id" => "cus_7"}}} = run
+
+      assert [
+               {"GET", "/v1/customers/search", %{"q" => "ola@x.no"}, _},
+               {"POST", "/v1/comments",
+                %{"message" => "m1", "body" => "https://shop.test/refund/cus_7"}, _}
+             ] = Agent.get(calls, & &1)
+
+      assert hd(run.steps)["text"] =~ "200 · cus_7\n\n```json"
     end
 
     test "a denied tool is never called", %{user: user, folder: folder, calls: calls} do
       {:ok, run} = Runs.start(folder, user, "nuke", %{})
       assert %{status: "failed", error: "nuke: stripe · charges.delete is denied."} = run
       assert Agent.get(calls, & &1) == []
+    end
+  end
+
+  describe "since the last run" do
+    @input %{name: "since", type: "date", default: "last_run", max: "4d"}
+
+    defp finished(folder, status, at) do
+      Repo.insert!(%Run{
+        project_id: folder.id,
+        schedule_key: "manual",
+        procedure: "email-refunds",
+        status: status,
+        inserted_at: at,
+        updated_at: at
+      })
+    end
+
+    test "starts where the last finished run started, at most max back", %{folder: folder} do
+      now = ~U[2026-10-13 07:00:00Z]
+      proc = %{name: "email-refunds"}
+
+      assert %{value: "2026-10-09T07:00:00Z", last: nil, capped: false} =
+               Runs.since(folder, proc, @input, now)
+
+      finished(folder, "done", ~U[2026-10-02 07:00:00Z])
+
+      assert %{value: "2026-10-09T07:00:00Z", capped: true} =
+               Runs.since(folder, proc, @input, now)
+
+      finished(folder, "done", ~U[2026-10-12 07:00:00Z])
+      # A failed run doesn't move it on.
+      finished(folder, "failed", ~U[2026-10-13 06:00:00Z])
+
+      assert %{value: "2026-10-12T07:00:00Z", last: "2026-10-12T07:00:00Z", capped: false} =
+               Runs.since(folder, proc, @input, now)
+    end
+
+    test "a run fills since with a time; a span counts back from now", %{
+      user: user,
+      folder: folder
+    } do
+      {:ok, run} = Runs.start(folder, user, "email-refunds", %{})
+      assert {:ok, _, _} = DateTime.from_iso8601(run.inputs["since"])
+
+      {:ok, run} = Runs.start(folder, user, "email-refunds", %{"since" => "1d"})
+      {:ok, t, _} = DateTime.from_iso8601(run.inputs["since"])
+      assert_in_delta DateTime.diff(DateTime.utc_now(), t), 86_400, 5
+
+      {:ok, run} = Runs.start(folder, user, "email-refunds", %{"since" => "2026-10-01"})
+      assert run.inputs["since"] == "2026-10-01"
     end
   end
 end

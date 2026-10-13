@@ -522,6 +522,8 @@ defmodule Beamcode.Connectors do
         :ok -> :ok
         error -> Logger.warning("opencode.json sync for #{project.name}: #{inspect(error)}")
       end
+
+      Workspace.refresh_conventions(project)
     end
 
     :ok

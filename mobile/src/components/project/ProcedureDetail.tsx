@@ -11,7 +11,7 @@ import { InputFields, lastLine } from "./ProceduresTab";
 import { useWide } from "@/lib/useWide";
 import { ago } from "@/lib/time";
 import { color, font } from "@/lib/theme";
-import { starts, type Procedure, type ProcedureStep } from "@/lib/procedures";
+import { sinceInput, spanLabel, starts, type Procedure, type ProcedureStep } from "@/lib/procedures";
 import type { Run } from "@/lib/types";
 import type { ProjectCtx } from "./types";
 
@@ -125,7 +125,7 @@ export function ProcedureDetail({
 
       {asking ? (
         <View style={st.ask}>
-          <InputFields inputs={p.inputs} values={values} onChange={setValues} />
+          <InputFields inputs={p.inputs} values={values} onChange={setValues} since={p.since} />
           <Tap onPress={() => setAsking(false)} hitSlop={8}>
             <Text style={st.muted}>Cancel</Text>
           </Tap>
@@ -182,8 +182,8 @@ export function ProcedureDetail({
                   <Text style={st.mono}>{i.name}</Text>{" "}
                   <Text style={st.muted}>
                     {i.currency ?? i.type ?? "text"}
-                    {i.default === "last_run"
-                      ? " · defaults to the last run"
+                    {sinceInput(i)
+                      ? ` · since the last run, at most ${spanLabel(i.max ?? "7d")} back`
                       : i.default && !Array.isArray(i.default)
                         ? ` · ${i.default}`
                         : ""}
@@ -525,8 +525,12 @@ function RecentRun({ run: r, procedure: p }: { run: Run; procedure: Procedure })
   const currency = p.inputs.find((i) => i.name === "amount")?.currency;
   const amount = v.amount != null && v.amount !== "" ? `${v.amount}${currency ? ` ${currency}` : ""}` : null;
   const keyed = p.key && v[p.key] ? String(v[p.key]) : null;
+  // What a `since` run covered: from its since to when it started.
+  const since = p.inputs.find(sinceInput);
+  const from = since && typeof v[since.name] === "string" ? Date.parse(v[since.name] as string) : NaN;
+  const window = Number.isFinite(from) ? `${short(from)} → ${short(Date.parse(r.started))}` : null;
   const what =
-    [v.name, amount].filter(Boolean).join(" · ") ||
+    [window, v.name, amount].filter(Boolean).join(" · ") ||
     r.summary ||
     keyed ||
     (r.trigger === "chain" ? "Started by a chain" : (r.trigger ?? ""));
@@ -554,6 +558,10 @@ function RecentRun({ run: r, procedure: p }: { run: Run; procedure: Procedure })
     </Tap>
   );
 }
+
+/** "12 Oct 07:00" */
+const short = (t: number) =>
+  new Date(t).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
 const firstLine = (s: string | null) =>
   (s ?? "")

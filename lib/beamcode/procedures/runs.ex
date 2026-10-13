@@ -120,32 +120,71 @@ defmodule Beamcode.Procedures.Runs do
     end
   end
 
-  # Defaults for what's missing; `last_run` becomes when this procedure last
-  # finished (a row list stays as it is).
+  # Defaults for what's missing (a row list stays as it is). A time input
+  # takes `last_run` (see `since/3`) or a span back from now (`1d`).
   defp inputs(_proc, rows, _project) when is_list(rows), do: %{"rows" => rows}
 
   defp inputs(proc, values, project) do
-    defaults =
-      Map.new(proc.inputs, fn i ->
-        {i.name,
-         if(i.default == "last_run", do: last_run_text(project, proc.name), else: i.default)}
-      end)
+    given = for {k, v} <- values || %{}, v not in [nil, ""], into: %{}, do: {k, v}
 
-    Map.merge(defaults, for({k, v} <- values || %{}, v not in [nil, ""], into: %{}, do: {k, v}))
+    Map.new(proc.inputs, &{&1.name, &1.default})
+    |> Map.merge(given)
+    |> Map.new(fn {k, v} ->
+      case Enum.find(proc.inputs, &(&1.name == k)) do
+        nil -> {k, v}
+        input -> {k, time_value(project, proc, input, v)}
+      end
+    end)
   end
 
-  defp last_run_text(project, name) do
-    from(r in Run,
-      where: r.project_id == ^project.id and r.procedure == ^name and r.status == "done",
-      order_by: [desc: r.finished_at],
-      limit: 1,
-      select: r.finished_at
-    )
-    |> Repo.one()
-    |> case do
-      nil -> "the last 7 days"
-      at -> Calendar.strftime(at, "%Y-%m-%d %H:%M UTC")
+  defp time_value(project, proc, input, "last_run"), do: since(project, proc, input).value
+
+  defp time_value(_project, _proc, input, v) when is_binary(v) do
+    with true <- time_input?(input),
+         seconds when is_integer(seconds) <- Procedures.duration(v) do
+      DateTime.utc_now(:second) |> DateTime.add(-seconds) |> DateTime.to_iso8601()
+    else
+      _ -> v
     end
+  end
+
+  defp time_value(_project, _proc, _input, v), do: v
+
+  defp time_input?(input), do: input.type in ~w(date datetime time) or input.default == "last_run"
+
+  @default_max 7 * 86_400
+
+  @doc """
+  Where a `default: last_run` input starts: when this procedure's last
+  finished run started, so the next run picks up where it began, but never
+  more than the input's `max` back (7 days without one). A failed run
+  doesn't count, so the next one covers its time again.
+
+  `%{value, last, capped, max}`: `value` the ISO time used, `last` when the
+  last good run started (nil before the first), `capped` when that was
+  further back than `max`.
+  """
+  def since(project, proc, input, now \\ DateTime.utc_now(:second)) do
+    seconds = Procedures.duration(input.max) || @default_max
+    floor = DateTime.add(now, -seconds)
+
+    last =
+      from(r in Run,
+        where: r.project_id == ^project.id and r.procedure == ^proc.name and r.status == "done",
+        order_by: [desc: r.inserted_at],
+        limit: 1,
+        select: r.inserted_at
+      )
+      |> Repo.one()
+
+    from = if last && DateTime.after?(last, floor), do: last, else: floor
+
+    %{
+      value: DateTime.to_iso8601(from),
+      last: last && DateTime.to_iso8601(last),
+      capped: last != nil and from == floor,
+      max: input.max || "7d"
+    }
   end
 
   ## Steps
@@ -270,7 +309,7 @@ defmodule Beamcode.Procedures.Runs do
 
     titles =
       for item <- items,
-          do: Procedures.fill(s.title || "{task}", Map.merge(values(run), item || %{}))
+          do: Procedures.fill(s.title || "{task}", Map.merge(fill_values(run), item || %{}))
 
     with {:ok, ids} <-
            TaskQueue.add(project, owner(run), "main", titles, false, procedure: s.queue) do
@@ -286,14 +325,15 @@ defmodule Beamcode.Procedures.Runs do
   defp do_step(run, proc, i, %{kind: "call"} = s, _opts) do
     project = project(run)
 
-    case call(project, s, values(run)) do
-      {:ok, text} ->
-        {:ok,
-         done_step(run, proc, i, %{"status" => "done", "text" => text, "finished" => now()})
-         |> elem(0)}
+    with {:ok, text, data} <- call(project, s, fill_values(run)) do
+      run =
+        if s.returns,
+          do: save(run, outputs: Map.put(run.outputs || %{}, s.returns, data)),
+          else: run
 
-      {:error, reason} ->
-        {:error, reason}
+      {:ok,
+       done_step(run, proc, i, %{"status" => "done", "text" => text, "finished" => now()})
+       |> elem(0)}
     end
   end
 
@@ -334,7 +374,7 @@ defmodule Beamcode.Procedures.Runs do
           Procedures.prompt(proc, values)
 
         multi and i > 0 ->
-          prompt_only(s, values)
+          prompt_only(s, Map.merge(values, run.outputs || %{}))
 
         multi ->
           Procedures.step_text(proc, s, values) |> String.replace(~r{^/\S+\s*}, "Inputs: ")
@@ -363,6 +403,9 @@ defmodule Beamcode.Procedures.Runs do
   end
 
   defp prompt_only(s, values), do: Procedures.fill(s.prompt || "Do the #{s.name} step.", values)
+
+  # Inputs and what earlier steps returned, for `{placeholders}`.
+  defp fill_values(run), do: Map.merge(run.inputs || %{}, run.outputs || %{})
 
   defp hand_over(run, s) do
     project = project(run)
@@ -568,7 +611,8 @@ defmodule Beamcode.Procedures.Runs do
       [item | rest] ->
         project = project(run)
         values = Map.merge(values(run), item || %{})
-        with_values = Map.new(s.with, fn {k, v} -> {k, Procedures.fill(to_string(v), values)} end)
+        fill = Map.merge(fill_values(run), item || %{})
+        with_values = Map.new(s.with, fn {k, v} -> {k, Procedures.fill(to_string(v), fill)} end)
 
         case start(project, owner(run), s.run, Map.merge(values, with_values),
                trigger: "chain",
@@ -648,7 +692,7 @@ defmodule Beamcode.Procedures.Runs do
   defp wait(run, proc, i, kind) do
     s = Enum.at(proc.steps, i)
     items = if kind == "before", do: items(run, s)
-    values = values(run)
+    values = fill_values(run)
 
     text =
       cond do
@@ -900,10 +944,47 @@ defmodule Beamcode.Procedures.Runs do
           else: args
 
       case Connectors.call(project, Connectors.tool_name(c, t), args) do
-        {:ok, status, body} when status in 200..299 -> {:ok, call_note(body)}
-        {:ok, status, body} -> {:error, "#{status}: #{String.slice(call_note(body), 0, 300)}"}
-        {:error, reason} -> {:error, reason}
+        {:ok, status, body} when status in 200..299 ->
+          {:ok, call_text(status, body), decode(body)}
+
+        {:ok, status, body} ->
+          {:error, "#{status}: #{String.slice(call_note(body), 0, 300)}"}
+
+        {:error, reason} ->
+          {:error, reason}
       end
+    end
+  end
+
+  # The step's text: "200 · ch_1", then the answer when it's JSON.
+  defp call_text(status, body) do
+    case Jason.decode(body) do
+      {:ok, json} when is_map(json) or is_list(json) ->
+        line =
+          case json do
+            %{} -> [json["status"], json["id"]] |> Enum.filter(&is_binary/1)
+            list -> ["#{length(list)} item#{if length(list) == 1, do: "", else: "s"}"]
+          end
+          |> then(&Enum.join([to_string(status) | &1], " · "))
+
+        pretty = Jason.encode!(json, pretty: true)
+
+        pretty =
+          if String.length(pretty) > 4000,
+            do: String.slice(pretty, 0, 4000) <> "\n…",
+            else: pretty
+
+        line <> "\n\n```json\n" <> pretty <> "\n```"
+
+      _ ->
+        "#{status} · " <> String.slice(body, 0, 200)
+    end
+  end
+
+  defp decode(body) do
+    case Jason.decode(body) do
+      {:ok, json} -> json
+      _ -> body
     end
   end
 

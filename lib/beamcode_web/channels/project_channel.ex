@@ -1089,9 +1089,17 @@ defmodule BeamcodeWeb.ProjectChannel do
         p
         |> AppJSON.procedure(paused: p.name in paused, last: last[p.name])
         |> Map.put(:warnings, Map.get(warnings, p.name, []))
+        |> Map.put(:since, since(project, p))
       end
 
     {json, if(errors == [], do: nil, else: Enum.join(errors, "; "))}
+  end
+
+  # Where each `default: last_run` input would start now, by input name.
+  defp since(project, p) do
+    for i <- p.inputs, i.default == "last_run", into: %{} do
+      {i.name, Beamcode.Procedures.Runs.since(project, p, i)}
+    end
   end
 
   defp list_or_nil(list) when is_list(list), do: Enum.filter(list, &is_map/1)
