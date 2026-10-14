@@ -15,7 +15,8 @@ defmodule Beamcode.Application do
         {Phoenix.PubSub, name: Beamcode.PubSub},
         {Task.Supervisor, name: Beamcode.TaskSupervisor},
         Beamcode.Connectors.Limiter,
-        Beamcode.Procedures.Cache
+        Beamcode.Procedures.Cache,
+        {Beamcode.GitFetch, tick: Application.get_env(:beamcode, :start_workers, true)}
       ] ++
         workers() ++
         [

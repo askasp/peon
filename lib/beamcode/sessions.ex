@@ -172,7 +172,10 @@ defmodule Beamcode.Sessions do
     do: {:error, "#{project.name} has no OpenCode project id yet"}
 
   defp directory(project, true) do
-    case Opencode.create_worktree(project.oc_project_id) do
+    # From the remote's latest (see `Beamcode.GitFetch.base/1`), else the folder's checkout.
+    opts = if base = Beamcode.GitFetch.base(project), do: [branch: base], else: []
+
+    case Opencode.create_worktree(project.oc_project_id, opts) do
       {:ok, %{"directory" => dir}} -> {:ok, dir}
       error -> error
     end
