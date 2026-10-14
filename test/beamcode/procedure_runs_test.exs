@@ -71,6 +71,23 @@ defmodule Beamcode.ProcedureRunsTest do
   Review it.
   """
 
+  @second_look """
+  ---
+  name: second-look
+  steps:
+    - name: Draft
+    - name: Check
+      session: fresh
+      agent: review
+  ---
+
+  ## Draft
+  Draft it.
+
+  ## Check
+  Check it.
+  """
+
   @finder """
   ---
   name: finder
@@ -193,13 +210,14 @@ defmodule Beamcode.ProcedureRunsTest do
       start_supervised!(
         {Agent,
          fn ->
-           %{n: 0, created: [], prompts: [], models: [], replies: %{}}
+           %{n: 0, created: [], prompts: [], models: [], agents: [], replies: %{}}
          end}
       )
 
     files = %{
       ".peon/procedures/email-refunds.md" => @email_refunds,
       ".peon/procedures/ship.md" => @ship,
+      ".peon/procedures/second-look.md" => @second_look,
       ".peon/procedures/finder.md" => @finder,
       ".peon/procedures/refund.md" => @refund,
       ".peon/procedures/monday-ops.md" => @chain,
@@ -243,6 +261,11 @@ defmodule Beamcode.ProcedureRunsTest do
         {"POST", ["api", "session", sid, "model"]} ->
           {:ok, body, conn} = Plug.Conn.read_body(conn)
           Agent.update(oc, &%{&1 | models: &1.models ++ [{sid, Jason.decode!(body)["model"]}]})
+          data(conn, %{})
+
+        {"POST", ["api", "session", sid, "agent"]} ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          Agent.update(oc, &%{&1 | agents: &1.agents ++ [{sid, Jason.decode!(body)["agent"]}]})
           data(conn, %{})
 
         {"GET", ["api", "session", sid, "message"]} ->
@@ -348,6 +371,33 @@ defmodule Beamcode.ProcedureRunsTest do
     assert run.outputs["approved"] == [%{"charge" => "ch_1", "amount" => 299, "name" => "Ola"}]
     assert run.summary == "1 × Send refund · 299 NOK"
     assert Enum.map(run.steps, & &1["status"]) == ["done", "done", "done"]
+  end
+
+  test "a step can start fresh on another agent", %{user: user, folder: folder, oc: oc} do
+    {:ok, run} = Runs.start(folder, user, "second-look", %{}, trigger: "slash")
+    assert {"chat", _} = last_prompt(oc)
+    assert Agent.get(oc, & &1.agents) == []
+
+    reply(oc, "chat", "Drafted.")
+    Runs.session_idle("chat", :ok)
+
+    assert [{"s1", %{"parentID" => "chat"}}] = Agent.get(oc, & &1.created)
+    assert Agent.get(oc, & &1.agents) == [{"s1", "review"}]
+    assert {"s1", text} = last_prompt(oc)
+    assert text =~ "Check it."
+    assert Enum.at(reload(run).steps, 1)["status"] == "running"
+  end
+
+  test "a step whose end was never heard is found once its session is idle", %{
+    user: user,
+    folder: folder
+  } do
+    {:ok, run} = Runs.start(folder, user, "email-refunds", %{}, trigger: "slash")
+    idle = fn _sid -> false end
+
+    assert Runs.stalled_steps(idle) == []
+    assert Runs.stalled_steps(idle, 0) == [{run.id, 0, "s1"}]
+    assert Runs.stalled_steps(fn _sid -> true end, 0) == []
   end
 
   test "waits for you, goes back with a note, and loops a review at most max times",

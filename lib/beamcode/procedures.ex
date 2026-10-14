@@ -276,6 +276,7 @@ defmodule Beamcode.Procedures do
       prompt: prompt,
       model: str(s["model"]),
       effort: str(s["effort"]),
+      agent: str(s["agent"]),
       session: if(s["session"] == "fresh", do: "fresh", else: "same"),
       wait: s["wait"] in ["me", true, "you"],
       uses: Enum.map(List.wrap(s["uses"]), &use_name/1),
@@ -451,8 +452,8 @@ defmodule Beamcode.Procedures do
   ## Editing (the app's procedure editor writes the file)
 
   # Keys a step has, in the order a file lists them.
-  @step_keys ~w(name run with for_each queue title call params confirm model effort session wait
-                uses hand_over on_changes back_to returns offers on_fail skill)
+  @step_keys ~w(name run with for_each queue title call params confirm model effort agent session
+                wait uses hand_over on_changes back_to returns offers on_fail skill)
 
   @doc """
   Changes a Project's own procedure file. `edit` is one of
@@ -968,6 +969,7 @@ defmodule Beamcode.Procedures do
         effort: low
       - name: Decide
         session: fresh             # a clean model; gets hand_over instead
+        agent: review              # one of the folder's OpenCode agents
         hand_over: [Read, refund-policy.md]   # earlier steps, .peon/ notes, ticket, diff
         returns: approved
         wait: me                   # stop for a person after this step

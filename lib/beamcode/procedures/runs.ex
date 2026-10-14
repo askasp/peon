@@ -324,7 +324,8 @@ defmodule Beamcode.Procedures.Runs do
            not Enum.any?(run.steps, & &1["previous_model"]),
          do: chat_model(run.session_id, project)
 
-    with {:ok, sid} <- step_session(run, project, user, proc, s, model) do
+    with {:ok, sid} <- step_session(run, project, user, proc, s, model),
+         :ok <- step_agent(sid, s[:agent]) do
       text = message(run, proc, i, s, values, opts[:note])
       dir = session_dir(sid, project)
 
@@ -430,6 +431,15 @@ defmodule Beamcode.Procedures.Runs do
     case Opencode.switch_model(run.session_id, model) do
       {:ok, _} -> {:ok, run.session_id}
       error -> error
+    end
+  end
+
+  defp step_agent(_sid, nil), do: :ok
+
+  defp step_agent(sid, agent) do
+    case Opencode.switch_agent(sid, agent) do
+      {:ok, _} -> :ok
+      {:error, e} -> {:error, "Couldn't switch to the #{agent} agent: #{error_text(e)}"}
     end
   end
 
@@ -618,6 +628,28 @@ defmodule Beamcode.Procedures.Runs do
           else: fail(run, proc, run.step, "The step stopped.")
       end
     end)
+  end
+
+  @doc """
+  The running prompt steps whose session isn't busy, though the step started
+  over `min_age` seconds ago: `[{run_id, step, session_id}]`. A step's end is
+  only heard as an OpenCode event, so one that ends while Peon restarts or the
+  event stream is down would wait forever (`Beamcode.Procedures.Runner` sweeps).
+  """
+  def stalled_steps(busy?, min_age \\ 60) do
+    cutoff = DateTime.add(DateTime.utc_now(), -min_age)
+
+    for run <-
+          Repo.all(
+            from r in Run,
+              where: r.status == "running" and fragment("cardinality(?) > 0", r.steps)
+          ),
+        s = Enum.at(run.steps, run.step),
+        s && s["status"] == "running" && is_binary(s["session_id"]),
+        {:ok, started, _} <- [DateTime.from_iso8601(s["started"] || "")],
+        DateTime.compare(started, cutoff) != :gt,
+        not busy?.(s["session_id"]),
+        do: {run.id, run.step, s["session_id"]}
   end
 
   defp step_finished(run, proc, i, sid) do
