@@ -1,8 +1,9 @@
 // One session over its own channel ("session:<id>"): stored messages, text
 // streaming in, status and permission requests, all pushed by the server.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel } from "phoenix";
+import { useIsFocused } from "expo-router";
 import { getSocket, request, usePeon } from "./peon";
 import type { DiffFile, Form, Message, Perm, Project, Run, SessionSummary, Status } from "./types";
 import type { Attachment } from "./images";
@@ -72,22 +73,41 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
     speak.current = onSpeak;
   });
   const joined = usePeon((s) => s.joined);
+  // Screens stay mounted under the one on top: only the focused one listens,
+  // and it starts over from the server when it's back on top.
+  const focused = useIsFocused();
 
   useEffect(() => {
     const socket = getSocket();
-    if (!socket || !joined || !id) return;
+    if (!socket || !joined || !id || !focused) return;
     const ch = socket.channel(`session:${id}`, {});
     channel.current = ch;
 
-    ch.on("delta", ({ message_id, kind, delta }) =>
+    // Text streams in a token at a time; it shows at most every 100ms.
+    let deltas: { message_id: string; kind: keyof Streamed; delta: string }[] = [];
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const flush = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      const batch = deltas;
+      deltas = [];
+      if (!batch.length) return;
       setState((s) => {
-        const prev = s.streaming[message_id] ?? { text: "", reasoning: "" };
-        const next = { ...prev, [kind]: prev[kind as keyof Streamed] + delta };
-        return { ...s, streaming: { ...s.streaming, [message_id]: next } };
-      }),
-    );
+        const streaming = { ...s.streaming };
+        for (const { message_id, kind, delta } of batch) {
+          const prev = streaming[message_id] ?? { text: "", reasoning: "" };
+          streaming[message_id] = { ...prev, [kind]: prev[kind] + delta };
+        }
+        return { ...s, streaming };
+      });
+    };
+    ch.on("delta", (d) => {
+      deltas.push(d);
+      timer ??= setTimeout(flush, 100);
+    });
 
-    ch.on("messages", ({ upsert, ids }: { upsert: Message[]; ids: string[] }) =>
+    ch.on("messages", ({ upsert, ids }: { upsert: Message[]; ids: string[] }) => {
+      flush();
       setState((s) => {
         // Older messages already loaded stay above the window the server tracks.
         const kept = s.ids.filter((mid) => !ids.includes(mid));
@@ -96,8 +116,8 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
         for (const mid of merged) if (s.messages[mid]) messages[mid] = s.messages[mid];
         for (const m of upsert) messages[m.id] = m;
         return { ...s, ids: merged, messages, streaming: dropCaughtUp(s.streaming, messages) };
-      }),
-    );
+      });
+    });
 
     ch.on("status", ({ status, perms }) => setState((s) => ({ ...s, status, perms })));
     ch.on("forms", ({ forms }) => setState((s) => ({ ...s, forms })));
@@ -114,6 +134,7 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
     // Also fires again after a reconnect, so the view starts over from the server.
     ch.join()
       .receive("ok", (r) => {
+        flush();
         const messages: Record<string, Message> = {};
         for (const m of r.messages as Message[]) messages[m.id] = m;
         setState((s) => ({
@@ -144,10 +165,13 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
       );
 
     return () => {
+      if (timer) clearTimeout(timer);
       ch.leave();
       channel.current = null;
+      // Text that streamed while away is missed: it shows again from the stored messages.
+      setState((s) => (Object.keys(s.streaming).length ? { ...s, streaming: {} } : s));
     };
-  }, [id, joined]);
+  }, [id, joined, focused]);
 
   const send = useCallback(
     (text: string, files: Attachment[] = []) => request(channel.current, "send", { text, files }),
@@ -167,39 +191,43 @@ export function useSession(id: string | null, onSpeak?: (text: string) => void) 
   );
 
   // Messages in order, with text still streaming in merged into its message.
-  const items: Message[] = state.ids.map((mid) => {
-    const m = state.messages[mid];
-    const s = state.streaming[mid];
-    if (!s) return m;
-    const parts = m.content ?? [];
-    // Thinking streams too: shown until the stored message has its own.
-    const reasoning =
-      s.reasoning && !parts.some((p) => p.type === "reasoning")
-        ? [{ type: "reasoning" as const, text: s.reasoning }]
-        : [];
-    return {
-      ...m,
-      content: [
-        ...reasoning,
-        ...parts.filter((p) => p.type !== "text"),
-        ...(s.text
-          ? [{ type: "text" as const, text: s.text, streaming: true }]
-          : parts.filter((p) => p.type === "text")),
-      ],
-    };
-  });
-  for (const [mid, s] of Object.entries(state.streaming)) {
-    if (!state.messages[mid])
-      items.push({
-        id: mid,
-        type: "assistant",
-        time: {},
+  const { ids, messages, streaming } = state;
+  const items = useMemo(() => {
+    const items: Message[] = ids.map((mid) => {
+      const m = messages[mid];
+      const s = streaming[mid];
+      if (!s) return m;
+      const parts = m.content ?? [];
+      // Thinking streams too: shown until the stored message has its own.
+      const reasoning =
+        s.reasoning && !parts.some((p) => p.type === "reasoning")
+          ? [{ type: "reasoning" as const, text: s.reasoning }]
+          : [];
+      return {
+        ...m,
         content: [
-          ...(s.reasoning ? [{ type: "reasoning" as const, text: s.reasoning }] : []),
-          ...(s.text ? [{ type: "text" as const, text: s.text, streaming: true }] : []),
+          ...reasoning,
+          ...parts.filter((p) => p.type !== "text"),
+          ...(s.text
+            ? [{ type: "text" as const, text: s.text, streaming: true }]
+            : parts.filter((p) => p.type === "text")),
         ],
-      });
-  }
+      };
+    });
+    for (const [mid, s] of Object.entries(streaming)) {
+      if (!messages[mid])
+        items.push({
+          id: mid,
+          type: "assistant",
+          time: {},
+          content: [
+            ...(s.reasoning ? [{ type: "reasoning" as const, text: s.reasoning }] : []),
+            ...(s.text ? [{ type: "text" as const, text: s.text, streaming: true }] : []),
+          ],
+        });
+    }
+    return items;
+  }, [ids, messages, streaming]);
 
   const reply = useCallback(
     (formId: string, answer: Record<string, unknown>) =>

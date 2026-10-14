@@ -35,13 +35,14 @@ export async function stopRun(sessionId: string) {
   const socket = getSocket();
   if (!socket) return;
   const ch = socket.channel(`session:${sessionId}`, {});
-  await new Promise<void>((resolve, reject) =>
-    ch
-      .join()
-      .receive("ok", () => resolve())
-      .receive("error", () => reject(new Error("Can't open the run."))),
-  );
   try {
+    // Left even when the join fails, or it would keep trying to join.
+    await new Promise<void>((resolve, reject) =>
+      ch
+        .join()
+        .receive("ok", () => resolve())
+        .receive("error", () => reject(new Error("Can't open the run."))),
+    );
     await request(ch, "interrupt");
   } finally {
     ch.leave();

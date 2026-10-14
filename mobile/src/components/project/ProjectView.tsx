@@ -71,6 +71,15 @@ export function ProjectView({
     changed: () => setChanged((n) => n + 1),
     project: ({ project }) => setProject(project),
   });
+  // Joined again (back on top, or reconnected): show what changed while away.
+  const [reply, setReply] = useState(ch.reply);
+  if (ch.reply !== reply) {
+    setReply(ch.reply);
+    if (reply && ch.reply) {
+      setProject(null);
+      setChanged((n) => n + 1);
+    }
+  }
 
   const p = (project?.id === Number(id) ? project : null) ?? ch.reply?.project ?? stored;
   useCurrent(p?.id);

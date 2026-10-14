@@ -1,8 +1,9 @@
-// Joins a channel for as long as a screen shows it. The join reply is kept;
+// Joins a channel while a screen is on top. The join reply is kept;
 // `on` handlers get pushes; `call` sends requests. Rejoins after reconnects.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel } from "phoenix";
+import { useIsFocused } from "expo-router";
 import { getSocket, request, usePeon } from "./peon";
 
 export function useChannel<J = any>(topic: string | null, on: Record<string, (payload: any) => void> = {}) {
@@ -17,10 +18,12 @@ export function useChannel<J = any>(topic: string | null, on: Record<string, (pa
     handlers.current = on;
   });
   const joined = usePeon((s) => s.joined);
+  // Screens under the one on top leave, and join again when back on top.
+  const focused = useIsFocused();
 
   useEffect(() => {
     const socket = getSocket();
-    if (!socket || !joined || !topic) return;
+    if (!socket || !joined || !topic || !focused) return;
     const ch = socket.channel(topic, {});
     channel.current = ch;
     const events = Object.keys(handlers.current);
@@ -40,7 +43,7 @@ export function useChannel<J = any>(topic: string | null, on: Record<string, (pa
       ch.leave();
       channel.current = null;
     };
-  }, [topic, joined]);
+  }, [topic, joined, focused]);
 
   // A request made before the channel exists (the socket is still connecting
   // just after the page opens) waits for it, up to 10 seconds.
